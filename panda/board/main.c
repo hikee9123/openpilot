@@ -832,6 +832,8 @@ int main(void) {
 
   // init to SILENT and can silent
   //set_safety_mode(SAFETY_SILENT, 0);
+
+  // MDPS will hard fault if SAFETY_SILENT set
   set_safety_mode(SAFETY_NOOUTPUT, 0);
 
   // enable CAN TXs
