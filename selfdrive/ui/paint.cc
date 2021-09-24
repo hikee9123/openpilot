@@ -24,6 +24,10 @@
 #include "selfdrive/ui/dashcam.h"
 #include "selfdrive/ui/kegman_ui.h"
 
+#include "selfdrive/ui/qt/atom/atomMenu.h"
+
+
+
 static void ui_draw_text(const UIState *s, float x, float y, const char *string, float size, NVGcolor color, const char *font_name) {
   nvgFontFace(s->vg, font_name);
   nvgFontSize(s->vg, size);
@@ -247,7 +251,7 @@ void ui_draw(UIState *s, int w, int h, CAtomMenu *pMenu ) {
   update_dashcam(s);
 
   if( pMenu )
-    pMenu->ui_draw(&QUIState::ui_state, width(), height());
+    pMenu->ui_draw( s, w, h );
 
   ui_main_navi( s );
   nvgEndFrame(s->vg);
