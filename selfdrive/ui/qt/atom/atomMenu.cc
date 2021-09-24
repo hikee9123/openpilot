@@ -47,6 +47,12 @@ void CAtomMenu::paintEvent(QPaintEvent *event)
 
 void CAtomMenu::ui_draw(UIState *s, int w, int h)
 {
+  Rect  rect;
 
-  fill_rect( s->vg, Rect(0,0,100,100), nullptr, nvgRGBA(0, 0, 0, 100), 30. )
+  rect.x = 0;
+  rect.y = 0;
+  rect.w = 100;
+  rect.h = 100;
+
+  fill_rect( s->vg, rect, nullptr, nvgRGBA(0, 0, 0, 100), 30. )
 }
