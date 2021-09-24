@@ -54,5 +54,7 @@ void CAtomMenu::ui_draw(UIState *s, int w, int h)
   rect.w = 100;
   rect.h = 100;
 
-  fill_rect( s->vg, rect, nullptr, nvgRGBA(0, 0, 0, 100), 30. )
+  NVGpaint  nColor =  nvgRGBA(0, 0, 0, 100);
+
+  fill_rect( s->vg, rect, nullptr,  &nColor, 30. )
 }
