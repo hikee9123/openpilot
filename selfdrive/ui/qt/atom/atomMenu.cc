@@ -29,7 +29,7 @@ void CAtomMenu::fill_rect(NVGcontext *vg, const Rect &r, const NVGcolor *color, 
 
 
 
-void CAtomMenu::ui_draw_text(const UIState *s, float x, float y, const char *string, float size, NVGcolor color, const char *font_name) 
+void CAtomMenu::draw_text(const UIState *s, float x, float y, const char *string, float size, NVGcolor color, const char *font_name) 
 {
   if( font_name )
     nvgFontFace(s->vg, font_name);
@@ -41,8 +41,8 @@ void CAtomMenu::ui_draw_text(const UIState *s, float x, float y, const char *str
 
 void CAtomMenu::paintEvent(QPaintEvent *event)
 {
-  QPainter p(this);
-  p.fillRect(rect(), QColor(bg.red(), bg.green(), bg.blue(), 255));
+ // QPainter p(this);
+ // p.fillRect(rect(), QColor(bg.red(), bg.green(), bg.blue(), 255));
 }
 
 void CAtomMenu::ui_draw(UIState *s, int w, int h)
