@@ -235,7 +235,7 @@ static void ui_draw_vision(UIState *s) {
   }
 }
 
-void ui_draw(UIState *s, int w, int h) {
+void ui_draw(UIState *s, int w, int h, CAtomMenu *pMenu ) {
   // Update intrinsics matrix after possible wide camera toggle change
   if (s->fb_w != w || s->fb_h != h) {
     ui_resize(s, w, h);
@@ -245,6 +245,9 @@ void ui_draw(UIState *s, int w, int h) {
   nvgBeginFrame(s->vg, s->fb_w, s->fb_h, 1.0f);
   ui_draw_vision(s);
   update_dashcam(s);
+
+  if( pMenu )
+    pMenu->ui_draw(&QUIState::ui_state, width(), height());
 
   ui_main_navi( s );
   nvgEndFrame(s->vg);

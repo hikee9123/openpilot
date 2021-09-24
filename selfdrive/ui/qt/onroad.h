@@ -2,7 +2,7 @@
 
 #include <QStackedLayout>
 #include <QWidget>
-
+#include "selfdrive/ui/qt/atom/atomMenu.h"
 #include "selfdrive/ui/qt/widgets/cameraview.h"
 #include "selfdrive/ui/ui.h"
 
@@ -36,6 +36,12 @@ protected:
   void paintGL() override;
   void initializeGL() override;
   double prev_draw_t = 0;
+
+public:
+   void Create(QWidget* parent = 0);
+
+private:
+  CAtomMenu *m_pAtomMenu = nullptr;;  
 };
 
 // container for all onroad widgets
@@ -62,4 +68,7 @@ signals:
 private slots:
   void offroadTransition(bool offroad);
   void updateState(const UIState &s);
+
+
+
 };

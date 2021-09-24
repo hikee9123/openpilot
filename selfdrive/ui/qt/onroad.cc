@@ -5,6 +5,8 @@
 #include "selfdrive/common/timing.h"
 #include "selfdrive/ui/paint.h"
 #include "selfdrive/ui/qt/util.h"
+
+
 #ifdef ENABLE_MAPS
 #include "selfdrive/ui/qt/maps/map.h"
 #endif
@@ -18,6 +20,7 @@ OnroadWindow::OnroadWindow(QWidget *parent) : QWidget(parent) {
   main_layout->addLayout(stacked_layout);
 
   nvg = new NvgWindow(VISION_STREAM_RGB_BACK, this);
+  nvg->Create(this);
   QObject::connect(this, &OnroadWindow::updateStateSignal, nvg, &NvgWindow::updateState);
 
   QWidget * split_wrapper = new QWidget;
@@ -38,6 +41,7 @@ OnroadWindow::OnroadWindow(QWidget *parent) : QWidget(parent) {
   setAttribute(Qt::WA_OpaquePaintEvent);
   QObject::connect(this, &OnroadWindow::updateStateSignal, this, &OnroadWindow::updateState);
   QObject::connect(this, &OnroadWindow::offroadTransitionSignal, this, &OnroadWindow::offroadTransition);
+
 }
 
 void OnroadWindow::updateState(const UIState &s) {
@@ -173,6 +177,13 @@ void OnroadAlerts::paintEvent(QPaintEvent *event) {
   }
 }
 
+
+void NvgWindow::Create( QWidget* parent )
+{
+   if( m_pAtomMenu != nullptr ) return;
+   m_pAtomMenu = new CAtomMenu( parent );
+}
+
 void NvgWindow::initializeGL() {
   CameraViewWidget::initializeGL();
   qInfo() << "OpenGL version:" << QString((const char*)glGetString(GL_VERSION));
@@ -198,7 +209,7 @@ void NvgWindow::updateState(const UIState &s) {
 
 void NvgWindow::paintGL() {
   CameraViewWidget::paintGL();
-  ui_draw(&QUIState::ui_state, width(), height());
+  ui_draw(&QUIState::ui_state, width(), height(), m_pAtomMenu );
 
   double cur_draw_t = millis_since_boot();
   double dt = cur_draw_t - prev_draw_t;
