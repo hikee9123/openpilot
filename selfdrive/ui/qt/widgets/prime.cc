@@ -253,6 +253,7 @@ SetupWidget::SetupWidget(QWidget* parent) : QFrame(parent) {
   // set up API requests
   if (auto dongleId = getDongleId()) {
     QString url = CommaApi::BASE_URL + "/v1.1/devices/" + *dongleId + "/";
+    printf( "#register= url %s \n", url.toStdString().c_str() );
     RequestRepeater* repeater = new RequestRepeater(this, url, "ApiCache_Device", 5);
 
     QObject::connect(repeater, &RequestRepeater::requestDone, this, &SetupWidget::replyFinished);
@@ -261,7 +262,7 @@ SetupWidget::SetupWidget(QWidget* parent) : QFrame(parent) {
 
 void SetupWidget::replyFinished(const QString &response, bool success) {
   if (!success) return;
-
+  printf( "#register= response %s \n", response.toStdString().c_str() );
   QJsonDocument doc = QJsonDocument::fromJson(response.toUtf8());
   if (doc.isNull()) {
     qDebug() << "JSON Parse failed on getting pairing and prime status";
