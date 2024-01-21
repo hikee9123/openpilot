@@ -97,6 +97,8 @@ private:
   int skip_frame_count = 0;
   bool wide_cam_requested = false;
 
+ float m_cumLagMs = 0;
+
 protected:
   void paintGL() override;
   void initializeGL() override;

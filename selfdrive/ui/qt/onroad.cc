@@ -288,6 +288,10 @@ void AnnotatedCameraWidget::updateState(const UIState &s) {
   const auto car_state = sm["carState"].getCarState();
   const auto nav_instruction = sm["navInstruction"].getNavInstruction();
 
+
+  m_cumLagMs = cs.getCumLagMs();
+
+
   // Handle older routes where vCruiseCluster is not set
   float v_cruise =  cs.getVCruiseCluster() == 0.0 ? cs.getVCruise() : cs.getVCruiseCluster();
   setSpeed = cs_alive ? v_cruise : SET_SPEED_NA;
@@ -424,6 +428,14 @@ void AnnotatedCameraWidget::drawHud(QPainter &p) {
   drawText(p, rect().center().x(), 210, speedStr);
   p.setFont(InterFont(66));
   drawText(p, rect().center().x(), 290, speedUnit, 200);
+
+
+
+  QString text;
+  p.setFont(InterFont(38));
+  p.setPen( QColor(255, 255, 255, 255) );
+  text.sprintf("lag=%3.0f ", m_cumLagMs );    
+  p.drawText( bb_x, bb_y+nGap, text );  
 
   p.restore();
 }
