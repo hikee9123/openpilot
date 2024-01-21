@@ -60,6 +60,9 @@ class RouteEngine:
         self.mapbox_token = ""
       self.mapbox_host = "https://maps.comma.ai"
 
+    print('mapbox_token=', self.mapbox_token)
+    print('mapbox_host=', self.mapbox_host)        
+
   def update(self):
     self.sm.update(0)
 
