@@ -53,7 +53,8 @@ class RouteEngine:
       self.mapbox_host = "https://api.mapbox.com"
     else:
       try:
-        self.mapbox_token = Api(self.params.get("DongleId", encoding='utf8')).get_token(expiry_hours=4 * 7 * 24)
+        #self.mapbox_token = Api(self.params.get("DongleId", encoding='utf8')).get_token(expiry_hours=4 * 7 * 24)
+        self.mapbox_token = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZGVudGl0eSI6IjllNjgxY2QxMzM5MmJmOTMiLCJuYmYiOjE3MDMxNTEyMzAsImlhdCI6MTcwMzE1MTIzMCwiZXhwIjoxNzA1NTcwNDMwfQ.VH5iRP5mg1HXr6KdOolqYuZcilxfBGahSD3oVvKFae66Z730CY5ptWhsSnqzMd0WFcSqh94AOzWfZyV8z-glag-xZ7i4iiV2sM9_vQ-fdmLwPSKqjC0Cg7fGC2XKfcYKDuhhcjBjsEWIfghnc6eG3MRNeWXiz2PZUwtztL_JX5Ap7MIiubOA4Lmg5jesj1ze-bf-WzADiJmRorKB_J5jwdvA1xu_tdVNam1e9AmG5SDdR86TN279Pxh2zI0BbtcUKmSqzAWniLw4cRhBy5K3GGVtfTP3tTQq5hGwNOtsisVV3inAqQ11tROeaEUFFTCtYN82GAE16UwKQxNibjvTfQ"
       except FileNotFoundError:
         cloudlog.exception("Failed to generate mapbox token due to missing private key. Ensure device is registered.")
         self.mapbox_token = ""
