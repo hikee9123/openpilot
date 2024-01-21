@@ -430,7 +430,9 @@ void AnnotatedCameraWidget::drawHud(QPainter &p) {
   drawText(p, rect().center().x(), 290, speedUnit, 200);
 
 
-
+  int  bb_x = 270;
+  int  bb_y = 90;
+  int  nGap = 30;
   QString text;
   p.setFont(InterFont(38));
   p.setPen( QColor(255, 255, 255, 255) );
