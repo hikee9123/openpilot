@@ -8,7 +8,7 @@ A car port enables openpilot support on a particular car. Each car model openpil
 
 # Structure of a car port
 
-Virtually all car-specific code is contained in two other repositories: [opendbc](https://github.com/commaai/opendbc) and [panda](https://github.com/commaai/panda).
+Virtually all car-specific code is contained in two other repositories: [opendbc](https://github.com/hikee9123/opendbc) and [panda](https://github.com/commaai/panda).
 
 ## opendbc
 

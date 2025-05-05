@@ -17,7 +17,7 @@ a [learned simulator](https://youtu.be/EqQNZXqzFSI).
 * GPS removed from the driving stack
 * 100KB qlogs
 * `nightly` pushed after 1000 hours of hardware-in-the-loop testing
-* Car interface code moved into [opendbc](https://github.com/commaai/opendbc)
+* Car interface code moved into [opendbc](https://github.com/hikee9123/opendbc)
 * openpilot on PC for Linux x86, Linux arm64, and Mac (Apple Silicon)
 
 ## openpilot 1.0

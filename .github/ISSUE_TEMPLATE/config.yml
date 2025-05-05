@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: Car bug report
-    url: https://github.com/commaai/opendbc/issues/new
+    url: https://github.com/hikee9123/opendbc/issues/new
     about: For issues with a particular car make or model
   - name: Join the Discord
     url: https://discord.comma.ai
