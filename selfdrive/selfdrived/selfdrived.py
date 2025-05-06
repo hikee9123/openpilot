@@ -245,6 +245,10 @@ class SelfdriveD:
         safety_mismatch = pandaState.safetyModel != self.CP.safetyConfigs[i].safetyModel or \
                           pandaState.safetyParam != self.CP.safetyConfigs[i].safetyParam or \
                           pandaState.alternativeExperience != self.CP.alternativeExperience
+        if safety_mismatch:
+          print(f"safety_mismatch safetyModel{i} {pandaState.safetyModel} value: {self.CP.safetyConfigs[i].safetyModel}")
+          print(f"safety_mismatch safetyParam{i} {pandaState.safetyParam} value: {self.CP.safetyConfigs[i].safetyParam}")
+          print(f"safety_mismatch alternativeExperience{i} {pandaState.alternativeExperience} value: {self.CP.alternativeExperience}")
       else:
         safety_mismatch = pandaState.safetyModel not in IGNORED_SAFETY_MODES
 
