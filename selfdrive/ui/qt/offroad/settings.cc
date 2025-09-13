@@ -16,8 +16,6 @@
 #include "selfdrive/ui/qt/offroad/developer_panel.h"
 #include "selfdrive/ui/qt/offroad/firehose.h"
 
-#include "selfdrive/ui/qt/custom/custom.h"   // #custom
-
 TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
   // param, title, desc, icon, restart needed
   std::vector<std::tuple<QString, QString, QString, QString, bool>> toggle_defs{
@@ -477,7 +475,6 @@ SettingsWindow::SettingsWindow(QWidget *parent) : QFrame(parent) {
     {tr("Software"), new SoftwarePanel(this)},
     {tr("Firehose"), new FirehosePanel(this)},
     {tr("Developer"), new DeveloperPanel(this)},
-    {tr("Custom"), new CustomPanel(this)},    // #custom
   };
 
   nav_btns = new QButtonGroup(this);
