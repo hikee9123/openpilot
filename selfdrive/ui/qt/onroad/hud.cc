@@ -9,7 +9,7 @@ constexpr int SET_SPEED_NA = 255;
 HudRenderer::HudRenderer() {
 
   // #custom
-  m_pPaint = new OnPaint(this, width(), height());
+  m_pPaint = new OnPaint();
 }
 
 void HudRenderer::updateState(const UIState &s) {
@@ -67,7 +67,7 @@ void HudRenderer::draw(QPainter &p, const QRect &surface_rect) {
     QString speedStr = QString::number(std::nearbyint(speed));
     QString speedUnit = is_metric ? tr("km/h") : tr("mph");
     m_pPaint->drawHud(p);
-    m_pPaint->drawSpeed(p, rect().center().x(), speedStr, speedUnit );
+    m_pPaint->drawSpeed(p, surface_rect.center().x(), speedStr, speedUnit );
   }
 
   p.restore();
