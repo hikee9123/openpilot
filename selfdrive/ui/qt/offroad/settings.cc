@@ -470,6 +470,7 @@ SettingsWindow::SettingsWindow(QWidget *parent) : QFrame(parent) {
   auto networking = new Networking(this);
   QObject::connect(uiState()->prime_state, &PrimeState::changed, networking, &Networking::setPrimeType);
 
+
   QList<QPair<QString, QWidget *>> panels = {
     {tr("Device"), device},
     {tr("Network"), networking},
