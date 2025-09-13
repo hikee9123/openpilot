@@ -239,8 +239,8 @@ void OnPaint::updateState(const UIState &s)
   if (sm1.frame % (UI_FREQ) != 0)
   {
     auto controls_state = sm1["controlsState"].getControlsState();
-    m_param.cumLagMs = controls_state.getCumLagMs();
-    m_param.enabled = controls_state.getEnabled();
+    m_param.cumLagMs = controls_state.getCumLagMsDEPRECATED();
+    m_param.enabled = controls_state.getEnabledDEPRECATED();
 
     m_param.engaged = sm1.allAliveAndValid({"controlsState"}) && m_param.enabled;
   }
