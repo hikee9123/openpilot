@@ -15,7 +15,7 @@
 
 
 // OnroadHud
-OnPaint::OnPaint(QWidget *parent, int width, int height ) : QWidget(parent)
+OnPaint::OnPaint()
 {
   m_sm = std::make_unique<SubMaster, const std::initializer_list<const char *>>({
     "peripheralState", "gpsLocation", "gpsLocationExternal",
@@ -23,19 +23,11 @@ OnPaint::OnPaint(QWidget *parent, int width, int height ) : QWidget(parent)
   });
 
 
-  m_width = width;
-  m_height = height;
 
   state = uiState();
   scene = &(state->scene);
 
-  QVBoxLayout *main_layout = new QVBoxLayout(this);
-  main_layout->setContentsMargins(11, UI_BORDER_SIZE, 11, 20);
 
-  QHBoxLayout *top_layout = new QHBoxLayout;
-  top_layout->addWidget(icon_01 = new NetworkImageWidget, 0, Qt::AlignTop);
-
-  main_layout->addLayout(top_layout);
 
   is_debug = 0;//Params().getBool("ShowDebugMessage");
   //img_tire_pressure = QPixmap("qt/custom/images/img_tire_pressure.png");
