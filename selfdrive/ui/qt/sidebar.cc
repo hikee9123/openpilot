@@ -67,7 +67,7 @@ void Sidebar::mouseReleaseEvent(QMouseEvent *event) {
     MessageBuilder msg;
     //msg.initEvent().initBookmarkButton();
     // #custom
-    auto userFlag = msg.initEvent().initUserFlag();
+    auto userFlag = msg.initEvent().initBookmarkButton();
     m_pSideBar->mouseReleaseEvent( event, userFlag );
 
     pm->send("bookmarkButton", msg);

@@ -28,6 +28,9 @@ QPixmap loadPixmap(const QString &fileName, const QSize &size = {}, Qt::AspectRa
 QPixmap bootstrapPixmap(const QString &id);
 bool hasLongitudinalControl(const cereal::CarParams::Reader &car_params);
 
+// #custom
+QColor interpColor(float xv, std::vector<float> xp, std::vector<QColor> fp);
+
 struct InterFont : public QFont {
   InterFont(int pixel_size, QFont::Weight weight = QFont::Normal) : QFont("Inter") {
     setPixelSize(pixel_size);

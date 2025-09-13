@@ -15,27 +15,24 @@
 
 
 // OnroadHud
-OnPaint::OnPaint(QWidget *parent, int width, int height ) : QWidget(parent) 
+OnPaint::OnPaint() //: QWidget(parent)
 {
   m_sm = std::make_unique<SubMaster, const std::initializer_list<const char *>>({
-    "peripheralState", "gpsLocation", "gpsLocationExternal", 
+    "peripheralState", "gpsLocation", "gpsLocationExternal",
     "naviCustom",  "uICustom",  //"carControlCustom",
   });
 
 
-  m_width = width;
-  m_height = height;
-
   state = uiState();
   scene = &(state->scene);
 
-  QVBoxLayout *main_layout = new QVBoxLayout(this);
-  main_layout->setContentsMargins(11, UI_BORDER_SIZE, 11, 20);
+  //QVBoxLayout *main_layout = new QVBoxLayout(this);
+  //main_layout->setContentsMargins(11, UI_BORDER_SIZE, 11, 20);
 
-  QHBoxLayout *top_layout = new QHBoxLayout;
-  top_layout->addWidget(icon_01 = new NetworkImageWidget, 0, Qt::AlignTop);
+  //QHBoxLayout *top_layout = new QHBoxLayout;
+  //top_layout->addWidget(icon_01 = new NetworkImageWidget, 0, Qt::AlignTop);
 
-  main_layout->addLayout(top_layout);
+  //main_layout->addLayout(top_layout);
 
   is_debug = 0;//Params().getBool("ShowDebugMessage");
   //img_tire_pressure = QPixmap("qt/custom/images/img_tire_pressure.png");
@@ -44,7 +41,7 @@ OnPaint::OnPaint(QWidget *parent, int width, int height ) : QWidget(parent)
 
 float OnPaint::interp( float xv, float xp[], float fp[], int N)
 {
-	float dResult = 0; 
+	float dResult = 0;
 	int low, hi = 0;
 
 	while ( (hi < N) && (xv > xp[hi]))
@@ -76,7 +73,7 @@ float OnPaint::interp( float xv, float xp[], float fp[], int N)
 	return  dResult;
 }
 
-void OnPaint::configFont(QPainter &p, const QString &family, int size, const QString &style) 
+void OnPaint::configFont(QPainter &p, const QString &family, int size, const QString &style)
 {
   QFont f(family);
   f.setPixelSize(size);
@@ -86,7 +83,7 @@ void OnPaint::configFont(QPainter &p, const QString &family, int size, const QSt
 
 
 
-void OnPaint::drawText1(QPainter &p, int x, int y, const QString &text, QColor qColor, int nAlign ) 
+void OnPaint::drawText1(QPainter &p, int x, int y, const QString &text, QColor qColor, int nAlign )
 {
   QFontMetrics fm(p.font());
   QRect init_rect = fm.boundingRect(text);
@@ -107,7 +104,7 @@ void OnPaint::drawText1(QPainter &p, int x, int y, const QString &text, QColor q
 }
 
 
-void OnPaint::drawText2(QPainter &p, int x, int y, int flags, const QString &text, const QColor color) 
+void OnPaint::drawText2(QPainter &p, int x, int y, int flags, const QString &text, const QColor color)
 {
   QFontMetrics fm(p.font());
   QRect rect = fm.boundingRect(text);
@@ -116,7 +113,7 @@ void OnPaint::drawText2(QPainter &p, int x, int y, int flags, const QString &tex
   p.drawText(QRect(x, y, rect.width()+1, rect.height()), flags, text);
 }
 
-void OnPaint::drawText3(QPainter &p, int x, int y, const QString &text, QColor color) 
+void OnPaint::drawText3(QPainter &p, int x, int y, const QString &text, QColor color)
 {
   QRect real_rect = p.fontMetrics().boundingRect(text);
   real_rect.moveCenter({x, y - real_rect.height() / 2});
@@ -146,11 +143,11 @@ int OnPaint::get_param( const std::string &key )
 void OnPaint::updateState(const UIState &s)
 {
   // user message
-  SubMaster &sm1 = *(s.sm);  
+  SubMaster &sm1 = *(s.sm);
   SubMaster &sm2 = *(m_sm);
 
 
-  if ( (sm1.frame % UI_FREQ) != 0 ) 
+  if ( (sm1.frame % UI_FREQ) != 0 )
       sm2.update(0);
 
   // 1.
@@ -164,7 +161,7 @@ void OnPaint::updateState(const UIState &s)
   if( !is_debug ) return;
 
   // 1.
-  if (s.scene.pandaType == cereal::PandaState::PandaType::TRES) 
+  if (s.scene.pandaType == cereal::PandaState::PandaType::TRES)
   {
       auto ge_data = sm2["gpsLocation"].getGpsLocation();
       m_param.gpsAccuracyUblox = ge_data.getVerticalAccuracy();
@@ -174,7 +171,7 @@ void OnPaint::updateState(const UIState &s)
   {
     auto gps_ext = sm2["gpsLocationExternal"].getGpsLocationExternal();
     m_param.gpsAccuracyUblox = gps_ext.getHorizontalAccuracy();
-    m_param.altitudeUblox = gps_ext.getAltitude(); 
+    m_param.altitudeUblox = gps_ext.getAltitude();
   }
 
   // 1.
@@ -196,14 +193,14 @@ void OnPaint::updateState(const UIState &s)
   m_nda.camType = camType;
   m_nda.roadLimitSpeed = roadLimitSpeed;
   m_nda.camLimitSpeed = camLimitSpeed;
-  m_nda.camLimitSpeedLeftDist = camLimitSpeedLeftDist;    
+  m_nda.camLimitSpeedLeftDist = camLimitSpeedLeftDist;
   m_nda.cntIdx = cntIdx;
 
 
   // 2.
   auto deviceState = sm1["deviceState"].getDeviceState();
-  auto  maxCpuTemp = deviceState.getCpuTempC();  
-  m_param.cpuPerc = deviceState.getCpuUsagePercent()[0];  
+  auto  maxCpuTemp = deviceState.getCpuTempC();
+  m_param.cpuPerc = deviceState.getCpuUsagePercent()[0];
   m_param.cpuTemp = maxCpuTemp[0];
 
   // 2.
@@ -214,10 +211,10 @@ void OnPaint::updateState(const UIState &s)
   // 2.
   auto car_state = sm1["carState"].getCarState();
   m_param.angleSteers = car_state.getSteeringAngleDeg();
-  m_param.enginRpm =  car_state.getEngineRpm();
-  m_gasVal = car_state.getGas();
+  m_param.enginRpm =  car_state.getEngineRpmDEPRECATED();
+  m_gasVal = car_state.getGasDEPRECATED();
   bool  brakePress = car_state.getBrakePressed();
-  bool  brakeLights = car_state.getBrakeLightsDEPRECATED();  
+  bool  brakeLights = car_state.getBrakeLightsDEPRECATED();
   if( brakePress ) m_nBrakeStatus = 1; else m_nBrakeStatus = 0;
   if( brakeLights ) m_nBrakeStatus |= 2;
 
@@ -229,22 +226,22 @@ void OnPaint::updateState(const UIState &s)
   // debug Message
   alert.alertTextMsg1 = carState_custom.getAlertTextMsg1();
   alert.alertTextMsg2 = carState_custom.getAlertTextMsg2();
-  alert.alertTextMsg3 = carState_custom.getAlertTextMsg3();    
+  alert.alertTextMsg3 = carState_custom.getAlertTextMsg3();
   m_param.electGearStep  = carState_custom.getElectGearStep();
   m_param.breakPos = carState_custom.getBreakPos();
   scene->custom.leadDistance = carState_custom.getLeadDistance();
 
 
   // 2.
-  if (sm1.frame % (UI_FREQ) != 0)   
+  if (sm1.frame % (UI_FREQ) != 0)
   {
     auto controls_state = sm1["controlsState"].getControlsState();
-    m_param.cumLagMs = controls_state.getCumLagMs();
-    m_param.enabled = controls_state.getEnabled();
+    m_param.cumLagMs = controls_state.getCumLagMsDEPRECATED();
+    m_param.enabled = controls_state.getEnabledDEPRECATED();
 
     m_param.engaged = sm1.allAliveAndValid({"controlsState"}) && m_param.enabled;
   }
-  
+
 
   auto pandaStates = sm1["pandaStates"].getPandaStates();
   if (pandaStates.size() > 0) {
@@ -293,7 +290,7 @@ void OnPaint::drawLead(QPainter &p, const cereal::RadarState::LeadData::Reader &
       currentAngle += 0.1;  // 필요에 따라 회전 속도 조절
       if (currentAngle >= 2 * M_PI)
           currentAngle -= 2 * M_PI;
-      
+
       const int numPoints = 12;  // 예시로 36개의 점을 사용하여 원을 근사
       for (int i = 0; i < numPoints; ++i)
       {
@@ -306,7 +303,7 @@ void OnPaint::drawLead(QPainter &p, const cereal::RadarState::LeadData::Reader &
       szFont = 50;
       rcText = QRect(x - (sz * 1.25), y - (sz*0.45), 2 * (sz * 1.25),  sz );
       p.setBrush(QColor(218, 202, 37, 255));
-      p.drawPolygon(polygonData.data(), polygonData.size());    
+      p.drawPolygon(polygonData.data(), polygonData.size());
 
     }
     else  // vision status.
@@ -319,18 +316,18 @@ void OnPaint::drawLead(QPainter &p, const cereal::RadarState::LeadData::Reader &
       polygonData = {{x + (sz * 1.25), y + sz}, {x, y}, {x - (sz * 1.25), y + sz}};
     }
     p.setBrush(redColor(fillAlpha));
-    p.drawPolygon(polygonData.data(), polygonData.size());    
-    
+    p.drawPolygon(polygonData.data(), polygonData.size());
+
 
     if ( szPoint && !polygonData.isEmpty()) {
         QPointF start = polygonData[0];
-        p.setBrush( QColor( 255 - fillAlpha,  fillAlpha, 0) );    
+        p.setBrush( QColor( 255 - fillAlpha,  fillAlpha, 0) );
         p.drawEllipse(start, szPoint, szPoint);
     }
 
 
     QString  str;
-    str.sprintf("%.0f",d_rel); 
+    str.sprintf("%.0f",d_rel);
     p.setPen( QColor(0, 0, 0) );
     p.setFont( InterFont(szFont, QFont::Normal));
     p.drawText(rcText, Qt::AlignCenter, str);
@@ -356,7 +353,7 @@ void OnPaint::drawHud(QPainter &p)
   if( m_param.ui.getTpms() )
   {
     bb_draw_tpms( p, 75, 800);
-  } 
+  }
 
   if( m_param.ui.getKegman() )
   {
@@ -370,7 +367,7 @@ void OnPaint::drawHud(QPainter &p)
     /*
     int bottom = 300;
     //int interval = 2;  // 간격을 설정합니다.
-    
+
     SubMaster &sm2 = *(m_sm);
     auto navModel = sm2["navModel"].getNavModel();
     auto features = navModel.getFeatures();
@@ -392,7 +389,7 @@ int  OnPaint::showCarTracking()
     return  is_carTracking;
 }
 
-void OnPaint::drawSpeed(QPainter &p, int x, QString speedStr, QString speedUnit ) 
+void OnPaint::drawSpeed(QPainter &p, int x, QString speedStr, QString speedUnit )
 {
   // x = rect().center().x();
    QColor  val_color = QColor(255, 255, 255, 255); // QColor(0x80, 0xd8, 0xa6, 0xff); // QColor(255, 255, 255, 255);
@@ -401,7 +398,7 @@ void OnPaint::drawSpeed(QPainter &p, int x, QString speedStr, QString speedUnit 
    float  gasVal = m_gasVal * 100;
 
 
-  if( m_param.breakPos > 0) 
+  if( m_param.breakPos > 0)
   {
     auto interp_color = [=](QColor c1, QColor c2, QColor c3) {
       return m_param.breakPos > 0 ? interpColor( m_param.breakPos, {0, 60, 130}, {c1, c2, c3}) : c1;
@@ -441,7 +438,7 @@ void OnPaint::drawSpeed(QPainter &p, int x, QString speedStr, QString speedUnit 
 }
 
 
-void OnPaint::ui_main_navi( QPainter &p ) 
+void OnPaint::ui_main_navi( QPainter &p )
 {
   QString text4;
   int     bb_x = 50;
@@ -463,7 +460,7 @@ void OnPaint::ui_main_navi( QPainter &p )
 
 
 // tpms by neokii
-QColor OnPaint::get_tpms_color(int tpms) 
+QColor OnPaint::get_tpms_color(int tpms)
 {
     if(tpms < 5 || tpms > 60) // N/A
         return QColor(125, 125, 125, 200);
@@ -472,7 +469,7 @@ QColor OnPaint::get_tpms_color(int tpms)
     return QColor(255, 255, 255, 200);
 }
 
-QString OnPaint::get_tpms_text(int tpms) 
+QString OnPaint::get_tpms_text(int tpms)
 {
     if(tpms < 5 || tpms > 200)
         return "-";
@@ -507,7 +504,7 @@ void OnPaint::bb_draw_tpms(QPainter &p, int x, int y )
 
 
 
-void OnPaint::ui_draw_debug1( QPainter &p ) 
+void OnPaint::ui_draw_debug1( QPainter &p )
 {
   QString text1 = QString::fromStdString(alert.alertTextMsg1);
   QString text2 = QString::fromStdString(alert.alertTextMsg2);
@@ -521,7 +518,7 @@ void OnPaint::ui_draw_debug1( QPainter &p )
 
   p.setPen( QColor(255, 255, 255, 255) );
   p.setBrush(QColor(0, 0, 0, 100));
-  p.drawRoundedRect(rc, 20, 20); 
+  p.drawRoundedRect(rc, 20, 20);
 
 
   QTextOption  textOpt =  QTextOption( Qt::AlignLeft );
@@ -547,7 +544,7 @@ void OnPaint::ui_main_debug(QPainter &p)
 
     p.setFont(InterFont(38));
     p.setPen( QColor(255, 255, 255, 255) );
-    text.sprintf("Panda=%d", m_param.controlsAllowed  );    
+    text.sprintf("Panda=%d", m_param.controlsAllowed  );
     p.drawText( bb_x, bb_y+nGap, text );
   }
 }
@@ -559,7 +556,7 @@ int OnPaint::bb_ui_draw_measure(QPainter &p,  const QString &bb_value, const QSt
     QColor bb_valueColor, QColor bb_labelColor, QColor bb_uomColor,
     int bb_valueFontSize, int bb_labelFontSize, int bb_uomFontSize, int bb_uom_dy )
 {
- 
+
   int dx = 0;
   int nLen = bb_uom.length();
   if (nLen > 0) {
@@ -595,7 +592,7 @@ int OnPaint::bb_ui_draw_measure(QPainter &p,  const QString &bb_value, const QSt
 }
 
 
-QColor OnPaint::get_color( int nVal, int nRed, int nYellow ) 
+QColor OnPaint::get_color( int nVal, int nRed, int nYellow )
 {
   QColor  lab_color =  QColor(255, 255, 255, 255);
 
@@ -609,7 +606,7 @@ QColor OnPaint::get_color( int nVal, int nRed, int nYellow )
 }
 
 
-QColor OnPaint::angleSteersColor( int angleSteers ) 
+QColor OnPaint::angleSteersColor( int angleSteers )
 {
     QColor val_color = QColor(255, 255, 255, 200);
 
@@ -624,7 +621,7 @@ QColor OnPaint::angleSteersColor( int angleSteers )
 }
 
 
-void OnPaint::bb_ui_draw_measures_left(QPainter &p, int bb_x, int bb_y, int bb_w ) 
+void OnPaint::bb_ui_draw_measures_left(QPainter &p, int bb_x, int bb_y, int bb_w )
 {
   int bb_rx = bb_x + (int)(bb_w/2);
   int bb_ry = bb_y;
@@ -643,7 +640,7 @@ void OnPaint::bb_ui_draw_measures_left(QPainter &p, int bb_x, int bb_y, int bb_w
     p.setPen(QPen(QColor(0xff, 0xff, 0xff, 100), 3));
     p.setBrush(QColor(0, 0, 0, 100));
     p.drawRoundedRect(rc, 20, 20);
-    p.setPen(Qt::NoPen);  
+    p.setPen(Qt::NoPen);
   }
 
 
@@ -659,7 +656,7 @@ void OnPaint::bb_ui_draw_measures_left(QPainter &p, int bb_x, int bb_y, int bb_w
       //show RED if less than 5 meters
       //show orange if less than 15 meters
       float d_rel2 = m_param.lead_radar.getDRel();
-      
+
       if((int)(d_rel2) < 15) {
         val_color = QColor(255, 188, 3, 200);
       }
@@ -694,7 +691,7 @@ void OnPaint::bb_ui_draw_measures_left(QPainter &p, int bb_x, int bb_y, int bb_w
   {
     QColor val_color = QColor(255, 255, 255, 200);
     if ( m_param.lead_radar.getStatus() ) {
-      float v_rel = m_param.lead_radar.getVRel();  
+      float v_rel = m_param.lead_radar.getVRel();
 
       if((int)(v_rel) < 0) {
         val_color = QColor(255, 188, 3, 200);
@@ -748,7 +745,7 @@ void OnPaint::bb_ui_draw_measures_left(QPainter &p, int bb_x, int bb_y, int bb_w
   bbh_left = bb_h;
 }
 
-QString OnPaint::gearGap( int gear_step, QColor &color ) 
+QString OnPaint::gearGap( int gear_step, QColor &color )
 {
     QString  strGap;
 
@@ -757,14 +754,14 @@ QString OnPaint::gearGap( int gear_step, QColor &color )
     else if (gear_step == 1) strGap = "■";
     else if (gear_step == 2) strGap = "■■";
     else if (gear_step == 3) strGap = "■■■";
-    else if (gear_step == 4) strGap = "■■■■■";      
-    else if (gear_step == 5) strGap = "■■■■■■";      
+    else if (gear_step == 4) strGap = "■■■■■";
+    else if (gear_step == 5) strGap = "■■■■■■";
     else strGap = "■■■■■■■";
 
     return strGap;
 }
 
-void OnPaint::bb_ui_draw_measures_right( QPainter &p, int bb_x, int bb_y, int bb_w ) 
+void OnPaint::bb_ui_draw_measures_right( QPainter &p, int bb_x, int bb_y, int bb_w )
 {
   int bb_rx = bb_x + (int)(bb_w/2);
   int bb_ry = bb_y;
@@ -782,9 +779,9 @@ void OnPaint::bb_ui_draw_measures_right( QPainter &p, int bb_x, int bb_y, int bb
   if ( bbh_right > 5 )
   {
     QRect rc( bb_x, bb_y, bb_w, bbh_right);
-    p.setPen(QPen(QColor(0xff, 0xff, 0xff, 100), 3)); 
+    p.setPen(QPen(QColor(0xff, 0xff, 0xff, 100), 3));
     p.setBrush(QColor(0, 0, 0, 100));
-    p.drawRoundedRect(rc, 20, 20); 
+    p.drawRoundedRect(rc, 20, 20);
     p.setPen(Qt::NoPen);
   }
 
@@ -794,7 +791,7 @@ void OnPaint::bb_ui_draw_measures_right( QPainter &p, int bb_x, int bb_y, int bb
   int     nCnt = 0;
 
   //add CPU temperature
-  if( m_param.ui.getKegmanCPU() ) 
+  if( m_param.ui.getKegmanCPU() )
   {
     nCnt++;
     if( nCnt > max_item ) return;
@@ -816,12 +813,12 @@ void OnPaint::bb_ui_draw_measures_right( QPainter &p, int bb_x, int bb_y, int bb
     bb_ry = bb_y + bb_h;
   }
 
-        
+
 
   if( m_param.ui.getKegmanLag() )
   {
     nCnt++;
-    if( nCnt > max_item ) return;    
+    if( nCnt > max_item ) return;
     QColor val_color = QColor(255, 255, 255, 200);
     if( m_param.cumLagMs  < 10 )
       val_color = QColor(0, 255, 0, 200);
@@ -843,7 +840,7 @@ void OnPaint::bb_ui_draw_measures_right( QPainter &p, int bb_x, int bb_y, int bb
   if( m_param.ui.getKegmanBattery() )
   {
     nCnt++;
-    if( nCnt > max_item ) return;    
+    if( nCnt > max_item ) return;
     QColor val_color = QColor(255, 255, 255, 200);
 
     if( m_param.batteryVoltage > 14.7 ) val_color = QColor(255, 100, 0, 200);
@@ -865,7 +862,7 @@ void OnPaint::bb_ui_draw_measures_right( QPainter &p, int bb_x, int bb_y, int bb
   if( m_param.ui.getKegmanGPU() )
   {
     nCnt++;
-    if( nCnt > max_item ) return;    
+    if( nCnt > max_item ) return;
     QColor val_color = QColor(255, 255, 255, 200);
     //show red/orange if gps accuracy is low
      val_color = get_color( (int)m_param.gpsAccuracyUblox, 5, 2 );
@@ -879,7 +876,7 @@ void OnPaint::bb_ui_draw_measures_right( QPainter &p, int bb_x, int bb_y, int bb
     else {
       val_str.sprintf("%.2f", m_param.gpsAccuracyUblox );
     }
-    uom_str.sprintf("%.1f", m_param.altitudeUblox); 
+    uom_str.sprintf("%.1f", m_param.altitudeUblox);
     bb_h +=bb_ui_draw_measure(p,  val_str, uom_str, "GPS PREC",
         bb_rx, bb_ry, bb_uom_dx,
         val_color, lab_color, uom_color,
@@ -892,7 +889,7 @@ void OnPaint::bb_ui_draw_measures_right( QPainter &p, int bb_x, int bb_y, int bb
   if( m_param.ui.getKegmanAngle() )
   {
     nCnt++;
-    if( nCnt > max_item ) return;    
+    if( nCnt > max_item ) return;
     QColor val_color = QColor(0, 255, 0, 200);
 
     val_color = angleSteersColor( (int)(m_param.angleSteers) );
@@ -915,14 +912,14 @@ void OnPaint::bb_ui_draw_measures_right( QPainter &p, int bb_x, int bb_y, int bb
   if( m_param.ui.getKegmanDistance() )
   {
     nCnt++;
-    if( nCnt > max_item ) return;    
+    if( nCnt > max_item ) return;
     QColor val_color = QColor(255, 255, 255, 200);
     uom_color = QColor(255, 255, 255, 200);
     if ( m_param.lead_radar.getStatus() ) {
       //show RED if less than 5 meters
       //show orange if less than 15 meters
       float d_rel2 = m_param.lead_radar.getDRel();
-      
+
       if((int)(d_rel2) < 15) {
         val_color = QColor(255, 188, 3, 200);
       }
@@ -956,11 +953,11 @@ void OnPaint::bb_ui_draw_measures_right( QPainter &p, int bb_x, int bb_y, int bb
   if( m_param.ui.getKegmanSpeed()  )
   {
     nCnt++;
-    if( nCnt > max_item ) return;    
+    if( nCnt > max_item ) return;
     QColor val_color = QColor(255, 255, 255, 200);
     uom_color = QColor(255, 255, 255, 200);
     if ( m_param.lead_radar.getStatus() ) {
-      float v_rel = m_param.lead_radar.getVRel();  
+      float v_rel = m_param.lead_radar.getVRel();
 
       if((int)(v_rel) < 0) {
         val_color = QColor(255, 188, 3, 200);
@@ -994,25 +991,25 @@ void OnPaint::bb_ui_draw_measures_right( QPainter &p, int bb_x, int bb_y, int bb
   if( m_param.ui.getKegmanEngine() )
   {
     nCnt++;
-    if( nCnt > max_item ) return;    
+    if( nCnt > max_item ) return;
     float fEngineRpm = m_param.enginRpm;
     int   electGearStep  = m_param.electGearStep;
-  
+
     uom_color = QColor(255, 255, 255, 200);
     QColor val_color = QColor(255, 255, 255, 200);
 
     if (  fEngineRpm <= 0 )
     {
-      val_str.sprintf("EV"); 
+      val_str.sprintf("EV");
       val_color = QColor(0, 255, 0, 200);
     }
-    else 
+    else
     {
-      val_str.sprintf("%.0f", fEngineRpm); 
+      val_str.sprintf("%.0f", fEngineRpm);
       if( fEngineRpm > 2000 ) val_color = QColor(255, 188, 3, 200);
       else if( fEngineRpm > 3000 ) val_color = QColor(255, 0, 0, 200);
     }
-    
+
     uom_str = gearGap( electGearStep, uom_color );
     bb_h +=bb_ui_draw_measure(p,  val_str, uom_str, "ENGINE",
       bb_rx, bb_ry, bb_uom_dx,

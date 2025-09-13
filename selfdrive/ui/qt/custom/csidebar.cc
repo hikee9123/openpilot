@@ -5,7 +5,7 @@
 #include "selfdrive/ui/qt/util.h"
 
 
-void CSidebar::configFont(QPainter &p, const QString &family, int size, const QString &style) 
+void CSidebar::configFont(QPainter &p, const QString &family, int size, const QString &style)
 {
   QFont f(family);
   f.setPixelSize(size);
@@ -14,25 +14,25 @@ void CSidebar::configFont(QPainter &p, const QString &family, int size, const QS
 }
 
 
-CSidebar::CSidebar(QFrame *parent)  
+CSidebar::CSidebar(QFrame *parent)
 {
   beterrry1_img = loadPixmap("qt/custom/images/battery.png", battery_rc.size());
   beterrry2_img = loadPixmap("qt/custom/images/battery_charging.png", battery_rc.size());
 }
 
-void CSidebar::mouseReleaseEvent(QMouseEvent *event, cereal::UserFlag::Builder &userFlag ) 
+void CSidebar::mouseReleaseEvent(QMouseEvent *event, cereal::UserBookmark::Builder &userFlag )
 {
   UIState   *s = uiState();
   UIScene   &scene = s->scene;
   printf( "CSidebar::mouseReleaseEvent  m_idxUserFlag=%d   \n", m_idxUserFlag );
-  
-  scene.custom.m_powerflag = 0; 
+
+  scene.custom.m_powerflag = 0;
   m_idxUserFlag++;
   userFlag.setIdx( m_idxUserFlag );
 
 }
 
-int CSidebar::updateState(const UIState &s) 
+int CSidebar::updateState(const UIState &s)
 {
   SubMaster &sm = *(s.sm);
   if (sm.frame % (UI_FREQ) != 0) return 0;
@@ -50,7 +50,7 @@ int CSidebar::updateState(const UIState &s)
   return 1;
 }
 
-void CSidebar::paintEvent(QPainter &p) 
+void CSidebar::paintEvent(QPainter &p)
 {
   UIState *s = uiState();
   UIScene &scene = s->scene;
@@ -58,14 +58,14 @@ void CSidebar::paintEvent(QPainter &p)
   // atom - battery
   float  batteryPercent = 90.0;
 
-  
+
  QColor  color = QColor( 100, 100, 100 );
 
 
   QString beterryValtage;
   beterryValtage.sprintf("%.1f", fBatteryVoltage );
 
-  if( fBatteryVoltage < 5 ) 
+  if( fBatteryVoltage < 5 )
   {
     beterryValtage = "-";
   }
@@ -92,8 +92,8 @@ void CSidebar::paintEvent(QPainter &p)
 
   p.drawPixmap( rect.x(), rect.y(), beterrry1_img );
   p.setPen(Qt::black);
-  configFont(p, "Open Sans", 25, "Regular");  
-  p.drawText(rect, Qt::AlignLeft | Qt::AlignVCenter, beterryValtage);    
+  configFont(p, "Open Sans", 25, "Regular");
+  p.drawText(rect, Qt::AlignLeft | Qt::AlignVCenter, beterryValtage);
 
 
   if( scene.custom.m_powerflag )

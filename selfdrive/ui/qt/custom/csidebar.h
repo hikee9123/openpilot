@@ -40,7 +40,7 @@ public:
     }
 
 private:
-    QPushButton* closeButton;    
+    QPushButton* closeButton;
 };
 
 
@@ -56,7 +56,7 @@ public:
 public:
   void paintEvent(QPainter &p);
   int  updateState(const UIState &s);
-  void mouseReleaseEvent(QMouseEvent *event, cereal::UserFlag::Builder &userFlag );
+  void mouseReleaseEvent(QMouseEvent *event, cereal::UserBookmark::Builder &userFlag );
 
 private:
   void   configFont(QPainter &p, const QString &family, int size, const QString &style);
@@ -68,7 +68,7 @@ private:
   float  fBatteryVoltage = 0.;
 
   int    m_idxUserFlag = 0;
-  
+
 
   const QRect battery_rc = QRect(160, 255, 78, 38);
 };

@@ -2464,9 +2464,6 @@ struct EncodeData {
   height @5 :UInt32;
 }
 
-struct UserFlag {
-  idx @0 :UInt64;
-}
 
 struct DebugAlert {
   alertText1 @0 :Text;
@@ -2474,6 +2471,7 @@ struct DebugAlert {
 }
 
 struct UserBookmark @0xfe346a9de48d9b50 {
+  idx @0 :UInt64;
 }
 
 struct SoundPressure @0xdc24138990726023 {
