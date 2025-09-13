@@ -2464,9 +2464,7 @@ struct EncodeData {
   height @5 :UInt32;
 }
 
-struct UserFlag {
-  idx @0 :UInt64;
-}
+
 
 struct DebugAlert {
   alertText1 @0 :Text;
