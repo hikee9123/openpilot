@@ -265,21 +265,21 @@ static bool hyundai_community_tx_hook(const CANPacket_t *msg) {
   return tx;
 }
 
-static int hyundai_community_fwd_hook(int bus_num, int addr) {
+static bool hyundai_community_fwd_hook(int bus_num, int addr) {
+  bool blocked = true;
 
-  int bus_fwd = -1;
 
   // forward cam to ccan and viceversa, except lkas cmd
   if (bus_num == 0) {
     if( addr != 0x251 ) { // LKAS 15 event disable.
-        bus_fwd = 2;
+        blocked = false;
     }
   }
   if ((bus_num == 2) && (addr != 0x340) && (addr != 0x485)) {
-    bus_fwd = 0;
+    blocked = false;
   }
 
-  return bus_fwd;
+  return blocked;
 }
 
 static safety_config hyundai_community_init(uint16_t param) {
