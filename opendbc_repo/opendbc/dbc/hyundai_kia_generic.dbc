@@ -1523,8 +1523,6 @@ BO_ 882 ELECT_GEAR: 8 XXX
  SG_ Elect_Gear_Shifter : 16|4@1+ (1,0) [0|7] "" CLU
  SG_ SLC_ON : 31|1@0+ (1,0) [0|1] "" CLU
  SG_ SLC_SET_SPEED : 32|8@1+ (1,0) [0|255] "" CLU
- SG_ Elect_Gear_Step : 22|3@0+ (1,0) [0|7] "" XXX
- SG_ Elect_Motor_Speed : 0|8@1+ (1,0) [0|255] "" XXX
 
 BO_ 881 E_EMS11: 8 XXX
  SG_ Brake_Pedal_Pos : 0|8@1+ (1,0) [0|127] "" XXX
@@ -1534,8 +1532,6 @@ BO_ 881 E_EMS11: 8 XXX
  SG_ Cruise_Limit_Target : 23|8@1+ (1,0) [0|15] "" XXX
  SG_ Accel_Pedal_Pos : 31|8@1+ (1,0) [0|254] "" XXX
  SG_ CR_Vcu_AccPedDep_Pos : 56|8@1+ (1,0) [0|254] "" XXX
- SG_ Engine_Run : 14|1@0+ (1,0) [0|1] "" XXX
- SG_ N : 18|13@1+ (1,0) [0|15] "" XXX
 
 BO_ 1355 EV_PC6: 8 CGW
  SG_ CF_Vcu_SbwWarnMsg : 16|3@1+ (1,0) [0|7] "" Vector__XXX
@@ -1656,8 +1652,6 @@ BO_ 1348 Navi_HU: 8 XXX
  SG_ SpeedLim_Nav_General : 29|1@0+ (1,0) [0|1] "" XXX
  SG_ SpeedLim_Nav_Cam : 30|1@0+ (1,0) [0|1] "" XXX
 
-BO_ 1291 EV_Info: 8 XXX
- SG_ EV_Charge_Level : 17|7@1+ (1,0) [0|100] "%" XXX
 CM_ "BO_ E_EMS11: All (plug-in) hybrids use this gas signal: CR_Vcu_AccPedDep_Pos, and all EVs use the Accel_Pedal_Pos signal. See hyundai/values.py for a specific car list";
 CM_ 145 "Contains signal with accelerator pedal press. Used by fuel cell hydrogen-powered (FCEV) cars such as the 2021 Hyundai Nexo.";
 CM_ 512 "Contains signal with gear shifter. Used by fuel cell hydrogen-powered (FCEV) cars such as the 2021 Hyundai Nexo.";
