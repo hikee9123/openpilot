@@ -7,6 +7,7 @@
 
 #include "selfdrive/ui/ui.h"
 #include "selfdrive/ui/qt/network/networking.h"
+#include "selfdrive/ui/qt/custom/csidebar.h"  // #custom
 
 typedef QPair<QPair<QString, QString>, QColor> ItemStatus;
 Q_DECLARE_METATYPE(ItemStatus);
@@ -63,4 +64,7 @@ protected:
 private:
   std::unique_ptr<PubMaster> pm;
   Networking *networking = nullptr;
+
+  // #custom
+  CSidebar  *m_pSideBar = nullptr;
 };
