@@ -42,7 +42,6 @@ int CSidebar::updateState(const UIState &s)
 
   auto peripheralState = sm["peripheralState"].getPeripheralState();
   fBatteryVoltage = peripheralState.getVoltage() * 0.001;
-
   //auto pandaStates = sm["pandaStates"].getPandaStates();
   //if (pandaStates.size() > 0) {
   //  fBatteryVoltage = pandaStates[0].getVoltage() * 0.001 + 0.2;
