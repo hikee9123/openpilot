@@ -352,6 +352,12 @@ static void generic_rx_checks(void) {
     controls_allowed = false;
   }
   regen_braking_prev = regen_braking;
+
+  // exit controls on rising edge of steering override/disengage
+  if (steering_disengage && !steering_disengage_prev) {
+    controls_allowed = false;
+  }
+  steering_disengage_prev = steering_disengage;
 }
 
 static void stock_ecu_check(bool stock_ecu_detected) {

@@ -5,8 +5,6 @@ from opendbc.car.interfaces import MAX_CTRL_SPEED
 
 from openpilot.selfdrive.selfdrived.events import Events
 
-from openpilot.common.params import Params
-
 ButtonType = structs.CarState.ButtonEvent.Type
 GearShifter = structs.CarState.GearShifter
 EventName = log.OnroadEvent.EventName
@@ -36,14 +34,6 @@ class CarSpecificEvents:
     self.low_speed_alert = False
     self.no_steer_warning = False
     self.silent_steer_warning = True
-
-    self.ufc_mode = Params().get_bool("UFCModeEnabled")
-    self.steer_warning_fix_enabled = Params().get_bool("SteerWarningFix")
-    self.user_specific_feature = Params().get("UserSpecificFeature", return_default=True)
-    self.long_alt = Params().get("KISALongAlt", return_default=True)
-    self.exp_long = self.CP.sccBus <= 0 and self.CP.openpilotLongitudinalControl and self.long_alt not in (1, 2)
-    self.no_mdps_mods = Params().get_bool("NoSmartMDPS")
-    self.lfa_button_eng = Params().get_bool("LFAButtonEngagement")
 
   def update(self, CS: car.CarState, CS_prev: car.CarState, CC: car.CarControl):
     if self.CP.brand in ('body', 'mock'):
@@ -134,54 +124,6 @@ class CarSpecificEvents:
       events = self.create_common_events(CS, CS_prev, extra_gears=(GearShifter.sport, GearShifter.manumatic),
                                          pcm_enable=self.CP.pcmCruise, allow_button_cancel=False)
 
-      # kisa
-      if CC.needBrake and not self.CP.openpilotLongitudinalControl:
-        events.add(EventName.needBrake)
-      if not CC.lkasTempDisabled:
-        if CC.lanechangeManualTimer and CS.vEgo > 0.3:
-          events.add(EventName.laneChangeManual)
-        if CC.emergencyManualTimer:
-          events.add(EventName.emgButtonManual)
-        if CC.standstillResButton:
-          events.add(EventName.standstillResButton)
-        if CC.cruiseGapAdjusting:
-          events.add(EventName.gapAdjusting)
-        if CC.onSpeedBumpControl and CS.vEgo > 8.3:
-          events.add(EventName.speedBump)
-        if CC.onSpeedControl and CS.vEgo > 0.3:
-          events.add(EventName.camSpeedDown)
-        if CC.curvSpeedControl and CS.vEgo > 8.3:
-          events.add(EventName.curvSpeedDown)
-        if CC.cutInControl and CS.vEgo > 8.3:
-          events.add(EventName.cutinDetection)
-        if CC.driverSccSetControl:
-          events.add(EventName.sccDriverOverride)        
-        if CC.autoholdPopupTimer:
-          events.add(EventName.autoHold)
-        if CC.autoResStarting:
-          events.add(EventName.resCruise)
-        if CC.e2eStandstill:
-          events.add(EventName.chimeAtResume)
-
-      if CC.modeChangeTimer:
-        if CS.cruiseState.modeSel == 0:
-          events.add(EventName.modeChangeOpenpilot)
-        elif CS.cruiseState.modeSel == 1:
-          events.add(EventName.modeChangeDistcurv)
-        elif CS.cruiseState.modeSel == 2:
-          events.add(EventName.modeChangeDistance)
-        elif CS.cruiseState.modeSel == 3:
-          events.add(EventName.modeChangeCurv)
-        elif CS.cruiseState.modeSel == 4:
-          events.add(EventName.modeChangeOneway)
-        elif CS.cruiseState.modeSel == 5:
-          events.add(EventName.modeChangeMaponly)
-
-      if CC.lkasTempDisabled:
-        events.add(EventName.lkasDisabled)
-      elif CC.lkasTempDisabledTimer:
-        events.add(EventName.lkasEnabled)
-
     else:
       events = self.create_common_events(CS, CS_prev)
 
@@ -191,24 +133,17 @@ class CarSpecificEvents:
                            allow_button_cancel=True):
     events = Events()
 
-    if self.user_specific_feature == 11:
-      if CS.gearShifter != GearShifter.drive and (extra_gears is None or
-        CS.gearShifter not in extra_gears) and CS.cruiseState.enabled:
-        events.add(EventName.gearNotD)
-      if CS.gearShifter == GearShifter.reverse:
-        events.add(EventName.reverseGear)
-    else:
-      if CS.doorOpen:
-        events.add(EventName.doorOpen)
-      if CS.seatbeltUnlatched:
-        events.add(EventName.seatbeltNotLatched)
-      if CS.gearShifter != GearShifter.drive and (extra_gears is None or
-        CS.gearShifter not in extra_gears):
-        events.add(EventName.wrongGear)
-      if CS.gearShifter == GearShifter.reverse:
-        events.add(EventName.reverseGear)
-      if not CS.cruiseState.available:
-        events.add(EventName.wrongCarMode)
+    if CS.doorOpen:
+      events.add(EventName.doorOpen)
+    if CS.seatbeltUnlatched:
+      events.add(EventName.seatbeltNotLatched)
+    if CS.gearShifter != GearShifter.drive and (extra_gears is None or
+       CS.gearShifter not in extra_gears):
+      events.add(EventName.wrongGear)
+    if CS.gearShifter == GearShifter.reverse:
+      events.add(EventName.reverseGear)
+    if not CS.cruiseState.available:
+      events.add(EventName.wrongCarMode)
     if CS.espDisabled:
       events.add(EventName.espDisabled)
     if CS.espActive:
@@ -221,25 +156,25 @@ class CarSpecificEvents:
       events.add(EventName.speedTooHigh)
     if CS.cruiseState.nonAdaptive:
       events.add(EventName.wrongCruiseMode)
-    if CS.brakeHoldActive and self.CP.openpilotLongitudinalControl and not self.ufc_mode:
+    if CS.brakeHoldActive and self.CP.openpilotLongitudinalControl:
       events.add(EventName.brakeHold)
-    if CS.parkingBrake and not self.ufc_mode:
+    if CS.parkingBrake:
       events.add(EventName.parkBrake)
     if CS.accFaulted:
       events.add(EventName.accFaulted)
     if CS.steeringPressed:
       events.add(EventName.steerOverride)
-    if CS.steeringDisengage and not CS_prev.steeringDisengage and not self.ufc_mode:
+    if CS.steeringDisengage and not CS_prev.steeringDisengage:
       events.add(EventName.steerDisengage)
-    if CS.brakePressed and CS.standstill and not self.ufc_mode:
+    if CS.brakePressed and CS.standstill:
       events.add(EventName.preEnableStandstill)
-    if CS.gasPressed and not self.ufc_mode:
+    if CS.gasPressed:
       events.add(EventName.gasPressedOverride)
     if CS.vehicleSensorsInvalid:
       events.add(EventName.vehicleSensorsInvalid)
     if CS.invalidLkasSetting:
       events.add(EventName.invalidLkasSetting)
-    if CS.lowSpeedAlert and self.no_mdps_mods:
+    if CS.lowSpeedAlert:
       events.add(EventName.belowSteerSpeed)
     if CS.buttonEnable:
       events.add(EventName.buttonEnable)
@@ -248,15 +183,13 @@ class CarSpecificEvents:
     for b in CS.buttonEvents:
       # Disable on rising and falling edge of cancel for both stock and OP long
       # TODO: only check the cancel button with openpilot longitudinal on all brands to match panda safety
-      if b.type == ButtonType.cancel and (allow_button_cancel or not self.CP.pcmCruise) and not self.ufc_mode:
+      if b.type == ButtonType.cancel and (allow_button_cancel or not self.CP.pcmCruise):
         events.add(EventName.buttonCancel)
 
     # Handle permanent and temporary steering faults
     self.steering_unpressed = 0 if CS.steeringPressed else self.steering_unpressed + 1
-    if CS.steerFaultTemporary and not self.steer_warning_fix_enabled:
-      if (CS.vEgo < 0.1 or CS.standstill) and CS.steeringAngleDeg < 90:
-        events.add(EventName.isgActive)
-      elif CS.steeringPressed and (not CS_prev.steerFaultTemporary or self.no_steer_warning):
+    if CS.steerFaultTemporary:
+      if CS.steeringPressed and (not CS_prev.steerFaultTemporary or self.no_steer_warning):
         self.no_steer_warning = True
       else:
         self.no_steer_warning = False

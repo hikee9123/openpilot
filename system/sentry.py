@@ -1,6 +1,4 @@
 """Install exception handler for process crash."""
-import os
-import traceback
 import sentry_sdk
 from enum import Enum
 from sentry_sdk.integrations.threading import ThreadingIntegration
@@ -14,9 +12,9 @@ from openpilot.system.version import get_build_metadata, get_version
 
 class SentryProject(Enum):
   # python project
-  SELFDRIVE = "https://83e2fcd081cf484a8b0d1739d7afcbc4@o1001267.ingest.us.sentry.io/5960805"
+  SELFDRIVE = "https://6f3c7076c1e14b2aa10f5dde6dda0cc4@o33823.ingest.sentry.io/77924"
   # native project
-  SELFDRIVE_NATIVE = "https://83e2fcd081cf484a8b0d1739d7afcbc4@o1001267.ingest.us.sentry.io/5960805"
+  SELFDRIVE_NATIVE = "https://3e4b586ed21a4479ad5d85083b639bc6@o33823.ingest.sentry.io/157615"
 
 
 def report_tombstone(fn: str, message: str, contents: str) -> None:
@@ -30,7 +28,6 @@ def report_tombstone(fn: str, message: str, contents: str) -> None:
 
 
 def capture_exception(*args, **kwargs) -> None:
-  save_exception(traceback.format_exc())
   cloudlog.error("crash", exc_info=kwargs.get('exc_info', 1))
 
   try:
@@ -43,20 +40,12 @@ def capture_exception(*args, **kwargs) -> None:
 def set_tag(key: str, value: str) -> None:
   sentry_sdk.set_tag(key, value)
 
-def save_exception(exc_text):
-  if not ("mapd.py" in exc_text or "creation_delay" in exc_text):
-    if not os.path.exists('/data/log'):
-      os.makedirs('/data/log')
-    log_file = '/data/log/error.txt'
-    with open(log_file, 'w') as f:
-      f.write(exc_text)
-      f.close()
 
 def init(project: SentryProject) -> bool:
   build_metadata = get_build_metadata()
   # forks like to mess with this, so double check
-  kisapilot_remote = build_metadata.openpilot.kisapilot_remote and "kisapilot" in build_metadata.openpilot.git_origin
-  if not kisapilot_remote or PC:
+  comma_remote = build_metadata.openpilot.comma_remote and "commaai" in build_metadata.openpilot.git_origin
+  if not comma_remote or not is_registered_device() or PC:
     return False
 
   env = "release" if build_metadata.tested_channel else "master"

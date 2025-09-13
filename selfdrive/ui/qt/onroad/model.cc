@@ -1,7 +1,5 @@
 #include "selfdrive/ui/qt/onroad/model.h"
 
-#include "selfdrive/ui/qt/util.h"  //kisa
-
 constexpr int CLIP_MARGIN = 500;
 constexpr float MIN_DRAW_DISTANCE = 10.0;
 constexpr float MAX_DRAW_DISTANCE = 100.0;
@@ -26,7 +24,7 @@ void ModelRenderer::draw(QPainter &painter, const QRect &surface_rect) {
 
   clip_region = surface_rect.adjusted(-CLIP_MARGIN, -CLIP_MARGIN, CLIP_MARGIN, CLIP_MARGIN);
   experimental_mode = sm["selfdriveState"].getSelfdriveState().getExperimentalMode();
-  //longitudinal_control = sm["carParams"].getCarParams().getOpenpilotLongitudinalControl();
+  longitudinal_control = sm["carParams"].getCarParams().getOpenpilotLongitudinalControl();
   path_offset_z = sm["liveCalibration"].getLiveCalibration().getHeight()[0];
 
   painter.save();
@@ -39,7 +37,7 @@ void ModelRenderer::draw(QPainter &painter, const QRect &surface_rect) {
   drawLaneLines(painter);
   drawPath(painter, model, surface_rect.height());
 
-  if (sm.alive("radarState")) {
+  if (longitudinal_control && sm.alive("radarState")) {
     update_leads(radar_state, model.getPosition());
     const auto &lead_two = radar_state.getLeadTwo();
     if (lead_one.getStatus()) {
@@ -73,7 +71,7 @@ void ModelRenderer::update_model(const cereal::ModelDataV2::Reader &model, const
   int max_idx = get_path_length_idx(lane_lines[0], max_distance);
   for (int i = 0; i < std::size(lane_line_vertices); i++) {
     lane_line_probs[i] = line_probs[i];
-    mapLineToPolygon(lane_lines[i], 0.035 * lane_line_probs[i], 0, &lane_line_vertices[i], max_idx);
+    mapLineToPolygon(lane_lines[i], 0.025 * lane_line_probs[i], 0, &lane_line_vertices[i], max_idx);
   }
 
   // update road edges
@@ -81,12 +79,7 @@ void ModelRenderer::update_model(const cereal::ModelDataV2::Reader &model, const
   const auto &edge_stds = model.getRoadEdgeStds();
   for (int i = 0; i < std::size(road_edge_vertices); i++) {
     road_edge_stds[i] = edge_stds[i];
-    mapLineToPolygon(road_edges[i], 0.035, 0, &road_edge_vertices[i], max_idx);
-  }
-
-  // update bsm alert
-  for (int i = 0; i < std::size(bsm_vertices); i++) {
-    mapLineToPolygon_BSM(i, lane_lines[i+1], 2.8, 0, &bsm_vertices[i], max_idx, false);
+    mapLineToPolygon(road_edges[i], 0.025, 0, &road_edge_vertices[i], max_idx);
   }
 
   // update path
@@ -99,38 +92,16 @@ void ModelRenderer::update_model(const cereal::ModelDataV2::Reader &model, const
 }
 
 void ModelRenderer::drawLaneLines(QPainter &painter) {
-
-  UIState *s = uiState();
-
   // lanelines
-  if (!s->scene.lateralPlan.lanelessModeStatus) {
-    for (int i = 0; i < std::size(lane_line_vertices); ++i) {
-      painter.setBrush(QColor::fromRgbF(0.09, 0.68, 0.00, std::clamp<float>(lane_line_probs[i], 0.0, 0.7)));
-      if (s->scene.leftblindspot && i == 1) {
-        painter.setBrush(QColor::fromRgbF(1.0, 0.5, 0.0, std::clamp<float>(lane_line_probs[i], 0.0, 0.7)));
-      }
-      if (s->scene.rightblindspot && i == 2) {
-        painter.setBrush(QColor::fromRgbF(1.0, 0.5, 0.0, std::clamp<float>(lane_line_probs[i], 0.0, 0.7)));
-      }
-      painter.drawPolygon(lane_line_vertices[i]);
-    }
+  for (int i = 0; i < std::size(lane_line_vertices); ++i) {
+    painter.setBrush(QColor::fromRgbF(1.0, 1.0, 1.0, std::clamp<float>(lane_line_probs[i], 0.0, 0.7)));
+    painter.drawPolygon(lane_line_vertices[i]);
   }
 
   // road edges
   for (int i = 0; i < std::size(road_edge_vertices); ++i) {
     painter.setBrush(QColor::fromRgbF(1.0, 0, 0, std::clamp<float>(1.0 - road_edge_stds[i], 0.0, 1.0)));
     painter.drawPolygon(road_edge_vertices[i]);
-  }
-
-  // bsm alert
-  for (int i = 0; i < std::size(bsm_vertices); ++i) {
-    painter.setBrush(QColor::fromRgbF(1.0, 0.25, 0, 0.6));
-    if (s->scene.leftblindspot && i == 0) {
-      painter.drawPolygon(bsm_vertices[i]);
-    }
-    if (s->scene.rightblindspot && i == 1) {
-      painter.drawPolygon(bsm_vertices[i]);
-    }
   }
 }
 
@@ -172,9 +143,6 @@ void ModelRenderer::drawPath(QPainter &painter, const cereal::ModelDataV2::Reade
 }
 
 void ModelRenderer::updatePathGradient(QLinearGradient &bg) {
-
-  UIState *s = uiState();
-
   static const QColor throttle_colors[] = {
       QColor::fromHslF(148. / 360., 0.94, 0.51, 0.4),
       QColor::fromHslF(112. / 360., 1.0, 0.68, 0.35),
@@ -203,20 +171,10 @@ void ModelRenderer::updatePathGradient(QLinearGradient &bg) {
     blend_factor = std::min(blend_factor + transition_speed, 1.0f);
   }
 
-  if (!s->scene.enabled) {
-    bg.setColorAt(0.0f, QColor::fromHslF(148 / 360., 0.0, 1.0, 0.4));
-    bg.setColorAt(0.5f, QColor::fromHslF(112 / 360., 0.0, 1.0, 0.35));
-    bg.setColorAt(1.0f, QColor::fromHslF(112 / 360., 0.0, 1.0, 0.0));
-  } else if (s->scene.lateralPlan.lanelessModeStatus) {
-    bg.setColorAt(0.0f, QColor::fromHslF(198 / 360., 0.94, 0.51, 0.4));
-    bg.setColorAt(0.5f, QColor::fromHslF(162 / 360., 1.0, 0.68, 0.35));
-    bg.setColorAt(1.0f, QColor::fromHslF(162 / 360., 1.0, 0.68, 0.0));
-  } else {
-    // Set gradient colors by blending the start and end colors
-    bg.setColorAt(0.0f, blendColors(begin_colors[0], end_colors[0], blend_factor));
-    bg.setColorAt(0.5f, blendColors(begin_colors[1], end_colors[1], blend_factor));
-    bg.setColorAt(1.0f, blendColors(begin_colors[2], end_colors[2], blend_factor));
-  }
+  // Set gradient colors by blending the start and end colors
+  bg.setColorAt(0.0f, blendColors(begin_colors[0], end_colors[0], blend_factor));
+  bg.setColorAt(0.5f, blendColors(begin_colors[1], end_colors[1], blend_factor));
+  bg.setColorAt(1.0f, blendColors(begin_colors[2], end_colors[2], blend_factor));
 }
 
 QColor ModelRenderer::blendColors(const QColor &start, const QColor &end, float t) {
@@ -251,35 +209,14 @@ void ModelRenderer::drawLead(QPainter &painter, const cereal::RadarState::LeadDa
   float g_xo = sz / 5;
   float g_yo = sz / 10;
 
-  UIState *s = uiState();
+  QPointF glow[] = {{x + (sz * 1.35) + g_xo, y + sz + g_yo}, {x, y - g_yo}, {x - (sz * 1.35) - g_xo, y + sz + g_yo}};
+  painter.setBrush(QColor(218, 202, 37, 255));
+  painter.drawPolygon(glow, std::size(glow));
 
-  // kisapilot
-  if (s->scene.radarDRel < 149) {
-    QPointF glow[] = {{x + (sz * 1.35) + g_xo, y + sz + g_yo}, {x, y - g_xo}, {x - (sz * 1.35) - g_xo, y + sz + g_yo}};
-    painter.setBrush(QColor(218, 202, 37, 255));
-    painter.drawPolygon(glow, std::size(glow));
-
-    // chevron
-    QPointF chevron[] = {{x + (sz * 1.25), y + sz}, {x, y}, {x - (sz * 1.25), y + sz}};
-    painter.setBrush(redColor(fillAlpha));
-    painter.drawPolygon(chevron, std::size(chevron));
-    painter.setPen(QColor(0x0, 0x0, 0xff));
-    painter.setFont(InterFont(35, QFont::DemiBold));
-    painter.drawText(QRect(x - (sz * 1.25), y, 2 * (sz * 1.25), sz * 1.25), Qt::AlignCenter, QString("R"));
-  } else {
-    QPointF glow[] = {{x + (sz * 1.35) + g_xo, y + sz + g_yo}, {x, y - g_xo}, {x - (sz * 1.35) - g_xo, y + sz + g_yo}};
-    painter.setBrush(QColor(0, 255, 0, 255));
-    painter.drawPolygon(glow, std::size(glow));
-
-    // chevron
-    QPointF chevron[] = {{x + (sz * 1.25), y + sz}, {x, y}, {x - (sz * 1.25), y + sz}};
-    painter.setBrush(greenColor(fillAlpha));
-    painter.drawPolygon(chevron, std::size(chevron));
-    painter.setPen(QColor(0x0, 0x0, 0x0));
-    //painter.setRenderHint(QPainter::TextAntialiasing);
-    painter.setFont(InterFont(35, QFont::DemiBold));
-    painter.drawText(QRect(x - (sz * 1.25), y, 2 * (sz * 1.25), sz * 1.25), Qt::AlignCenter, QString("V"));
-  }
+  // chevron
+  QPointF chevron[] = {{x + (sz * 1.25), y + sz}, {x, y}, {x - (sz * 1.25), y + sz}};
+  painter.setBrush(QColor(201, 34, 49, fillAlpha));
+  painter.drawPolygon(chevron, std::size(chevron));
 }
 
 // Projects a point in car to space to the corresponding point in full frame image space.
@@ -310,46 +247,4 @@ void ModelRenderer::mapLineToPolygon(const cereal::XYZTData::Reader &line, float
       pvd->push_front(right);
     }
   }
-}
-
-void ModelRenderer::mapLineToPolygon_BSM(int lr, const cereal::XYZTData::Reader &line, float y_off, float z_off,
-                                         QPolygonF *pvd, int max_idx, bool allow_invert) {
-
-  float y_off1, y_off2;
-  if (lr == 0) {
-    y_off1 = y_off;
-    y_off2 = -0.01;
-  } else {
-    y_off1 = 0.01;
-    y_off2 = y_off;  
-  }
-
-  const auto line_x = line.getX(), line_y = line.getY(), line_z = line.getZ();
-  QPolygonF left_points, right_points;
-  left_points.reserve(max_idx + 1);
-  right_points.reserve(max_idx + 1);
-
-  for (int i = 0; i <= max_idx; i++) {
-    // highly negative x positions  are drawn above the frame and cause flickering, clip to zy plane of camera
-    if (line_x[i] < 0) continue;
-    QPointF left, right;
-    bool l = mapToScreen(line_x[i], line_y[i] - y_off1, line_z[i] + z_off, &left);
-    bool r = mapToScreen(line_x[i], line_y[i] + y_off2, line_z[i] + z_off, &right);
-    if (l && r) {
-      // For wider lines the drawn polygon will "invert" when going over a hill and cause artifacts
-      if (!allow_invert && left_points.size() && left.y() > left_points.back().y()) {
-        continue;
-      }
-      left_points.push_back(left);
-      right_points.push_front(right);
-    }
-  }
-  *pvd = left_points + right_points;
-}
-
-void ModelRenderer::drawText(QPainter &p, int x, int y, const QString &text, int alpha) {
-  QRect real_rect = p.fontMetrics().boundingRect(text);
-  real_rect.moveCenter({x, y - real_rect.height() / 2});
-
-  p.drawText(real_rect.x(), real_rect.bottom(), text);
 }

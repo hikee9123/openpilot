@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import fcntl
 import os
-import subprocess
 import queue
 import struct
 import threading
@@ -38,7 +37,7 @@ ONROAD_CYCLE_TIME = 1  # seconds to wait offroad after requesting an onroad cycl
 
 ThermalBand = namedtuple("ThermalBand", ['min_temp', 'max_temp'])
 HardwareState = namedtuple("HardwareState", ['network_type', 'network_info', 'network_strength', 'network_stats',
-                                             'network_metered', 'modem_temps', 'ip_address'])
+                                             'network_metered', 'modem_temps'])
 
 # List of thermal bands. We will stay within this region as long as we are within the bounds.
 # When exiting the bounds, we'll jump to the lower or higher band. Bands are ordered in the dict.
@@ -55,23 +54,6 @@ OFFROAD_DANGER_TEMP = 75
 prev_offroad_states: dict[str, tuple[bool, str | None]] = {}
 
 
-
-def get_available_percenta(default=None):
-  try:
-    statvfs = os.statvfs('/data/media/')
-    available_percent = 100.0 * statvfs.f_bavail / statvfs.f_blocks
-  except OSError:
-    available_percent = default
-
-  return available_percent
-
-def get_ip_address():
-  try:
-    out = subprocess.check_output(["hostname", "-I"], text=True).strip()
-    ip_address = out.replace(' ', '\n')
-    return ip_address
-  except subprocess.CalledProcessError:
-    return ""
 
 def set_offroad_alert_if_changed(offroad_alert: str, show_alert: bool, extra_text: str | None=None):
   if prev_offroad_states.get(offroad_alert, None) == (show_alert, extra_text):
@@ -124,8 +106,6 @@ def hw_state_thread(end_event, hw_queue):
   modem_restarted = False
   modem_missing_count = 0
 
-  ip_address = ""
-
   while not end_event.is_set():
     # these are expensive calls. update every 10s
     if (count % int(10. / DT_HW)) == 0:
@@ -154,8 +134,6 @@ def hw_state_thread(end_event, hw_queue):
 
         tx, rx = HARDWARE.get_modem_data_usage()
 
-        ip_address = get_ip_address() if TICI else ""
-
         hw_state = HardwareState(
           network_type=network_type,
           network_info=HARDWARE.get_network_info(),
@@ -163,7 +141,6 @@ def hw_state_thread(end_event, hw_queue):
           network_stats={'wwanTx': tx, 'wwanRx': rx},
           network_metered=HARDWARE.get_network_metered(network_type),
           modem_temps=modem_temps,
-          ip_address=ip_address,
         )
 
         try:
@@ -211,7 +188,6 @@ def hardware_thread(end_event, hw_queue) -> None:
     network_strength=NetworkStrength.unknown,
     network_stats={'wwanTx': -1, 'wwanRx': -1},
     modem_temps=[],
-    ip_address = "",
   )
 
   all_temp_filter = FirstOrderFilter(0., TEMP_TAU, DT_HW, initialized=False)
@@ -233,9 +209,6 @@ def hardware_thread(end_event, hw_queue) -> None:
 
   fan_controller = None
 
-  is_openpilot_view_enabled = 0
-  onroadrefresh = False
-
   while not end_event.is_set():
     sm.update(PANDA_STATES_TIMEOUT)
 
@@ -249,38 +222,28 @@ def hardware_thread(end_event, hw_queue) -> None:
       offroad_cycle_count = sm.frame
     onroad_conditions["not_onroad_cycle"] = (sm.frame - offroad_cycle_count) >= ONROAD_CYCLE_TIME * SERVICE_LIST['pandaStates'].frequency
 
-    if is_openpilot_view_enabled == 0:
-      if sm.updated['pandaStates'] and len(pandaStates) > 0:
+    if sm.updated['pandaStates'] and len(pandaStates) > 0:
 
-        # Set ignition based on any panda connected
-        onroad_conditions["ignition"] = any(ps.ignitionLine or ps.ignitionCan for ps in pandaStates if ps.pandaType != log.PandaState.PandaType.unknown)
+      # Set ignition based on any panda connected
+      onroad_conditions["ignition"] = any(ps.ignitionLine or ps.ignitionCan for ps in pandaStates if ps.pandaType != log.PandaState.PandaType.unknown)
 
-        pandaState = pandaStates[0]
+      pandaState = pandaStates[0]
 
-        in_car = pandaState.harnessStatus != log.PandaState.HarnessStatus.notConnected
+      in_car = pandaState.harnessStatus != log.PandaState.HarnessStatus.notConnected
 
-        # Setup fan handler on first connect to panda
-        if fan_controller is None and peripheral_panda_present:
-          if TICI:
-            fan_controller = TiciFanController()
+      # Setup fan handler on first connect to panda
+      if fan_controller is None and peripheral_panda_present:
+        if TICI:
+          fan_controller = TiciFanController()
 
-      elif (time.monotonic() - sm.recv_time['pandaStates']) > DISCONNECT_TIMEOUT:
-        if onroad_conditions["ignition"]:
-          onroad_conditions["ignition"] = False
-          cloudlog.error("panda timed out onroad")
-
-    if (count % int(5. / DT_HW)) == 0:
-      if params.get_bool("IsOpenpilotViewEnabled") and not params.get_bool("IsDriverViewEnabled") and is_openpilot_view_enabled == 0:
-        is_openpilot_view_enabled = 1
-        onroad_conditions["ignition"] = True
-      elif not params.get_bool("IsOpenpilotViewEnabled") and not params.get_bool("IsDriverViewEnabled") and is_openpilot_view_enabled == 1:
-        is_openpilot_view_enabled = 0
+    elif (time.monotonic() - sm.recv_time['pandaStates']) > DISCONNECT_TIMEOUT:
+      if onroad_conditions["ignition"]:
         onroad_conditions["ignition"] = False
         cloudlog.error("panda timed out onroad")
 
     # Run at 2Hz, plus either edge of ignition
     ign_edge = (started_ts is not None) != all(onroad_conditions.values())
-    if (sm.frame % round(SERVICE_LIST['pandaStates'].frequency * DT_HW) != 0) and not ign_edge and is_openpilot_view_enabled == 0:
+    if (sm.frame % round(SERVICE_LIST['pandaStates'].frequency * DT_HW) != 0) and not ign_edge:
       continue
 
     msg = messaging.new_message('deviceState', valid=True)
@@ -292,7 +255,7 @@ def hardware_thread(end_event, hw_queue) -> None:
     except queue.Empty:
       pass
 
-    msg.deviceState.freeSpacePercent = get_available_percenta(default=100.0)
+    msg.deviceState.freeSpacePercent = get_available_percent(default=100.0)
     msg.deviceState.memoryUsagePercent = int(round(psutil.virtual_memory().percent))
     msg.deviceState.gpuUsagePercent = int(round(HARDWARE.get_gpu_usage_percent()))
     online_cpu_usage = [int(round(n)) for n in psutil.cpu_percent(percpu=True)]
@@ -309,8 +272,6 @@ def hardware_thread(end_event, hw_queue) -> None:
     msg.deviceState.modemTempC = last_hw_state.modem_temps
 
     msg.deviceState.screenBrightnessPercent = HARDWARE.get_screen_brightness()
-
-    msg.deviceState.ipAddress = last_hw_state.ip_address
 
     # this subset is only used for offroad
     temp_sources = [
@@ -343,7 +304,7 @@ def hardware_thread(end_event, hw_queue) -> None:
 
     # **** starting logic ****
 
-    #startup_conditions["up_to_date"] = params.get("Offroad_ConnectivityNeeded") is None or params.get_bool("DisableUpdates") or params.get_bool("SnoozeUpdate")
+    startup_conditions["up_to_date"] = params.get("Offroad_ConnectivityNeeded") is None or params.get_bool("DisableUpdates") or params.get_bool("SnoozeUpdate")
     startup_conditions["no_excessive_actuation"] = params.get("Offroad_ExcessiveActuation") is None
     startup_conditions["not_uninstalling"] = not params.get_bool("DoUninstall")
     startup_conditions["accepted_terms"] = params.get("HasAcceptedTerms") == terms_version
@@ -367,17 +328,10 @@ def hardware_thread(end_event, hw_queue) -> None:
     set_offroad_alert_if_changed("Offroad_TemperatureTooHigh", show_alert, extra_text=extra_text)
 
     # *** registration check ***
-    # if not PC:
-    #   # we enforce this for our software, but you are welcome
-    #   # to make a different decision in your software
-    #   startup_conditions["registered_device"] = PC or (params.get("DongleId") != UNREGISTERED_DONGLE_ID)
-
-    if params.get_bool("OnRoadRefresh"):
-      onroad_conditions["onroad_refresh"] = not params.get_bool("OnRoadRefresh")
-      onroadrefresh = True
-    elif onroadrefresh:
-       onroadrefresh = False
-       onroad_conditions["onroad_refresh"] = True
+    if not PC:
+      # we enforce this for our software, but you are welcome
+      # to make a different decision in your software
+      startup_conditions["registered_device"] = PC or (params.get("DongleId") != UNREGISTERED_DONGLE_ID)
 
     # Handle offroad/onroad transition
     should_start = all(onroad_conditions.values())
@@ -420,13 +374,6 @@ def hardware_thread(end_event, hw_queue) -> None:
       started_ts = None
       if off_ts is None:
         off_ts = time.monotonic()
-
-    if TICI:
-      sshkeylet = params.get_bool("KisaSSHLegacy")
-      if not os.path.isfile('/data/public_key') and sshkeylet:
-        os.system("cp -f /data/openpilot/selfdrive/assets/addon/key/GithubSshKeys_legacy /data/params/d/GithubSshKeys; chmod 600 /data/params/d/GithubSshKeys; touch /data/public_key")
-      elif os.path.isfile('/data/public_key') and not sshkeylet:
-        os.system("cp -f /data/openpilot/selfdrive/assets/addon/key/GithubSshKeys_new /data/params/d/GithubSshKeys; chmod 600 /data/params/d/GithubSshKeys; rm -f /data/public_key")
 
     # Offroad power monitoring
     voltage = None if peripheralState.pandaType == log.PandaState.PandaType.unknown else peripheralState.voltage

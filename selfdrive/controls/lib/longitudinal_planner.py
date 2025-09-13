@@ -15,8 +15,6 @@ from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, get_accel_
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.common.swaglog import cloudlog
 
-from openpilot.common.params import Params
-
 LON_MPC_STEP = 0.2  # first step is 0.2s
 A_CRUISE_MAX_VALS = [1.6, 1.2, 0.8, 0.6]
 A_CRUISE_MAX_BP = [0., 10.0, 25., 40.]
@@ -71,8 +69,6 @@ class LongitudinalPlanner:
     self.j_desired_trajectory = np.zeros(CONTROL_N)
     self.solverExecutionTime = 0.0
 
-    self.is_metric = Params().get_bool('IsMetric')
-
   @staticmethod
   def parse_model(model_msg):
     if (len(model_msg.position.x) == ModelConstants.IDX_N and
@@ -93,7 +89,7 @@ class LongitudinalPlanner:
       throttle_prob = 1.0
     return x, v, a, j, throttle_prob
 
-  def update(self, sm, CP):
+  def update(self, sm):
     mode = 'blended' if sm['selfdriveState'].experimentalMode else 'acc'
 
     if len(sm['carControl'].orientationNED) == 3:
@@ -102,10 +98,8 @@ class LongitudinalPlanner:
       accel_coast = ACCEL_MAX
 
     v_ego = sm['carState'].vEgo
-    v_cruise_kph = sm['carState'].vSetDis if CP.sccBus != 0 else sm['carState'].vCruise
-    v_cruise_kph = min(v_cruise_kph, V_CRUISE_MAX)
-    v_cruise = v_cruise_kph * (CV.KPH_TO_MS if self.is_metric else CV.MPH_TO_MS)
-
+    v_cruise_kph = min(sm['carState'].vCruise, V_CRUISE_MAX)
+    v_cruise = v_cruise_kph * CV.KPH_TO_MS
     v_cruise_initialized = sm['carState'].vCruise != V_CRUISE_UNSET
 
     long_control_off = sm['controlsState'].longControlState == LongCtrlState.off
@@ -147,7 +141,7 @@ class LongitudinalPlanner:
 
     self.mpc.set_weights(prev_accel_constraint, personality=sm['selfdriveState'].personality)
     self.mpc.set_cur_state(self.v_desired_filter.x, self.a_desired)
-    self.mpc.update(sm['carState'], sm['radarState'], v_cruise, x, v, a, j, personality=sm['selfdriveState'].personality)
+    self.mpc.update(sm['radarState'], v_cruise, x, v, a, j, personality=sm['selfdriveState'].personality)
 
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)
     self.a_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)
@@ -203,13 +197,5 @@ class LongitudinalPlanner:
     longitudinalPlan.shouldStop = bool(self.output_should_stop)
     longitudinalPlan.allowBrake = True
     longitudinalPlan.allowThrottle = bool(self.allow_throttle)
-
-    longitudinalPlan.dynamicTRMode = int(self.mpc.dynamic_TR_mode)
-    longitudinalPlan.dynamicTRValue = float(self.mpc.t_follow)
-
-    longitudinalPlan.e2eX = self.mpc.e2e_x.tolist()
-    longitudinalPlan.lead0Obstacle = self.mpc.lead_0_obstacle.tolist()
-    longitudinalPlan.lead1Obstacle = self.mpc.lead_1_obstacle.tolist()
-    longitudinalPlan.cruiseTarget = self.mpc.cruise_target.tolist()
 
     pm.send('longitudinalPlan', plan_send)

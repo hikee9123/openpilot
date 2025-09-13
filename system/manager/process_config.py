@@ -61,24 +61,18 @@ def or_(*fns):
 def and_(*fns):
   return lambda *args: operator.and_(*(fn(*args) for fn in fns))
 
-EnableLogger = Params().get_bool('KisaEnableLogger')
-EnableUploader = Params().get_bool('KisaEnableUploader')
-EnableOSM = Params().get_bool('OSMEnable') or Params().get_bool('OSMSpeedLimitEnable') or Params().get("CurvDecelOption", return_default=True) in (1, 3)
-EnableExternalNavi = Params().get("KISANaviSelect", return_default=True) in (1, 2)
-EnableExternalNaviUDP = Params().get("KISANaviSelect", return_default=True) in (3, 4)
-
 procs = [
   DaemonProcess("manage_athenad", "system.athena.manage_athenad", "AthenadPid"),
 
-  #NativeProcess("loggerd", "system/loggerd", ["./loggerd"], logging),
+  NativeProcess("loggerd", "system/loggerd", ["./loggerd"], logging),
   NativeProcess("encoderd", "system/loggerd", ["./encoderd"], only_onroad),
   NativeProcess("stream_encoderd", "system/loggerd", ["./encoderd", "--stream"], notcar),
   PythonProcess("logmessaged", "system.logmessaged", always_run),
 
   NativeProcess("camerad", "system/camerad", ["./camerad"], driverview, enabled=not WEBCAM),
   PythonProcess("webcamerad", "tools.webcam.camerad", driverview, enabled=WEBCAM),
-  NativeProcess("logcatd", "system/logcatd", ["./logcatd"], only_onroad, platform.system() != "Darwin"),
-  NativeProcess("proclogd", "system/proclogd", ["./proclogd"], only_onroad, platform.system() != "Darwin"),
+  PythonProcess("proclogd", "system.proclogd", only_onroad, enabled=platform.system() != "Darwin"),
+  PythonProcess("journald", "system.journald", only_onroad, platform.system() != "Darwin"),
   PythonProcess("micd", "system.micd", iscar),
   PythonProcess("timed", "system.timed", always_run, enabled=not PC),
 
@@ -97,25 +91,23 @@ procs = [
   PythonProcess("joystickd", "tools.joystick.joystickd", or_(joystick, notcar)),
   PythonProcess("selfdrived", "selfdrive.selfdrived.selfdrived", only_onroad),
   PythonProcess("card", "selfdrive.car.card", only_onroad),
-  #PythonProcess("deleter", "system.loggerd.deleter", always_run),
+  PythonProcess("deleter", "system.loggerd.deleter", always_run),
   PythonProcess("dmonitoringd", "selfdrive.monitoring.dmonitoringd", driverview, enabled=(WEBCAM or not PC)),
   PythonProcess("qcomgpsd", "system.qcomgpsd.qcomgpsd", qcomgps, enabled=TICI),
   PythonProcess("pandad", "selfdrive.pandad.pandad", always_run),
   PythonProcess("paramsd", "selfdrive.locationd.paramsd", only_onroad),
   PythonProcess("lagd", "selfdrive.locationd.lagd", only_onroad),
-  NativeProcess("ubloxd", "system/ubloxd", ["./ubloxd"], ublox, enabled=TICI),
+  PythonProcess("ubloxd", "system.ubloxd.ubloxd", ublox, enabled=TICI),
   PythonProcess("pigeond", "system.ubloxd.pigeond", ublox, enabled=TICI),
   PythonProcess("plannerd", "selfdrive.controls.plannerd", not_long_maneuver),
   PythonProcess("maneuversd", "tools.longitudinal_maneuvers.maneuversd", long_maneuver),
   PythonProcess("radard", "selfdrive.controls.radard", only_onroad),
   PythonProcess("hardwared", "system.hardware.hardwared", always_run),
   PythonProcess("tombstoned", "system.tombstoned", always_run, enabled=not PC),
-  PythonProcess("updated", "system.updated.updated", always_run, enabled=not PC),
-  #PythonProcess("uploader", "system.loggerd.uploader", always_run),
+  PythonProcess("updated", "system.updated.updated", only_offroad, enabled=not PC),
+  PythonProcess("uploader", "system.loggerd.uploader", always_run),
   PythonProcess("statsd", "system.statsd", always_run),
   PythonProcess("feedbackd", "selfdrive.ui.feedback.feedbackd", only_onroad),
-
-  PythonProcess("kupdate", "system.kupdate", always_run),
 
   # debug procs
   NativeProcess("bridge", "cereal/messaging", ["./bridge"], notcar),
@@ -123,28 +115,5 @@ procs = [
   PythonProcess("webjoystick", "tools.bodyteleop.web", notcar),
   PythonProcess("joystick", "tools.joystick.joystick_control", and_(joystick, iscar)),
 ]
-
-if EnableLogger:
-  procs += [
-    NativeProcess("loggerd", "system/loggerd", ["./loggerd"], logging),
-  ]
-if EnableUploader:
-  procs += [
-    PythonProcess("deleter", "system.loggerd.deleter", always_run),
-    PythonProcess("uploader", "system.loggerd.uploader", always_run),
-  ]
-if EnableOSM:
-  procs += [
-    PythonProcess("mapd", "selfdrive.mapd.mapd", only_onroad),
-  ]
-if EnableExternalNavi:
-  procs += [
-    PythonProcess("navid", "selfdrive.enavi.navi_external", only_onroad),
-  ]
-
-if EnableExternalNaviUDP:
-  procs += [
-    PythonProcess("naviudpd", "selfdrive.enavi.navi_external_udp", only_onroad),
-  ]
 
 managed_processes = {p.name: p for p in procs}

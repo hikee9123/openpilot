@@ -22,7 +22,7 @@ from openpilot.system.hardware.hw import Paths
 
 
 def manager_init() -> None:
-  #save_bootlog()
+  save_bootlog()
 
   build_metadata = get_build_metadata()
 
@@ -42,15 +42,6 @@ def manager_init() -> None:
     default_value = params.get_default_value(k)
     if default_value is not None and params.get(k) is None:
       params.put(k, default_value)
-
-  # kisapilot
-  if os.path.isfile('/data/User_Params.txt'):
-    f = open("/data/User_Params.txt", "r")
-    for t in f.readlines():
-      tt = t.strip("\n").split(':')
-      params.put(tt[0], tt[-1])
-    f.close()
-    os.remove('/data/User_Params.txt')
 
   # Create folders needed for msgq
   try:
@@ -96,10 +87,6 @@ def manager_init() -> None:
                        commit=build_metadata.openpilot.git_commit,
                        dirty=build_metadata.openpilot.is_dirty,
                        device=HARDWARE.get_device_type())
-
-  # kisapilot
-  if os.path.isfile('/data/log/error.txt'):
-    os.remove('/data/log/error.txt')
 
   # preimport all processes
   for p in managed_processes.values():

@@ -7,8 +7,6 @@ from openpilot.common.constants import ACCELERATION_DUE_TO_GRAVITY
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.common.pid import PIDController
 
-from openpilot.common.params import Params
-
 # At higher speeds (25+mph) we can assume:
 # Lateral acceleration achieved by a specific car correlates to
 # torque applied to the steering rack. It does not correlate to
@@ -35,56 +33,17 @@ class LatControlTorque(LatControl):
     self.update_limits()
     self.steering_angle_deadzone_deg = self.torque_params.steeringAngleDeadzoneDeg
 
-    self.friction = self.torque_params.friction
-
-    self.mpc_frame = 0
-    self.params = Params()
-
-    self.live_tune_enabled = False
-    self.lt_timer = 0
-    self.live_torque_params = self.params.get_bool("KisaLiveTorque")
-
-    self.max_lat_accel = self.params.get("TorqueMaxLatAccel", return_default=True) * 0.1
-
-
-  def live_tune(self):
-    self.mpc_frame += 1
-    if self.mpc_frame % 300 == 0:
-      self.max_lat_accel = self.params.get("TorqueMaxLatAccel", return_default=True) * 0.1
-      self.kp = self.params.get("TorqueKp", return_default=True) * 0.1
-      self.kf = self.params.get("TorqueKf", return_default=True) * 0.1
-      self.ki = self.params.get("TorqueKi", return_default=True) * 0.1
-      self.friction = self.params.get("TorqueFriction", return_default=True) * 0.001
-      self.steering_angle_deadzone_deg = self.params.get("TorqueAngDeadZone", return_default=True) * 0.1
-      self.pid = PIDController(self.kp, self.ki, k_f=self.kf)
-        
-      self.mpc_frame = 0
-
-
   def update_live_torque_params(self, latAccelFactor, latAccelOffset, friction):
-    if self.live_torque_params:
-      self.torque_params.latAccelFactor = latAccelFactor
-      self.torque_params.latAccelOffset = latAccelOffset
-      self.torque_params.friction = friction
-    else:
-      self.torque_params.latAccelFactor = self.max_lat_accel
-      self.torque_params.latAccelOffset = latAccelOffset
-      self.torque_params.friction = self.friction
+    self.torque_params.latAccelFactor = latAccelFactor
+    self.torque_params.latAccelOffset = latAccelOffset
+    self.torque_params.friction = friction
     self.update_limits()
 
   def update_limits(self):
     self.pid.set_limits(self.lateral_accel_from_torque(self.steer_max, self.torque_params),
                         self.lateral_accel_from_torque(-self.steer_max, self.torque_params))
 
-  def update(self, active, CS, VM, params, steer_limited_by_safety, desired_curvature, curvature_limited, desired_curvature_rate):
-    self.lt_timer += 1
-    if self.lt_timer > 100:
-      self.lt_timer = 0
-      self.live_tune_enabled = self.params.get_bool("KisaLiveTunePanelEnable")
-      self.live_torque_params = self.params.get_bool("KisaLiveTorque")
-    if self.live_tune_enabled:
-      self.live_tune()
-
+  def update(self, active, CS, VM, params, steer_limited_by_safety, desired_curvature, curvature_limited):
     pid_log = log.ControlsState.LateralTorqueState.new_message()
     if not active:
       output_torque = 0.0

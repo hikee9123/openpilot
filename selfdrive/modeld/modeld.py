@@ -68,8 +68,6 @@ def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.
                                   desiredAcceleration=float(desired_accel),
                                   shouldStop=bool(should_stop))
 
-USE_LEGACY_LANE_MODEL = Params().get("UseLegacyLaneModel", return_default=True) if Params().get("UseLegacyLaneModel", return_default=True) is not None else 0
-
 class FrameMeta:
   frame_id: int = 0
   timestamp_sof: int = 0
@@ -264,10 +262,7 @@ def main(demo=False):
 
   # messaging
   pm = PubMaster(["modelV2", "drivingModelData", "cameraOdometry"])
-  if USE_LEGACY_LANE_MODEL:
-    sm = SubMaster(["deviceState", "lateralPlan", "carState", "roadCameraState", "liveCalibration", "driverMonitoringState", "carControl", "liveDelay"])
-  else:
-    sm = SubMaster(["deviceState", "carState", "roadCameraState", "liveCalibration", "driverMonitoringState", "carControl", "liveDelay", "controlsState"])
+  sm = SubMaster(["deviceState", "carState", "roadCameraState", "liveCalibration", "driverMonitoringState", "carControl", "liveDelay"])
 
   publish_state = PublishState()
   params = Params()
@@ -333,10 +328,7 @@ def main(demo=False):
       meta_extra = meta_main
 
     sm.update(0)
-    if USE_LEGACY_LANE_MODEL:
-      desire = sm["lateralPlan"].desire.raw
-    else:
-      desire = DH.desire
+    desire = DH.desire
     is_rhd = sm["driverMonitoringState"].isRHD
     frame_id = sm["roadCameraState"].frameId
     v_ego = max(sm["carState"].vEgo, 0.)
@@ -391,16 +383,15 @@ def main(demo=False):
                      publish_state, meta_main.frame_id, meta_extra.frame_id, frame_id,
                      frame_drop_ratio, meta_main.timestamp_eof, model_execution_time, live_calib_seen)
 
-      if not USE_LEGACY_LANE_MODEL:
-        desire_state = modelv2_send.modelV2.meta.desireState
-        l_lane_change_prob = desire_state[log.Desire.laneChangeLeft]
-        r_lane_change_prob = desire_state[log.Desire.laneChangeRight]
-        lane_change_prob = l_lane_change_prob + r_lane_change_prob
-        DH.update(sm['carState'], sm['carControl'].latActive, lane_change_prob, sm['controlsState'], modelv2_send.modelV2)
-        modelv2_send.modelV2.meta.laneChangeState = DH.lane_change_state
-        modelv2_send.modelV2.meta.laneChangeDirection = DH.lane_change_direction
-        drivingdata_send.drivingModelData.meta.laneChangeState = DH.lane_change_state
-        drivingdata_send.drivingModelData.meta.laneChangeDirection = DH.lane_change_direction
+      desire_state = modelv2_send.modelV2.meta.desireState
+      l_lane_change_prob = desire_state[log.Desire.laneChangeLeft]
+      r_lane_change_prob = desire_state[log.Desire.laneChangeRight]
+      lane_change_prob = l_lane_change_prob + r_lane_change_prob
+      DH.update(sm['carState'], sm['carControl'].latActive, lane_change_prob)
+      modelv2_send.modelV2.meta.laneChangeState = DH.lane_change_state
+      modelv2_send.modelV2.meta.laneChangeDirection = DH.lane_change_direction
+      drivingdata_send.drivingModelData.meta.laneChangeState = DH.lane_change_state
+      drivingdata_send.drivingModelData.meta.laneChangeDirection = DH.lane_change_direction
 
       fill_pose_msg(posenet_send, model_output, meta_main.frame_id, vipc_dropped_frames, meta_main.timestamp_eof, live_calib_seen)
       pm.send('modelV2', modelv2_send)

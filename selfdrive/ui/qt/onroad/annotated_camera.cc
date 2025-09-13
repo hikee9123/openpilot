@@ -4,7 +4,6 @@
 #include <QPainter>
 #include <algorithm>
 #include <cmath>
-#include <unistd.h> // kisapilot
 
 #include "common/swaglog.h"
 #include "selfdrive/ui/qt/util.h"
@@ -19,21 +18,7 @@ AnnotatedCameraWidget::AnnotatedCameraWidget(VisionStreamType type, QWidget *par
   main_layout->setSpacing(0);
 
   experimental_btn = new ExperimentalButton(this);
-  experimental_btn->hide();
-
-#ifdef QCOM2
-  // neokii screen recorder, thx for sharing:)
-  record_timer = std::make_shared<QTimer>();
-  QObject::connect(record_timer.get(), &QTimer::timeout, [=]() {
-    if(recorder) {
-      recorder->update_screen();
-    }
-  });
-  record_timer->start(1000/UI_FREQ);
-
-  recorder = new ScreenRecoder(this);
-  recorder->hide();
-#endif
+  main_layout->addWidget(experimental_btn, 0, Qt::AlignTop | Qt::AlignRight);
 }
 
 void AnnotatedCameraWidget::updateState(const UIState &s) {
@@ -81,9 +66,6 @@ mat4 AnnotatedCameraWidget::calcFrameMatrix() {
   float x_offset = std::clamp<float>((Kep.x() / Kep.z() - center_x) * zoom, -max_x_offset, max_x_offset);
   float y_offset = std::clamp<float>((Kep.y() / Kep.z() - center_y) * zoom, -max_y_offset, max_y_offset);
 
-  s->fb_w = w;
-  s->fb_h = h;
-
   // Apply transformation such that video pixel coordinates match video
   // 1) Put (0, 0) in the middle of the video
   // 2) Apply same scaling as video
@@ -106,14 +88,9 @@ mat4 AnnotatedCameraWidget::calcFrameMatrix() {
 }
 
 void AnnotatedCameraWidget::paintGL() {
-}
-
-void AnnotatedCameraWidget::paintEvent(QPaintEvent *event) {
   UIState *s = uiState();
   SubMaster &sm = *(s->sm);
   const double start_draw_t = millis_since_boot();
-
-  QPainter p(this);
 
   // draw camera frame
   {
@@ -144,53 +121,23 @@ void AnnotatedCameraWidget::paintEvent(QPaintEvent *event) {
       wide_cam_requested = wide_cam_requested && sm["selfdriveState"].getSelfdriveState().getExperimentalMode();
     }
     CameraWidget::setStreamType(wide_cam_requested ? VISION_STREAM_WIDE_ROAD : VISION_STREAM_ROAD);
-    p.beginNativePainting();
     CameraWidget::setFrameId(sm["modelV2"].getModelV2().getFrameId());
     CameraWidget::paintGL();
-    p.endNativePainting();
   }
 
-  p.setPen(Qt::NoPen);
+  QPainter painter(this);
+  painter.setRenderHint(QPainter::Antialiasing);
+  painter.setPen(Qt::NoPen);
 
-  model.draw(p, rect());
-  dmon.draw(p, rect());
+  model.draw(painter, rect());
+  dmon.draw(painter, rect());
   hud.updateState(*s);
-  hud.draw(p, rect());
-
-#ifdef QCOM2
-  // rec_stat and toggle
-  if (s->scene.driving_record) {
-    if (!s->scene.rec_stat && s->scene.car_state.getVEgo() > 0.8 && s->scene.standstillElapsedTime == 0 && int(s->scene.getGearShifter) == 2) {
-      s->scene.rec_stat = !s->scene.rec_stat;
-      params.putBool("RecordingRunning", s->scene.rec_stat);
-      if (recorder) recorder->toggle();
-    } else if (s->scene.rec_stat && ((s->scene.standStill && s->scene.standstillElapsedTime > 5) || int(s->scene.getGearShifter) == 1)) {
-      s->scene.rec_stat = !s->scene.rec_stat;
-      params.putBool("RecordingRunning", s->scene.rec_stat);
-      if (recorder) recorder->toggle();
-    }
-  } else {
-    if (s->scene.rec_stat && !s->scene.rec_stat2) {
-      params.putBool("RecordingRunning", s->scene.rec_stat);
-      if (recorder) recorder->toggle();
-      s->scene.rec_stat2 = s->scene.rec_stat;
-    } else if (!s->scene.rec_stat && s->scene.rec_stat2) {
-      params.putBool("RecordingRunning", s->scene.rec_stat);
-      if (recorder) recorder->toggle();
-      s->scene.rec_stat2 = s->scene.rec_stat;
-    } else if (s->scene.rec_stat && s->scene.rec_stat3 && int(s->scene.getGearShifter) == 1) {
-      if (recorder) recorder->toggle();
-      s->scene.rec_stat = false;
-      s->scene.rec_stat2 = false;
-      params.putBool("RecordingRunning", s->scene.rec_stat);
-    }
-  }
-#endif
+  hud.draw(painter, rect());
 
   double cur_draw_t = millis_since_boot();
   double dt = cur_draw_t - prev_draw_t;
   double fps = fps_filter.update(1. / dt * 1000);
-  if (fps < 15 && !s->scene.rec_stat) {
+  if (fps < 15) {
     LOGW("slow frame rate: %.2f fps", fps);
   }
   prev_draw_t = cur_draw_t;

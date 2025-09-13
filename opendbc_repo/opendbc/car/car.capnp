@@ -230,38 +230,6 @@ struct CarState {
   fuelGauge @41 :Float32; # battery or fuel tank level from [0.0, 1.0]
   charging @43 :Bool;
 
-  tpms @61 :TPMS;
-  radarDRel @62 :Float32;
-  radarVRel @63 :Float32;
-  vSetDis @64 :Float32;
-  cruiseButtons @65 :Float32;
-  cruiseAccStatus @66 :Bool;
-  driverAcc @67 :Bool;
-  autoHold @68 :Bool;    # AutoHold
-  cruiseGapSet @69 :UInt8;
-  safetyDist @70 :Float32;
-  safetySign @71 :Float32;
-  vEgoOP @72 :Float32;  # openpilot speed
-  gearStep @73 :Int8;
-  isMph @74 :Bool;
-  aReqValue @75 :Float32;
-  chargeMeter @76 :Float32;
-  brakeLights @77 :Bool;
-  pauseSpdLimit @78 :Bool;
-  leftLaneColor @79 :Int8;
-  rightLaneColor @80 :Int8;
-  engineRpm @81 :Float32;
-  cluVanz @82 :Float32;
-  isCanFD @83 :Bool;
-
-  struct TPMS {
-    unit @0 :Int8;
-    fl @1 :Float32;
-    fr @2 :Float32;
-    rl @3 :Float32;
-    rr @4 :Float32;
-  }
-
   struct WheelSpeeds {
     # optional wheel speeds
     fl @0 :Float32;
@@ -279,11 +247,6 @@ struct CarState {
     nonAdaptive @5 :Bool;
 
     speedOffsetDEPRECATED @3 :Float32;
-
-    # atom
-    modeSel @7 :Int16;
-    cruiseSwState @8 :Int16;
-    gapSet @9 :Int16;
   }
 
   enum GearShifter {
@@ -317,7 +280,6 @@ struct CarState {
       setCruise @9;
       resumeCruise @10;
       gapAdjustCruise @11;
-      lfa @12;
     }
   }
 
@@ -397,23 +359,6 @@ struct CarControl {
   cruiseControl @4 :CruiseControl;
   hudControl @5 :HUDControl;
 
-  needBrake @18: Bool;
-  lkasTempDisabled @19: Bool;
-  lanechangeManualTimer @20: Int8;
-  emergencyManualTimer @21: Int8;
-  standstillResButton @22: Bool;
-  cruiseGapAdjusting @23: Bool;
-  onSpeedBumpControl @24: Bool;
-  onSpeedControl @25: Bool;
-  curvSpeedControl @26: Bool;
-  cutInControl @27: Bool;
-  driverSccSetControl @28: Bool;
-  autoholdPopupTimer @29: Int8;
-  autoResStarting @30: Bool;
-  e2eStandstill @31: Bool;
-  modeChangeTimer @32: Int8;
-  lkasTempDisabledTimer @33: Int8;
-
   struct Actuators {
     # lateral commands, mutually exclusive
     torque @2: Float32;  # [0.0, 1.0]
@@ -429,39 +374,6 @@ struct CarControl {
     brake @1: Float32; # [0.0, 1.0]
     torqueOutputCan @8: Float32;   # value sent over can to the car
     speed @6: Float32;  # m/s
-
-    oaccel @9: Float32; # m/s^2
-    safetySpeed @10: Float32;
-    lkasTemporaryOff @11: Bool;
-    gapBySpdOnTemp @12: Bool;
-    expModeTemp @13: Bool;
-    btnPressing @14: Int8;
-    aqValue @15: Float32;
-    aqValueRaw @16: Float32;
-    autoResvCruisekph @17: Float32;
-    resSpeed @18: Float32;
-    setLoadspeedTempStop @19: Bool;
-    kisaLog1 @20: Text;
-    kisaLog2 @21: Text;
-    kisaLog3 @22: Text;
-
-    needBrake @23: Bool;
-    lkasTempDisabled @24: Bool;
-    lanechangeManualTimer @25: Int8;
-    emergencyManualTimer @26: Int8;
-    standstillResButton @27: Bool;
-    cruiseGapAdjusting @28: Bool;
-    onSpeedBumpControl @29: Bool;
-    onSpeedControl @30: Bool;
-    curvSpeedControl @31: Bool;
-    cutInControl @32: Bool;
-    driverSccSetControl @33: Bool;
-    autoholdPopupTimer @34: Int8;
-    autoResStarting @35: Bool;
-    e2eStandstill @36: Bool;
-    modeChangeTimer @37: Int8;
-    lkasTempDisabledTimer @38: Int8;
-    standStill @39: Bool;
 
     enum LongControlState @0xe40f3a917d908282{
       off @0;
@@ -494,9 +406,6 @@ struct CarControl {
     # not used with the dash, TODO: separate structs for dash UI and device UI
     audibleAlert @5: AudibleAlert;
 
-    vFuture @11:Float32;
-    vFutureA @12:Float32;
-
     enum VisualAlert {
       # these are the choices from the Honda
       # map as good as you can for your car
@@ -523,10 +432,6 @@ struct CarControl {
       prompt @6;
       promptRepeat @7;
       promptDistracted @8;
-      warning @9;
-      dingdong @10;
-      wazeAlert @11;
-      dingding @12;
     }
   }
 
@@ -588,10 +493,9 @@ struct CarParams {
   lateralParams @48 :LateralParams;
   lateralTuning :union {
     pid @26 :LateralPIDTuning;
-    indi @27 :LateralINDITuning;
-    lqr @40 :LateralLQRTuning;
+    indiDEPRECATED @27 :LateralINDITuning;
+    lqrDEPRECATED @40 :LateralLQRTuning;
     torque @67 :LateralTorqueTuning;
-    atom @78 :LateralATOMTuning;
   }
 
   steerLimitAlert @28 :Bool;
@@ -631,52 +535,9 @@ struct CarParams {
     safetyParam2DEPRECATED @2 :UInt32;
   }
 
-  experimentalLong @79 :Bool;
-  experimentalLongAlt @80 :Bool;
-  smoothSteer @81 :SmoothSteerData;
-  mdpsBus @82: Int8;
-  sasBus @83: Int8;
-  sccBus @84: Int8;
-  fcaBus @85: Int8;
-  bsmAvailable @86: Bool;
-  lfaAvailable @87: Bool;
-  lvrAvailable @88: Bool;
-  evgearAvailable @89: Bool;
-  emsAvailable @90: Bool;
-  autoHoldAvailable @91 :Bool;
-  scc13Available @92 :Bool;
-  scc14Available @93 :Bool;
-  lfaHdaAvailable @94 :Bool;
-  navAvailable @95 :Bool;
-  isCanFD @96 :Bool;
-  adrvAvailable @97 :Bool;
-  brakeAvailable @98 :Bool;
-  tpmsAvailable @99 :Bool;
-  isAngleControl @100 :Bool;
-  evInfo @101 :Bool;
-  adrvControl @102 :Bool;
-  capacitiveSteeringWheel @103 :Bool;
-  capacitiveSteeringWheelAlt @104 :Bool;
-
-  struct SmoothSteerData
-  {
-    method @0: Int8;
-    maxSteeringAngle @1 :Int32;
-    maxDriverAngleWait @2 :Float32;
-    maxSteerAngleWait @3 :Float32;
-    driverAngleWait @4 :Float32;
-  }
-
   struct LateralParams {
     torqueBP @0 :List(Int32);
     torqueV @1 :List(Int32);
-  }
-
-  struct LateralATOMTuning {
-    lqr @0 :LateralLQRTuning;
-    torque @1 :LateralTorqueTuning;
-    indi @2 :LateralINDITuning;
-    pid @3 :LateralPIDTuning;
   }
 
   struct LateralPIDTuning {
@@ -685,7 +546,6 @@ struct CarParams {
     kiBP @2 :List(Float32);
     kiV @3 :List(Float32);
     kf @4 :Float32;
-    kd @5 :Float32;
   }
 
   struct LateralTorqueTuning {

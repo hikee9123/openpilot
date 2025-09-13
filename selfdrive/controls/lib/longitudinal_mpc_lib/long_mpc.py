@@ -9,7 +9,6 @@ from openpilot.common.swaglog import cloudlog
 # WARNING: imports outside of constants will not trigger a rebuild
 from openpilot.selfdrive.modeld.constants import index_function
 from openpilot.selfdrive.controls.radard import _LEAD_ACCEL_TAU
-from openpilot.common.constants import CV
 
 if __name__ == '__main__':  # generating code
   from openpilot.third_party.acados.acados_template import AcadosModel, AcadosOcp, AcadosOcpSolver
@@ -18,14 +17,12 @@ else:
 
 from casadi import SX, vertcat
 
-from openpilot.common.params import Params
-
 MODEL_NAME = 'long'
 LONG_MPC_DIR = os.path.dirname(os.path.abspath(__file__))
 EXPORT_DIR = os.path.join(LONG_MPC_DIR, "c_generated_code")
 JSON_FILE = os.path.join(LONG_MPC_DIR, "acados_ocp_long.json")
 
-SOURCES = ['lead0', 'lead1', 'cruise', 'e2e', 'stop']
+SOURCES = ['lead0', 'lead1', 'cruise', 'e2e']
 
 X_DIM = 3
 U_DIM = 1
@@ -57,7 +54,7 @@ T_IDXS = np.array(T_IDXS_LST)
 FCW_IDXS = T_IDXS < 5.0
 T_DIFFS = np.diff(T_IDXS, prepend=[0.])
 COMFORT_BRAKE = 2.5
-STOP_DISTANCE = ((Params().get("StoppingDist", return_default=True) * 0.1) + 1.0) if Params().get("StoppingDist", return_default=True) is not None else 6.0 # 6.0
+STOP_DISTANCE = 6.0
 CRUISE_MIN_ACCEL = -1.2
 CRUISE_MAX_ACCEL = 1.6
 
@@ -229,31 +226,8 @@ class LongitudinalMpc:
     self.mode = mode
     self.dt = dt
     self.solver = AcadosOcpSolverCython(MODEL_NAME, ACADOS_SOLVER_TYPE, N)
-    self.v_ego = 0.
     self.reset()
     self.source = SOURCES[2]
-
-    self.t_follow = 1.45
-    self.cruise_gap1 = Params().get("CruiseGap1", return_default=True) * 0.1
-    self.cruise_gap2 = Params().get("CruiseGap2", return_default=True) * 0.1
-    self.cruise_gap3 = Params().get("CruiseGap3", return_default=True) * 0.1
-    self.cruise_gap4 = Params().get("CruiseGap4", return_default=True) * 0.1
-
-    self.dynamic_tr_spd = list(map(float, Params().get("DynamicTRSpd", return_default=True).split(',')))
-    self.dynamic_tr_set = list(map(float, Params().get("DynamicTRSet", return_default=True).split(',')))
-    self.dynamic_TR_mode = Params().get("DynamicTRGap", return_default=True)
-    self.custom_tr_enabled = Params().get_bool("CustomTREnabled")
-
-    self.alpha_long_enabled = Params().get_bool("AlphaLongitudinalEnabled")
-
-    self.ms_to_spd = CV.MS_TO_KPH if Params().get_bool("IsMetric") else CV.MS_TO_MPH
-
-    self.lo_timer = 0 
-
-    self.lead_0_obstacle = np.zeros(13, dtype=np.float64)
-    self.lead_1_obstacle = np.zeros(13, dtype=np.float64)
-    self.e2e_x = np.zeros(13, dtype=np.float64)
-    self.cruise_target = np.zeros(13, dtype=np.float64)
 
   def reset(self):
     # self.solver = AcadosOcpSolverCython(MODEL_NAME, ACADOS_SOLVER_TYPE, N)
@@ -353,39 +327,13 @@ class LongitudinalMpc:
     lead_xv = self.extrapolate_lead(x_lead, v_lead, a_lead, a_lead_tau)
     return lead_xv
 
-  def update(self, carstate, radarstate, v_cruise, x, v, a, j, personality=log.LongitudinalPersonality.standard):
-    self.v_ego = carstate.vEgo
+  def update(self, radarstate, v_cruise, x, v, a, j, personality=log.LongitudinalPersonality.standard):
     t_follow = get_T_FOLLOW(personality)
     v_ego = self.x0[1]
-
-    # kisapilot
-    self.lo_timer += 1
-    if self.lo_timer > 200:
-      self.lo_timer = 0
-      self.dynamic_TR_mode = Params().get("DynamicTRGap", return_default=True)
-      self.custom_tr_enabled = Params().get_bool("CustomTREnabled")
-
     self.status = radarstate.leadOne.status or radarstate.leadTwo.status
 
     lead_xv_0 = self.process_lead(radarstate.leadOne)
     lead_xv_1 = self.process_lead(radarstate.leadTwo)
-
-    if self.custom_tr_enabled:
-      cruise_gap = int(np.clip(carstate.cruiseGapSet, 1., 4.))
-      t_follow_d = np.interp(self.v_ego*self.ms_to_spd, self.dynamic_tr_spd, self.dynamic_tr_set)
-      if self.dynamic_TR_mode == 1:
-        self.t_follow = np.interp(float(cruise_gap), [1., 2., 3., 4.], [t_follow_d, self.cruise_gap2, self.cruise_gap3, self.cruise_gap4])
-      elif self.dynamic_TR_mode == 2:
-        self.t_follow = np.interp(float(cruise_gap), [1., 2., 3., 4.], [self.cruise_gap1, t_follow_d, self.cruise_gap3, self.cruise_gap4])
-      elif self.dynamic_TR_mode == 3:
-        self.t_follow = np.interp(float(cruise_gap), [1., 2., 3., 4.], [self.cruise_gap1, self.cruise_gap2, t_follow_d, self.cruise_gap4])
-      elif self.dynamic_TR_mode == 4:
-        self.t_follow = np.interp(float(cruise_gap), [1., 2., 3., 4.], [self.cruise_gap1, self.cruise_gap2, self.cruise_gap3, t_follow_d])
-      else:
-        self.t_follow = np.interp(float(cruise_gap), [1., 2., 3., 4.], [self.cruise_gap1, self.cruise_gap2, self.cruise_gap3, self.cruise_gap4])
-    elif self.alpha_long_enabled:
-      cruise_gap = int(np.clip(carstate.cruiseGapSet, 1., 4.))
-      self.t_follow = np.interp(float(cruise_gap), [1., 2., 3., 4.], [self.cruise_gap1, self.cruise_gap2, self.cruise_gap3, self.cruise_gap4])
 
     # To estimate a safe distance from a moving lead, we calculate how much stopping
     # distance that lead needs as a minimum. We can add that to the current distance
@@ -408,18 +356,12 @@ class LongitudinalMpc:
       v_cruise_clipped = np.clip(v_cruise * np.ones(N+1),
                                  v_lower,
                                  v_upper)
-      cruise_obstacle = np.cumsum(T_DIFFS * v_cruise_clipped) + get_safe_obstacle_distance(v_cruise_clipped, t_follow if not (self.custom_tr_enabled or self.alpha_long_enabled) else self.t_follow)
+      cruise_obstacle = np.cumsum(T_DIFFS * v_cruise_clipped) + get_safe_obstacle_distance(v_cruise_clipped, t_follow)
       x_obstacles = np.column_stack([lead_0_obstacle, lead_1_obstacle, cruise_obstacle])
       self.source = SOURCES[np.argmin(x_obstacles[0])]
 
       # These are not used in ACC mode
-      xforward = ((v[1:] + v[:-1]) / 2) * (T_IDXS[1:] - T_IDXS[:-1])
-      x = np.cumsum(np.insert(xforward, 0, x[0]))
-      e2ex = (x[N] + 5.0) * np.ones(N+1)
-      x = (x[N] + 5.0) * np.ones(N+1)      
-
-      #x[:], v[:], a[:], j[:] = 0.0, 0.0, 0.0, 0.0
-      v[:], a[:], j[:] = 0.0, 0.0, 0.0
+      x[:], v[:], a[:], j[:] = 0.0, 0.0, 0.0, 0.0
 
     elif self.mode == 'blended':
       self.params[:,5] = 1.0
@@ -429,7 +371,6 @@ class LongitudinalMpc:
       cruise_target = T_IDXS * np.clip(v_cruise, v_ego - 2.0, 1e3) + x[0]
       xforward = ((v[1:] + v[:-1]) / 2) * (T_IDXS[1:] - T_IDXS[:-1])
       x = np.cumsum(np.insert(xforward, 0, x[0]))
-      e2ex = (x[N] + 5.0) * np.ones(N+1)
 
       x_and_cruise = np.column_stack([x, cruise_target])
       x = np.min(x_and_cruise, axis=1)
@@ -449,17 +390,7 @@ class LongitudinalMpc:
 
     self.params[:,2] = np.min(x_obstacles, axis=1)
     self.params[:,3] = np.copy(self.prev_a)
-    self.params[:,4] = t_follow if not self.custom_tr_enabled else self.t_follow
-
-
-    self.e2e_x = e2ex[:]
-    self.lead_0_obstacle = lead_0_obstacle[:]
-    self.lead_1_obstacle = lead_1_obstacle[:]
-    if self.mode == 'acc':
-      self.cruise_target = cruise_obstacle[:]
-    elif self.mode == 'blended':
-      self.cruise_target = cruise_target[:]
-
+    self.params[:,4] = t_follow
 
     self.run()
     if (np.any(lead_xv_0[FCW_IDXS,0] - self.x_sol[FCW_IDXS,0] < CRASH_DISTANCE) and

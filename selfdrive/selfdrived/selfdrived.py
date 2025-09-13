@@ -23,11 +23,6 @@ from openpilot.selfdrive.selfdrived.alertmanager import AlertManager, set_offroa
 
 from openpilot.system.version import get_build_metadata
 
-from openpilot.common.constants import CV
-from opendbc.car import structs
-
-USE_LEGACY_LANE_MODEL = Params().get("UseLegacyLaneModel", return_default=True) if Params().get("UseLegacyLaneModel", return_default=True) is not None else 0
-
 REPLAY = "REPLAY" in os.environ
 SIMULATION = "SIMULATION" in os.environ
 TESTING_CLOSET = "TESTING_CLOSET" in os.environ
@@ -37,12 +32,8 @@ LONGITUDINAL_PERSONALITY_MAP = {v: k for k, v in log.LongitudinalPersonality.sch
 ThermalStatus = log.DeviceState.ThermalStatus
 State = log.SelfdriveState.OpenpilotState
 PandaType = log.PandaState.PandaType
-if USE_LEGACY_LANE_MODEL:
-  LaneChangeState = log.LateralPlan.LaneChangeState
-  LaneChangeDirection = log.LateralPlan.LaneChangeDirection
-else:
-  LaneChangeState = log.LaneChangeState
-  LaneChangeDirection = log.LaneChangeDirection
+LaneChangeState = log.LaneChangeState
+LaneChangeDirection = log.LaneChangeDirection
 EventName = log.OnroadEvent.EventName
 ButtonType = car.CarState.ButtonEvent.Type
 SafetyModel = car.CarParams.SafetyModel
@@ -82,7 +73,7 @@ class SelfdriveD:
     # TODO: de-couple selfdrived with card/conflate on carState without introducing controls mismatches
     self.car_state_sock = messaging.sub_sock('carState', timeout=20)
 
-    ignore = self.sensor_packets + self.gps_packets + ['alertDebug', 'liveENaviData', 'liveMapData']
+    ignore = self.sensor_packets + self.gps_packets + ['alertDebug']
     if SIMULATION:
       ignore += ['driverCameraState', 'managerState']
     if REPLAY:
@@ -91,7 +82,7 @@ class SelfdriveD:
     self.sm = messaging.SubMaster(['deviceState', 'pandaStates', 'peripheralState', 'modelV2', 'liveCalibration',
                                    'carOutput', 'driverMonitoringState', 'longitudinalPlan', 'livePose', 'liveDelay',
                                    'managerState', 'liveParameters', 'radarState', 'liveTorqueParameters',
-                                   'controlsState', 'carControl', 'driverAssistance', 'alertDebug', 'userBookmark', 'audioFeedback', 'lateralPlan', 'liveENaviData', 'liveMapData'] + \
+                                   'controlsState', 'carControl', 'driverAssistance', 'alertDebug', 'userBookmark', 'audioFeedback'] + \
                                    self.camera_packets + self.sensor_packets + self.gps_packets,
                                   ignore_alive=ignore, ignore_avg_freq=ignore,
                                   ignore_valid=ignore, frequency=int(1/DT_CTRL))
@@ -130,10 +121,8 @@ class SelfdriveD:
     self.state_machine = StateMachine()
     self.rk = Ratekeeper(100, print_delay_threshold=None)
 
-    self.ignored_processes = {'mapd', 'updated'}
-
     # Determine startup event
-    self.startup_event = EventName.startup
+    self.startup_event = EventName.startup if build_metadata.openpilot.comma_remote and build_metadata.tested_channel else EventName.startupMaster
     if not car_recognized:
       self.startup_event = EventName.startupNoCar
     elif car_recognized and self.CP.passive:
@@ -146,31 +135,6 @@ class SelfdriveD:
       set_offroad_alert("Offroad_CarUnrecognized", True)
     elif self.CP.passive:
       self.events.add(EventName.dashcamMode, static=True)
-
-
-    self.auto_enabled = self.params.get_bool("AutoEnable") and self.params.get_bool("UFCModeEnabled")
-    self.no_mdps_mods = self.params.get_bool("NoSmartMDPS")
-    self.ufc_mode = self.params.get_bool("UFCModeEnabled")
-    self.second = 0.0
-    self.lane_change_delay = self.params.get("KisaAutoLaneChangeDelay", return_default=True)
-    self.auto_enable_speed = self.params.get("AutoEnableSpeed", return_default=True)
-    self.e2e_long_alert_prev = True
-    self.unsleep_mode_alert_prev = True
-    self.donotdisturb_mode_alert_prev = True
-    self.ready_timer = 0
-
-    self.pandaState_safetyModel = ""
-    self.interface_safetyModel = ""
-    self.rx_checks_ok = False
-    self.mismatch_counter_ok = False
-
-    self.legacy_lane_mode = self.params.get("UseLegacyLaneModel", return_default=True)
-
-  def auto_enable(self, CS):
-    if self.state_machine.state != State.enabled:
-      if CS.cruiseState.available and CS.vEgo > self.auto_enable_speed * (CV.KPH_TO_MS if self.is_metric else CV.MPH_TO_MS) and CS.gearShifter == structs.CarState.GearShifter.drive and \
-       self.sm['liveCalibration'].calStatus != log.LiveCalibrationData.Status.uncalibrated and self.initialized and self.ready_timer > 300:
-        self.events.add( EventName.pcmEnable )
 
   def update_events(self, CS):
     """Compute onroadEvents from carState"""
@@ -226,11 +190,10 @@ class SelfdriveD:
           self.events.add(EventName.pcmEnable)
 
       # Disable on rising edge of accelerator or brake. Also disable on brake when speed > 0
-      if not self.ufc_mode:
-        if (CS.gasPressed and not self.CS_prev.gasPressed and self.disengage_on_accelerator) or \
-          (CS.brakePressed and (not self.CS_prev.brakePressed or not CS.standstill)) or \
-          (CS.regenBraking and (not self.CS_prev.regenBraking or not CS.standstill)):
-          self.events.add(EventName.pedalPressed)
+      if (CS.gasPressed and not self.CS_prev.gasPressed and self.disengage_on_accelerator) or \
+        (CS.brakePressed and (not self.CS_prev.brakePressed or not CS.standstill)) or \
+        (CS.regenBraking and (not self.CS_prev.regenBraking or not CS.standstill)):
+        self.events.add(EventName.pedalPressed)
 
     # Create events for temperature, disk space, and memory
     if self.sm['deviceState'].thermalStatus >= ThermalStatus.red:
@@ -288,28 +251,19 @@ class SelfdriveD:
     # ******************************************************************************************
 
     # Handle lane change
-    if not self.sm['carOutput'].actuatorsOutput.lkasTemporaryOff:
-      latplan_type = self.sm['lateralPlan'] if self.legacy_lane_mode else self.sm['modelV2'].meta
-      if latplan_type.laneChangeState == LaneChangeState.preLaneChange:
-        direction = latplan_type.laneChangeDirection
-        if (CS.leftBlindspot and direction == LaneChangeDirection.left) or \
-          (CS.rightBlindspot and direction == LaneChangeDirection.right):
-          self.events.add(EventName.laneChangeBlocked)
+    if self.sm['modelV2'].meta.laneChangeState == LaneChangeState.preLaneChange:
+      direction = self.sm['modelV2'].meta.laneChangeDirection
+      if (CS.leftBlindspot and direction == LaneChangeDirection.left) or \
+         (CS.rightBlindspot and direction == LaneChangeDirection.right):
+        self.events.add(EventName.laneChangeBlocked)
+      else:
+        if direction == LaneChangeDirection.left:
+          self.events.add(EventName.preLaneChangeLeft)
         else:
-          if direction == LaneChangeDirection.left:
-            if self.lane_change_delay == 0:
-              self.events.add(EventName.preLaneChangeLeft)
-            else:
-              self.events.add(EventName.laneChange)
-          else:
-            if self.lane_change_delay == 0:
-              self.events.add(EventName.preLaneChangeRight)
-            else:
-              self.events.add(EventName.laneChange)
-      elif latplan_type.laneChangeState == LaneChangeState.laneChangeStarting:
-        self.events.add(EventName.laneChange)
-      elif latplan_type.laneChangeState == LaneChangeState.laneChangeFinishing:
-        self.events.add(EventName.laneChangeFinish)
+          self.events.add(EventName.preLaneChangeRight)
+    elif self.sm['modelV2'].meta.laneChangeState in (LaneChangeState.laneChangeStarting,
+                                                    LaneChangeState.laneChangeFinishing):
+      self.events.add(EventName.laneChange)
 
     for i, pandaState in enumerate(self.sm['pandaStates']):
       # All pandas must match the list of safetyConfigs, and if outside this list, must be silent or noOutput
@@ -317,38 +271,15 @@ class SelfdriveD:
         safety_mismatch = pandaState.safetyModel != self.CP.safetyConfigs[i].safetyModel or \
                           pandaState.safetyParam != self.CP.safetyConfigs[i].safetyParam or \
                           pandaState.alternativeExperience != self.CP.alternativeExperience
-        self.pandaState_safetyModel = str(pandaState.safetyModel)
-        self.interface_safetyModel = str(self.CP.safetyConfigs[i].safetyModel)
       else:
         safety_mismatch = pandaState.safetyModel not in IGNORED_SAFETY_MODES
 
       # safety mismatch allows some time for pandad to set the safety mode and publish it back from panda
-      self.rx_checks_ok = not pandaState.safetyRxChecksInvalid
-      self.mismatch_counter_ok = self.mismatch_counter < 200
       if (safety_mismatch and self.sm.frame*DT_CTRL > 10.) or pandaState.safetyRxChecksInvalid or self.mismatch_counter >= 200:
         self.events.add(EventName.controlsMismatch)
 
       if log.PandaState.FaultType.relayMalfunction in pandaState.faults:
         self.events.add(EventName.relayMalfunction)
-
-    self.second += DT_CTRL
-    if self.second > 1.0:
-      # UnSleep Mode Alert
-      if self.params.get_bool("KisaMonitoringMode") and self.unsleep_mode_alert_prev:
-        self.events.add(EventName.unSleepMode)
-        self.unsleep_mode_alert_prev = not self.unsleep_mode_alert_prev
-      elif not self.params.get_bool("KisaMonitoringMode"):
-        self.unsleep_mode_alert_prev = True
-      # DoNotDisturb Mode Alert
-      if self.params.get("CommaStockUI", return_default=True) == 2 and self.donotdisturb_mode_alert_prev:
-        self.events.add(EventName.doNotDisturb)
-        self.donotdisturb_mode_alert_prev = not self.donotdisturb_mode_alert_prev
-      elif not self.params.get("CommaStockUI", return_default=True) == 2:
-        self.donotdisturb_mode_alert_prev = True
-      self.second = 0.0
-
-      if self.sm['controlsState'].standStillTimer != 0 and self.sm['controlsState'].standStillTimer % 60 == 0:
-        self.events.add(EventName.dingding)
 
     # Handle HW and system malfunctions
     # Order is very intentional here. Be careful when modifying this.
@@ -360,7 +291,7 @@ class SelfdriveD:
       if not_running != self.not_running_prev:
         cloudlog.event("process_not_running", not_running=not_running, error=True)
       self.not_running_prev = not_running
-    if self.sm.recv_frame['managerState'] and (not_running - self.ignored_processes):
+    if self.sm.recv_frame['managerState'] and not_running:
       self.events.add(EventName.processNotRunning)
     else:
       if not SIMULATION and not self.rk.lagging:
@@ -434,8 +365,8 @@ class SelfdriveD:
       clipped_speed = max(CS.vEgo, 0.3)
       actual_lateral_accel = controlstate.curvature * (clipped_speed**2)
       desired_lateral_accel = self.sm['modelV2'].action.desiredCurvature * (clipped_speed**2)
-      undershooting = abs(desired_lateral_accel) / abs(1e-3 + actual_lateral_accel) > 1.6
-      turning = abs(desired_lateral_accel) > 1.4
+      undershooting = abs(desired_lateral_accel) / abs(1e-3 + actual_lateral_accel) > 1.2
+      turning = abs(desired_lateral_accel) > 1.0
       # TODO: lac.saturated includes speed and other checks, should be pulled out
       if undershooting and turning and lac.saturated:
         self.events.add(EventName.steerSaturated)
@@ -444,8 +375,8 @@ class SelfdriveD:
     stock_long_is_braking = self.enabled and not self.CP.openpilotLongitudinalControl and CS.aEgo < -1.25
     model_fcw = self.sm['modelV2'].meta.hardBrakePredicted and not CS.brakePressed and not stock_long_is_braking
     planner_fcw = self.sm['longitudinalPlan'].fcw and self.enabled
-    #if (planner_fcw or model_fcw) and not self.CP.notCar:
-    #  self.events.add(EventName.fcw)
+    if (planner_fcw or model_fcw) and not self.CP.notCar:
+      self.events.add(EventName.fcw)
 
     # GPS checks
     gps_ok = self.sm.recv_frame[self.gps_location_service] > 0 and (self.sm.frame - self.sm.recv_frame[self.gps_location_service]) * DT_CTRL < 2.0
@@ -466,11 +397,6 @@ class SelfdriveD:
         self.personality = (self.personality - 1) % 3
         self.params.put_nonblocking('LongitudinalPersonality', self.personality)
         self.events.add(EventName.personalityChanged)
-
-    # atom
-    if self.auto_enabled and not self.no_mdps_mods and self.ufc_mode:
-      self.ready_timer += 1 if self.ready_timer < 350 else 350
-      self.auto_enable(CS)
 
   def data_sample(self):
     _car_state = messaging.recv_one(self.car_state_sock)
@@ -552,11 +478,6 @@ class SelfdriveD:
     ss.alertSound = self.AM.current_alert.audible_alert
     ss.alertHudVisual = self.AM.current_alert.visual_alert
 
-    ss.pandaSafetyModel = self.pandaState_safetyModel
-    ss.interfaceSafetyModel = self.interface_safetyModel
-    ss.rxChecks = self.rx_checks_ok
-    ss.mismatchCounter = self.mismatch_counter_ok
-
     self.pm.send('selfdriveState', ss_msg)
 
     # onroadEvents - logged every second or on change
@@ -583,7 +504,7 @@ class SelfdriveD:
       self.is_metric = self.params.get_bool("IsMetric")
       self.is_ldw_enabled = self.params.get_bool("IsLdwEnabled")
       self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
-      self.experimental_mode = self.params.get_bool("ExperimentalMode")# and self.CP.openpilotLongitudinalControl
+      self.experimental_mode = self.params.get_bool("ExperimentalMode") and self.CP.openpilotLongitudinalControl
       self.personality = self.params.get("LongitudinalPersonality", return_default=True)
       time.sleep(0.1)
 

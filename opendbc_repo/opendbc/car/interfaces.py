@@ -17,12 +17,10 @@ from opendbc.car.common.simple_kalman import KF1D, get_kalman_gain
 from opendbc.car.values import PLATFORMS
 from opendbc.can import CANParser
 
-from openpilot.common.params import Params
-
 GearShifter = structs.CarState.GearShifter
 ButtonType = structs.CarState.ButtonEvent.Type
 
-V_CRUISE_MAX = 160
+V_CRUISE_MAX = 145
 MAX_CTRL_SPEED = (V_CRUISE_MAX + 4) * CV.KPH_TO_MS
 ACCEL_MAX = 2.0
 ACCEL_MIN = -3.5
@@ -46,10 +44,6 @@ GEAR_SHIFTER_MAP: dict[str, structs.CarState.GearShifter] = {
 TorqueFromLateralAccelCallbackType = Callable[[float, structs.CarParams.LateralTorqueTuning, bool], float]
 LateralAccelFromTorqueCallbackType = Callable[[float, structs.CarParams.LateralTorqueTuning, bool], float]
 
-UseLiveTorque = Params().get_bool("KisaLiveTorque") if Params().get_bool("KisaLiveTorque") is not None else False
-NoMdpsMod = Params().get_bool("NoSmartMDPS") if Params().get_bool("NoSmartMDPS") is not None else False
-TireStiffnessFactor = Params().get("TireStiffnessFactorAdj", return_default=True) * 0.01 if Params().get("TireStiffnessFactorAdj", return_default=True) is not None else 1.0
-CAR_CANDIDATE = Params().get("CarModel", return_default=True)
 
 @cache
 def get_torque_params():
@@ -65,17 +59,14 @@ def get_torque_params():
     if sum([candidate in x for x in [sub, params, override]]) > 1:
       raise RuntimeError(f'{candidate} is defined twice in torque config')
 
-    if CAR_CANDIDATE is not None:
-      candidate = CAR_CANDIDATE.rstrip('\n')
-
     sub_candidate = sub.get(candidate, candidate)
 
     if sub_candidate in override:
       out = override[sub_candidate]
     elif sub_candidate in params:
       out = params[sub_candidate]
-    # else:
-    #   raise NotImplementedError(f"Did not find torque params for {sub_candidate}")
+    else:
+      raise NotImplementedError(f"Did not find torque params for {sub_candidate}")
 
     torque_params[sub_candidate] = {key: out[i] for i, key in enumerate(params['legend'])}
     if candidate in sub:
@@ -144,7 +135,7 @@ class CarInterfaceBase(ABC):
     ret.steerRatio = platform.config.specs.steerRatio
     ret.centerToFront = ret.wheelbase * platform.config.specs.centerToFrontRatio
     ret.minEnableSpeed = platform.config.specs.minEnableSpeed
-    ret.minSteerSpeed = platform.config.specs.minSteerSpeed if NoMdpsMod else 0.
+    ret.minSteerSpeed = platform.config.specs.minSteerSpeed
     ret.tireStiffnessFactor = platform.config.specs.tireStiffnessFactor
     ret.flags |= int(platform.config.flags)
 
@@ -202,14 +193,11 @@ class CarInterfaceBase(ABC):
     ret.carFingerprint = candidate
 
     # Car docs fields
-    if get_torque_params() is not None:
-      ret.maxLateralAccel = get_torque_params()[candidate]['MAX_LAT_ACCEL_MEASURED']
-    else:
-      ret.maxLateralAccel = Params().get("TorqueMaxLatAccel", return_default=True) * 0.1
+    ret.maxLateralAccel = get_torque_params()[candidate]['MAX_LAT_ACCEL_MEASURED']
     ret.autoResumeSng = True  # describes whether car can resume from a stop automatically
 
     # standard ALC params
-    ret.tireStiffnessFactor = TireStiffnessFactor
+    ret.tireStiffnessFactor = 1.0
     ret.steerControlType = structs.CarParams.SteerControlType.torque
     ret.minSteerSpeed = 0.
     ret.wheelSpeedFactor = 1.0
@@ -244,44 +232,6 @@ class CarInterfaceBase(ABC):
     tune.torque.latAccelFactor = params['LAT_ACCEL_FACTOR']
     tune.torque.latAccelOffset = 0.0
     tune.torque.steeringAngleDeadzoneDeg = steering_angle_deadzone_deg
-
-    if params is not None:
-      if UseLiveTorque:
-        tune.torque.kf = 1.0
-        tune.torque.kp = 1.0
-        tune.torque.ki = 0.3
-        tune.torque.friction = params['FRICTION']
-        tune.torque.latAccelFactor = params['LAT_ACCEL_FACTOR']
-        tune.torque.latAccelOffset = 0.0
-        tune.torque.steeringAngleDeadzoneDeg = steering_angle_deadzone_deg
-      else:
-        TorqueKf = Params().get("TorqueKf", return_default=True) * 0.1
-        TorqueKp = Params().get("TorqueKp", return_default=True) * 0.1
-        TorqueKi = Params().get("TorqueKi", return_default=True) * 0.1
-        TorqueFriction = Params().get("TorqueFriction", return_default=True) * 0.01
-        TorqueLatAccelFactor = Params().get("TorqueMaxLatAccel", return_default=True) * 0.1
-        TorqueAngDeadZone = Params().get("TorqueAngDeadZone", return_default=True) * 0.1
-        tune.torque.kf = TorqueKf
-        tune.torque.kp = TorqueKp
-        tune.torque.ki = TorqueKi
-        tune.torque.friction = TorqueFriction
-        tune.torque.latAccelFactor = TorqueLatAccelFactor
-        tune.torque.latAccelOffset = 0.0
-        tune.torque.steeringAngleDeadzoneDeg = TorqueAngDeadZone        
-    else:
-      TorqueKf = Params().get("TorqueKf", return_default=True) * 0.1
-      TorqueKp = Params().get("TorqueKp", return_default=True) * 0.1
-      TorqueKi = Params().get("TorqueKi", return_default=True) * 0.1
-      TorqueFriction = Params().get("TorqueFriction", return_default=True) * 0.01
-      TorqueLatAccelFactor = Params().get("TorqueMaxLatAccel", return_default=True) * 0.1
-      TorqueAngDeadZone = Params().get("TorqueAngDeadZone", return_default=True) * 0.1
-      tune.torque.kf = TorqueKf
-      tune.torque.kp = TorqueKp
-      tune.torque.ki = TorqueKi
-      tune.torque.friction = TorqueFriction
-      tune.torque.latAccelFactor = TorqueLatAccelFactor
-      tune.torque.latAccelOffset = 0.0
-      tune.torque.steeringAngleDeadzoneDeg = TorqueAngDeadZone
 
   def update(self, can_packets: list[tuple[int, list[CanData]]]) -> structs.CarState:
     # parse can

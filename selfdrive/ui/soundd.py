@@ -13,8 +13,6 @@ from openpilot.common.swaglog import cloudlog
 
 from openpilot.system import micd
 
-from openpilot.common.params import Params
-
 SAMPLE_RATE = 48000
 SAMPLE_BUFFER = 4096 # (approx 100ms)
 MAX_VOLUME = 1.0
@@ -35,14 +33,11 @@ sound_list: dict[int, tuple[str, int | None, float]] = {
   AudibleAlert.refuse: ("refuse.wav", 1, MAX_VOLUME),
 
   AudibleAlert.prompt: ("prompt.wav", 1, MAX_VOLUME),
-  AudibleAlert.promptRepeat: ("prompt.wav", 10, MAX_VOLUME),
-  AudibleAlert.promptDistracted: ("prompt_distracted.wav", 10, MAX_VOLUME),
-  AudibleAlert.wazeAlert: ("waze_alert.wav", 1, MIN_VOLUME),
-  AudibleAlert.warningSoft: ("warning_soft.wav", 10, MAX_VOLUME),
-  AudibleAlert.warningImmediate: ("warning_immediate.wav", 10, MAX_VOLUME),
-  AudibleAlert.warning: ("warning.wav", 1, MAX_VOLUME),
-  AudibleAlert.dingdong: ("dingdong.wav", 1, MAX_VOLUME),
-  AudibleAlert.dingding: ("dingding.wav", 1, MAX_VOLUME),
+  AudibleAlert.promptRepeat: ("prompt.wav", None, MAX_VOLUME),
+  AudibleAlert.promptDistracted: ("prompt_distracted.wav", None, MAX_VOLUME),
+
+  AudibleAlert.warningSoft: ("warning_soft.wav", None, MAX_VOLUME),
+  AudibleAlert.warningImmediate: ("warning_immediate.wav", None, MAX_VOLUME),
 }
 
 def check_selfdrive_timeout_alert(sm):
@@ -66,8 +61,6 @@ class Soundd:
     self.selfdrive_timeout_alert = False
 
     self.spl_filter_weighted = FirstOrderFilter(0, 2.5, FILTER_DT, initialized=False)
-
-    self.params = Params()
 
   def load_sounds(self):
     self.loaded_sounds: dict[int, np.ndarray] = {}
@@ -128,15 +121,8 @@ class Soundd:
       self.selfdrive_timeout_alert = False
 
   def calculate_volume(self, weighted_db):
-    if int(self.params.get("CommaStockUI", return_default=True)) > 1 and int(self.params.get("DoNotDisturbMode", return_default=True)) > 1:
-      return 0.0
-    elif int(self.params.get("KisaUIVolumeBoost", return_default=True)) < -5:
-      return 0.0
-    elif int(self.params.get("KisaUIVolumeBoost", return_default=True)) > 5:
-      return np.interp(min(int(self.params.get("KisaUIVolumeBoost", return_default=True)), 100), [10, 20, 30, 40, 50, 100],[0.01, 0.025, 0.05, 0.075, 0.1, 1.0])
-    else:
-      volume = ((weighted_db - AMBIENT_DB) / DB_SCALE) * (MAX_VOLUME - MIN_VOLUME) + MIN_VOLUME
-      return math.pow(10, (np.clip(volume, MIN_VOLUME, MAX_VOLUME) - 1))
+    volume = ((weighted_db - AMBIENT_DB) / DB_SCALE) * (MAX_VOLUME - MIN_VOLUME) + MIN_VOLUME
+    return math.pow(10, (np.clip(volume, MIN_VOLUME, MAX_VOLUME) - 1))
 
   @retry(attempts=7, delay=3)
   def get_stream(self, sd):

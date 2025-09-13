@@ -6,10 +6,8 @@
 #include <QString>
 #include <QVBoxLayout>
 #include <QWidget>
-#include <QListWidget>
 
 #include "selfdrive/ui/qt/widgets/keyboard.h"
-#include "common/params.h"
 
 
 class DialogBase : public QDialog {
@@ -61,7 +59,6 @@ public:
   static bool alert(const QString &prompt_text, QWidget *parent);
   static bool confirm(const QString &prompt_text, const QString &confirm_text, QWidget *parent);
   static bool rich(const QString &prompt_text, QWidget *parent);
-  static bool confirm2(const QString &prompt_text, QWidget *parent);
 };
 
 class MultiOptionDialog : public DialogBase {
@@ -71,26 +68,4 @@ public:
   explicit MultiOptionDialog(const QString &prompt_text, const QStringList &l, const QString &current, QWidget *parent);
   static QString getSelection(const QString &prompt_text, const QStringList &l, const QString &current, QWidget *parent);
   QString selection;
-};
-
-// larger ConfirmationDialog for rich text
-class RichTextDialog : public DialogBase {
-  Q_OBJECT
-
-public:
-  explicit RichTextDialog(const QString &prompt_text, const QString &btn_text, QWidget* parent);
-  static bool alert(const QString &prompt_text, QWidget *parent);
-};
-
-// Git Pull Cancel
-class GitPullCancel : public DialogBase {
-  Q_OBJECT
-
-public:
-  explicit GitPullCancel(const QString &confirm_text,
-                            const QString &cancel_text, QWidget* parent);
-  static bool confirm(QWidget *parent);
-
-private:
-  Params params;
 };

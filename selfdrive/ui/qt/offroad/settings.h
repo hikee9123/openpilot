@@ -52,7 +52,6 @@ private slots:
   void poweroff();
   void reboot();
   void updateCalibDescription();
-  void onroadRefresh();
 
 private:
   Params params;
@@ -105,9 +104,3 @@ private:
 
 // Forward declaration
 class FirehosePanel;
-
-class UIPanel;
-
-class DrivingPanel;
-
-class TuningPanel;

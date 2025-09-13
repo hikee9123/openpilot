@@ -5,7 +5,6 @@
 #include <vector>
 
 #include <QDebug>
-#include <QTimer> // kisapilot
 
 #include "common/watchdog.h"
 #include "common/util.h"
@@ -16,11 +15,6 @@
 #include "selfdrive/ui/qt/widgets/scrollview.h"
 #include "selfdrive/ui/qt/offroad/developer_panel.h"
 #include "selfdrive/ui/qt/offroad/firehose.h"
-
-#include "selfdrive/ui/qt/offroad/kisaui.h" // kisapilot
-#include "selfdrive/ui/qt/offroad/kisadriving.h" // kisapilot
-#include "selfdrive/ui/qt/offroad/kisatuning.h" // kisapilot
-#include "selfdrive/ui/qt/widgets/kisapilot.h" // kisapilot
 
 TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
   // param, title, desc, icon, restart needed
@@ -187,7 +181,7 @@ void TogglesPanel::updateToggles() {
       // no long for now
       experimental_mode_toggle->setEnabled(false);
       long_personality_setting->setEnabled(false);
-      // params.remove("ExperimentalMode");
+      params.remove("ExperimentalMode");
 
       const QString unavailable = tr("Experimental mode is currently unavailable on this car since the car's stock ACC is used for longitudinal control.");
 
@@ -213,8 +207,6 @@ DevicePanel::DevicePanel(SettingsWindow *parent) : ListWidget(parent) {
   setSpacing(50);
   addItem(new LabelControl(tr("Dongle ID"), getDongleId().value_or(tr("N/A"))));
   addItem(new LabelControl(tr("Serial"), params.get("HardwareSerial").c_str()));
-
-  addItem(new OpenpilotView());
 
   pair_device = new ButtonControl(tr("Pair Device"), tr("PAIR"),
                                   tr("Pair your device with comma connect (connect.comma.ai) and claim your comma prime offer."));
@@ -252,8 +244,6 @@ DevicePanel::DevicePanel(SettingsWindow *parent) : ListWidget(parent) {
     }
   });
   addItem(resetCalibBtn);
-
-  addItem(new LiveParameterReset());
 
   auto retrainingBtn = new ButtonControl(tr("Review Training Guide"), tr("REVIEW"), tr("Review the rules, features, and limitations of openpilot"));
   connect(retrainingBtn, &ButtonControl::clicked, [=]() {
@@ -296,17 +286,9 @@ DevicePanel::DevicePanel(SettingsWindow *parent) : ListWidget(parent) {
     }
   });
 
-  // kisa
-  translateBtn->setEnabled(true);
-
   // power buttons
   QHBoxLayout *power_layout = new QHBoxLayout();
   power_layout->setSpacing(30);
-
-  QPushButton *refresh_btn = new QPushButton(tr("Refresh"));
-  refresh_btn->setObjectName("refresh_btn");
-  power_layout->addWidget(refresh_btn);
-  QObject::connect(refresh_btn, &QPushButton::clicked, this, &DevicePanel::onroadRefresh);
 
   QPushButton *reboot_btn = new QPushButton(tr("Reboot"));
   reboot_btn->setObjectName("reboot_btn");
@@ -323,30 +305,12 @@ DevicePanel::DevicePanel(SettingsWindow *parent) : ListWidget(parent) {
   }
 
   setStyleSheet(R"(
-    #refresh_btn { height: 120px; border-radius: 15px; background-color: #83c744; }
-    #refresh_btn:pressed { background-color: #c7deb1; }
-    #reboot_btn { height: 120px; border-radius: 15px; background-color: #ed8e3b; }
-    #reboot_btn:pressed { background-color: #f0bf97; }
+    #reboot_btn { height: 120px; border-radius: 15px; background-color: #393939; }
+    #reboot_btn:pressed { background-color: #4a4a4a; }
     #poweroff_btn { height: 120px; border-radius: 15px; background-color: #E22C2C; }
     #poweroff_btn:pressed { background-color: #FF2424; }
   )");
   addItem(power_layout);
-}
-
-void DevicePanel::onroadRefresh() {
-  if (!uiState()->engaged()) {
-    if (ConfirmationDialog::confirm(tr("Are you sure you want to refresh?"), tr("Refresh"), this)) {
-      // Check engaged again in case it changed while the dialog was open
-      if (!uiState()->engaged()) {
-        params.putBool("OnRoadRefresh", true);
-        QTimer::singleShot(3000, [this]() {
-          params.putBool("OnRoadRefresh", false);
-        });
-      }
-    }
-  } else {
-    ConfirmationDialog::alert(tr("Disengage to Refresh"), this);
-  }
 }
 
 void DevicePanel::updateCalibDescription() {
@@ -369,25 +333,21 @@ void DevicePanel::updateCalibDescription() {
     }
   }
 
-  const bool is_release = params.getBool("IsReleaseBranch");
-  if (!is_release) {
-    int lag_perc = 0;
-    std::string lag_bytes = params.get("LiveDelay");
-    if (!lag_bytes.empty()) {
-      try {
-        AlignedBuffer aligned_buf;
-        capnp::FlatArrayMessageReader cmsg(aligned_buf.align(lag_bytes.data(), lag_bytes.size()));
-        lag_perc = cmsg.getRoot<cereal::Event>().getLiveDelay().getCalPerc();
-      } catch (kj::Exception) {
-        qInfo() << "invalid LiveDelay";
-      }
+  int lag_perc = 0;
+  std::string lag_bytes = params.get("LiveDelay");
+  if (!lag_bytes.empty()) {
+    try {
+      AlignedBuffer aligned_buf;
+      capnp::FlatArrayMessageReader cmsg(aligned_buf.align(lag_bytes.data(), lag_bytes.size()));
+      lag_perc = cmsg.getRoot<cereal::Event>().getLiveDelay().getCalPerc();
+    } catch (kj::Exception) {
+      qInfo() << "invalid LiveDelay";
     }
-    desc += "\n\n";
-    if (lag_perc < 100) {
-      desc += tr("Steering lag calibration is %1% complete.").arg(lag_perc);
-    } else {
-      desc += tr("Steering lag calibration is complete.");
-    }
+  }
+  if (lag_perc < 100) {
+    desc += tr("\n\nSteering lag calibration is %1% complete.").arg(lag_perc);
+  } else {
+    desc += tr("\n\nSteering lag calibration is complete.");
   }
 
   std::string torque_bytes = params.get("LiveTorqueParameters");
@@ -483,7 +443,7 @@ SettingsWindow::SettingsWindow(QWidget *parent) : QFrame(parent) {
     QPushButton {
       font-size: 140px;
       padding-bottom: 20px;
-      border-radius: 35px;
+      border-radius: 100px;
       background-color: #292929;
       font-weight: 400;
     }
@@ -491,10 +451,9 @@ SettingsWindow::SettingsWindow(QWidget *parent) : QFrame(parent) {
       background-color: #3B3B3B;
     }
   )");
-  close_btn->setFixedSize(220, 120);
-  sidebar_layout->addSpacing(5);
-  sidebar_layout->addWidget(close_btn, 0, Qt::AlignCenter);
+  close_btn->setFixedSize(200, 200);
   sidebar_layout->addSpacing(45);
+  sidebar_layout->addWidget(close_btn, 0, Qt::AlignCenter);
   QObject::connect(close_btn, &QPushButton::clicked, this, &SettingsWindow::closeSettings);
 
   // setup panels
@@ -516,9 +475,6 @@ SettingsWindow::SettingsWindow(QWidget *parent) : QFrame(parent) {
     {tr("Software"), new SoftwarePanel(this)},
     {tr("Firehose"), new FirehosePanel(this)},
     {tr("Developer"), new DeveloperPanel(this)},
-    {tr("UIMenu"), new UIPanel(this)},
-    {tr("Driving"), new DrivingPanel(this)},
-    {tr("Tuning"), new TuningPanel(this)},
   };
 
   nav_btns = new QButtonGroup(this);
@@ -532,9 +488,7 @@ SettingsWindow::SettingsWindow(QWidget *parent) : QFrame(parent) {
         border: none;
         background: none;
         font-size: 65px;
-        font-weight: 600;
-        margin: 0px;
-        padding: 1px 1px;
+        font-weight: 500;
       }
       QPushButton:checked {
         color: white;

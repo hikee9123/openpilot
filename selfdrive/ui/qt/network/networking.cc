@@ -6,7 +6,6 @@
 #include <QScrollBar>
 #include <QStyle>
 
-#include "selfdrive/ui/ui.h"
 #include "selfdrive/ui/qt/qt_window.h"
 #include "selfdrive/ui/qt/util.h"
 #include "selfdrive/ui/qt/widgets/controls.h"
@@ -22,7 +21,6 @@ Networking::Networking(QWidget* parent, bool show_advanced) : QFrame(parent) {
   wifi = new WifiManager(this);
   connect(wifi, &WifiManager::refreshSignal, this, &Networking::refresh);
   connect(wifi, &WifiManager::wrongPassword, this, &Networking::wrongPassword);
-  connect(uiState(), &UIState::hotspotSignal, this, &Networking::hotspoton);
 
   wifiScreen = new QWidget(this);
   QVBoxLayout* vlayout = new QVBoxLayout(wifiScreen);
@@ -84,12 +82,6 @@ void Networking::refresh() {
   an->refresh();
 }
 
-void Networking::hotspoton() {
-  wifiWidget->refresh();
-  an->toggleTethering(true);
-  an->refresh();
-}
-
 void Networking::connectToNetwork(const Network n) {
   if (wifi->isKnownConnection(n.ssid)) {
     wifi->activateWifiConnection(n.ssid);
@@ -139,18 +131,9 @@ AdvancedNetworking::AdvancedNetworking(QWidget* parent, WifiManager* wifi): QWid
 
   ListWidget *list = new ListWidget(this);
   // Enable tethering layout
-  const bool hotspotEnabled = params.getBool("KisaHotspotOnBoot");
-  tetheringToggle = new ToggleControl(tr("Enable Tethering"), "", "", wifi->isTetheringEnabled() || hotspotEnabled);
+  tetheringToggle = new ToggleControl(tr("Enable Tethering"), "", "", wifi->isTetheringEnabled());
   list->addItem(tetheringToggle);
   QObject::connect(tetheringToggle, &ToggleControl::toggleFlipped, this, &AdvancedNetworking::toggleTethering);
-
-  // Hotspot Autorun toggle
-  hotspotToggle = new ToggleControl(tr("Hotspot Autorun"), "", "", hotspotEnabled);
-  QObject::connect(hotspotToggle, &ToggleControl::toggleFlipped, [=](bool state) {
-    params.putBool("KisaHotspotOnBoot", state);
-    if (state) toggleTethering(state);
-  });
-  list->addItem(hotspotToggle);
 
   // Change tethering password
   ButtonControl *editPasswordButton = new ButtonControl(tr("Tethering Password"), tr("EDIT"));

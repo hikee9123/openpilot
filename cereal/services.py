@@ -95,10 +95,6 @@ _services: dict[str, tuple] = {
   "customReservedRawData0": (True, 0.),
   "customReservedRawData1": (True, 0.),
   "customReservedRawData2": (True, 0.),
-
-  "lateralPlan": (False, 20.),
-  "liveENaviData": (False, 0.),
-  "liveMapData": (False, 0.),
 }
 SERVICE_LIST = {name: Service(*vals) for
                 idx, (name, vals) in enumerate(_services.items())}

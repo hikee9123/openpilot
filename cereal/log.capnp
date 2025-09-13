@@ -132,38 +132,6 @@ struct OnroadEvent @0xc4fa6047f024e718 {
     audioFeedback @97;
 
     soundsUnavailableDEPRECATED @47;
-
-    plannerError @98;
-    laneChangeManual @99;
-    emgButtonManual @100;
-    driverSteering @101;
-    modeChangeOpenpilot @102;
-    modeChangeDistcurv @103;
-    modeChangeDistance @104;
-    modeChangeCurv @105;
-    modeChangeOneway @106;
-    modeChangeMaponly @107;
-    needBrake @108;
-    standStill @109;
-    isgActive @110;
-    camSpeedDown @111;
-    gapAdjusting @112;
-    resCruise @113;
-    curvSpeedDown @114;
-    standstillResButton @115;
-    routineDriveOn @116;
-    lkasEnabled @117;
-    cutinDetection @118;
-    gearNotD @119;
-    unSleepMode @120;
-    speedBump @121;
-    sccDriverOverride @122;
-    doNotDisturb @123;
-    chimeAtResume @124;
-    autoHold @125;
-    lkasDisabled @126;
-    laneChangeFinish @127;
-    dingding @128;
   }
 }
 
@@ -538,8 +506,6 @@ struct DeviceState @0xa4d8b5af2aa492eb {
   fanSpeedPercentDesired @10 :UInt16;
   screenBrightnessPercent @37 :Int8;
 
-  ipAddress @50 :Text;
-
   struct ThermalZone {
     name @0 :Text;
     temp @1 :Float32;
@@ -866,11 +832,6 @@ struct SelfdriveState {
   experimentalMode @10 :Bool;
   personality @11 :LongitudinalPersonality;
 
-  pandaSafetyModel @13 :Text;
-  interfaceSafetyModel @14 :Text;
-  rxChecks @15 :Bool;
-  mismatchCounter @16 :Bool;
-
   enum OpenpilotState @0xdbe58b96d2d1ac61 {
     disabled @0;
     preEnabled @1;
@@ -905,42 +866,15 @@ struct ControlsState @0x97ff69c53601abf1 {
   desiredCurvature @61 :Float32;  # lag adjusted curvatures used by lateral controllers
   forceDecel @51 :Bool;
 
-  # atom
-  alertTextMsg1  @68 :Text;
-  alertTextMsg2  @69 :Text;
-  alertTextMsg3  @70 :Text;
-
-  lateralControlMethod  @71 :UInt8;
-  limitSpeedCamera @72 :Float32 = 0;
-  limitSpeedCameraDist @73 :Float32 = 0;
-  steerRatio @74 :Float32;
-  mapSign @75 :Text;
-  mapSignCam @76 :Float32;
-  dynamicTRMode @77 :UInt8;
-  dynamicTRValue @78 :Float32;
-  accel @79 :Float32;
-  safetySpeed @80 :Float32;
-  steeringAngleDesiredDeg @81 :Float32;
-  gapBySpeedOn @82 :Bool;
-  expModeTemp @83 :Bool;
-  btnPressing @84 :UInt8;
-  autoResvCruisekph @85 :Float32;
-  resSpeed @86 :Float32;
-  setLoadspeedTempStop @87 :Bool;
-  standStill @88 :Bool;
-  standStillTimer @89 :Float32;
-  vFuture @90: Float32;
-  vFutureA @91: Float32;
-
   lateralControlState :union {
-    indiState @52 :LateralINDIState;
     pidState @53 :LateralPIDState;
-    lqrState @55 :LateralLQRState;
     angleState @58 :LateralAngleState;
     debugState @59 :LateralDebugState;
     torqueState @60 :LateralTorqueState;
-    atomState @67  :LateralATOMState;
-    curvatureState @65 :LateralCurvatureState;
+
+    curvatureStateDEPRECATED @65 :LateralCurvatureState;
+    lqrStateDEPRECATED @55 :LateralLQRState;
+    indiStateDEPRECATED @52 :LateralINDIState;
   }
 
   struct LateralINDIState {
@@ -985,37 +919,6 @@ struct ControlsState @0x97ff69c53601abf1 {
     actualLateralAccel @9 :Float32;
     desiredLateralAccel @10 :Float32;
    }
-
-  struct LateralATOMState {
-    active @0 :Bool;
-    steeringAngleDeg @1 :Float32;
-    i @2 :Float32;
-    output @3 :Float32;
-    lqrOutput @4 :Float32;
-    saturated @5 :Bool;
-    steeringAngleDesiredDeg @6 :Float32;
-    error @7 :Float32;
-    errorRate @8 :Float32;
-    p1 @9 :Float32;
-    i1 @10 :Float32;
-    d1 @11 :Float32;
-    f1 @12 :Float32;
-    selected @13 :Float32;
-    steeringRateDeg @14 :Float32;
-    angleError @15 :Float32;
-    p2 @16 :Float32;
-    i2 @17 :Float32;
-    f2 @18 :Float32;
-    steeringAccelDeg @19 :Float32;
-    rateSetPoint @20 :Float32;
-    accelSetPoint @21 :Float32;
-    accelError @22 :Float32;
-    delayedOutput @23 :Float32;
-    delta @24 :Float32;
-    steeringRateDesiredDeg @25 :Float32;
-    actualLateralAccel @26 :Float32;
-    desiredLateralAccel @27 :Float32;
-  }
 
   struct LateralLQRState {
     active @0 :Bool;
@@ -1084,7 +987,7 @@ struct ControlsState @0x97ff69c53601abf1 {
   steerOverrideDEPRECATED @20 :Bool;
   steeringAngleDesiredDegDEPRECATED @29 :Float32;
   canMonoTimesDEPRECATED @21 :List(UInt64);
-  desiredCurvatureRate @62 :Float32;
+  desiredCurvatureRateDEPRECATED @62 :Float32;
   canErrorCounterDEPRECATED @57 :UInt32;
   vPidDEPRECATED @2 :Float32;
   alertBlinkingRateDEPRECATED @42 :Float32;
@@ -1190,7 +1093,7 @@ struct ModelDataV2 {
   gpuExecutionTimeDEPRECATED @17 :Float32;
   navEnabledDEPRECATED @22 :Bool;
   locationMonoTimeDEPRECATED @24 :UInt64;
-  lateralPlannerSolution @25: LateralPlannerSolution;
+  lateralPlannerSolutionDEPRECATED @25: LateralPlannerSolution;
 
   struct LeadDataV2 {
     prob @0 :Float32; # probability that car is your lead at time t
@@ -1352,21 +1255,12 @@ struct LongitudinalPlan @0xe00b5b3eba12876c {
 
   solverExecutionTime @35 :Float32;
 
-  dynamicTRMode @40 :UInt8;
-  dynamicTRValue @41 :Float32;
-
-  e2eX @42 :List(Float64);
-  lead0Obstacle @43 :List(Float64);
-  lead1Obstacle @44 :List(Float64);
-  cruiseTarget @45 :List(Float64);
-
   enum LongitudinalPlanSource {
     cruise @0;
     lead0 @1;
     lead1 @2;
     lead2 @3;
     e2e @4;
-    stop @5;
   }
 
   # deprecated
@@ -1411,11 +1305,11 @@ struct UiPlan {
 
 struct LateralPlan @0xe1e9318e2ae8b51e {
   modelMonoTime @31 :UInt64;
-  laneWidth @0 :Float32;
-  lProb @5 :Float32;
-  rProb @7 :Float32;
+  laneWidthDEPRECATED @0 :Float32;
+  lProbDEPRECATED @5 :Float32;
+  rProbDEPRECATED @7 :Float32;
   dPathPoints @20 :List(Float32);
-  dProb @21 :Float32;
+  dProbDEPRECATED @21 :Float32;
 
   mpcSolutionValid @9 :Bool;
   desire @17 :Desire;
@@ -1435,38 +1329,6 @@ struct LateralPlan @0xe1e9318e2ae8b51e {
   struct SolverState {
     x @0 :List(List(Float32));
     u @1 :List(Float32);
-  }
-
-  outputScale @34 :Float32;
-  vCruiseSet @35 :Float32;
-  vCurvature @36 :Float32;
-  lanelessMode @37 :Bool;
-  modelSpeed @38 :Float32;
-  totalCameraOffset @39 :Float32;
-  rightLanetoRightEdgeWidth @40 :Float32;
-  leftLanetoLeftEdgeWidth @41 :Float32;
-
-  enum Desire {
-    none @0;
-    turnLeft @1;
-    turnRight @2;
-    laneChangeLeft @3;
-    laneChangeRight @4;
-    keepLeft @5;
-    keepRight @6;
-  }
-
-  enum LaneChangeState {
-    off @0;
-    preLaneChange @1;
-    laneChangeStarting @2;
-    laneChangeFinishing @3;
-  }
-
-  enum LaneChangeDirection {
-    none @0;
-    left @1;
-    right @2;
   }
 
   # deprecated
@@ -2441,47 +2303,6 @@ struct LiveDelayData {
   }
 }
 
-struct LiveENaviData {
-  speedLimit @0 :Int32;
-  safetyDistance @1 :Float32;
-  safetySign @2 :Text;
-  turnInfo @3 :Text;
-  distanceToTurn @4 :Float32;
-  safetySignCam @5 :Int32;
-  connectionAlive @6 :Bool;
-  roadLimitSpeed @7 :Int32;
-  linkLength @8 :Int32;
-  currentLinkAngle @9 :Int32;
-  nextLinkAngle @10 :Int32;
-  roadName @11 :Text;
-  isHighway @12 :Bool;
-  isTunnel @13 :Bool;
-  kisa0 @14 :Text;
-  kisa1 @15 :Text;
-  kisa2 @16 :Text;
-  kisa3 @17 :Text;
-  kisa4 @18 :Text;
-  kisa5 @19 :Text;
-  kisa6 @20 :Text;
-  kisa7 @21 :Text;
-  kisa8 @22 :Text;
-  kisa9 @23 :Text;
-  wazeAlertId @24 :Int8;
-  wazeAlertDistance @25 :Int32;
-  wazeRoadSpeedLimit @26 :Int32;
-  wazeRoadName @27 :Text;
-  wazeNavSign @28 :Int64;
-  wazeNavDistance @29 :Int32;
-  wazeCurrentSpeed @30 :Int32;
-  wazeAlertType @31 :Text;
-  kisaLatitude @32 :Float32;
-  kisaLongitude @33 :Float32;
-  wazeLatitude @34 :Float32;
-  wazeLongitude @35 :Float32;
-  wazeAlertExtend @36 :Bool;
-  wazeAlertDistanceRaw @37 :Text;
-}
-
 struct LiveMapDataDEPRECATED {
   speedLimitValid @0 :Bool;
   speedLimit @1 :Float32;
@@ -2500,31 +2321,6 @@ struct LiveMapDataDEPRECATED {
   roadCurvature @9 :List(Float32);
   distToTurn @10 :Float32;
   mapValid @11 :Bool;
-}
-
-struct LiveMapData {
-  speedLimitValid @0 :Bool;
-  speedLimit @1 :Float32;
-  speedLimitAheadValid @2 :Bool;
-  speedLimitAhead @3 :Float32;
-  speedLimitAheadDistance @4 :Float32;
-  turnSpeedLimitValid @5 :Bool;
-  turnSpeedLimit @6 :Float32;
-  turnSpeedLimitEndDistance @7 :Float32;
-  turnSpeedLimitSign @8 :Int16;
-  turnSpeedLimitsAhead @9 :List(Float32);
-  turnSpeedLimitsAheadDistances @10 :List(Float32);
-  turnSpeedLimitsAheadSigns @11 :List(Int16);
-  lastGpsTimestamp @12 :Int64;  # Milliseconds since January 1, 1970.
-  currentRoadName @13 :Text;
-  lastGpsLatitude @14 :Float64;
-  lastGpsLongitude @15 :Float64;
-  lastGpsSpeed @16 :Float32;
-  lastGpsBearingDeg @17 :Float32;
-  lastGpsAccuracy @18 :Float32;
-  lastGpsBearingAccuracyDeg @19 :Float32;
-  roadCameraOffset @20 :Float32;
-  ref @21 :Text;
 }
 
 struct CameraOdometry {
@@ -2847,9 +2643,6 @@ struct Event {
     customReserved18 @144 :Custom.CustomReserved18;
     customReserved19 @145 :Custom.CustomReserved19;
 
-    liveENaviData @150: LiveENaviData;
-    liveMapData @151: LiveMapData;
-
     # *********** legacy + deprecated ***********
     model @9 :Legacy.ModelData; # TODO: rename modelV2 and mark this as deprecated
     liveMpcDEPRECATED @36 :LiveMpcData;
@@ -2888,7 +2681,7 @@ struct Event {
     pandaStateDEPRECATED @12 :PandaState;
     driverStateDEPRECATED @59 :DriverStateDEPRECATED;
     sensorEventsDEPRECATED @11 :List(SensorEventData);
-    lateralPlan @64 :LateralPlan;
+    lateralPlanDEPRECATED @64 :LateralPlan;
     navModelDEPRECATED @104 :NavModelData;
     uiPlanDEPRECATED @106 :UiPlan;
     liveLocationKalmanDEPRECATED @72 :LiveLocationKalman;

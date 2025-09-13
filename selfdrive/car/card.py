@@ -65,8 +65,7 @@ class Car:
 
   def __init__(self, CI=None, RI=None) -> None:
     self.can_sock = messaging.sub_sock('can', timeout=20)
-    self.sm = messaging.SubMaster(['pandaStates', 'carControl', 'onroadEvents', 'controlsState', 'liveENaviData', 'liveMapData'])
-
+    self.sm = messaging.SubMaster(['pandaStates', 'carControl', 'onroadEvents'])
     self.pm = messaging.PubMaster(['sendcan', 'carState', 'carParams', 'carOutput', 'liveTracks'])
 
     self.can_rcv_cum_timeout_counter = 0
@@ -185,7 +184,7 @@ class Car:
     if can_rcv_valid and REPLAY:
       self.can_log_mono_time = messaging.log_from_bytes(can_strs[0]).logMonoTime
 
-    self.v_cruise_helper.update_v_cruise(CS, self.sm['carControl'].enabled, self.is_metric, self.sm['controlsState'], self.sm['liveENaviData'], self.sm['liveMapData'])
+    self.v_cruise_helper.update_v_cruise(CS, self.sm['carControl'].enabled, self.is_metric)
     if self.sm['carControl'].enabled and not self.CC_prev.enabled:
       # Use CarState w/ buttons from the step selfdrived enables on
       self.v_cruise_helper.initialize_v_cruise(self.CS_prev, self.experimental_mode)
@@ -193,7 +192,6 @@ class Car:
     # TODO: mirror the carState.cruiseState struct?
     CS.vCruise = float(self.v_cruise_helper.v_cruise_kph)
     CS.vCruiseCluster = float(self.v_cruise_helper.v_cruise_cluster_kph)
-    CS.pauseSpdLimit = bool(self.v_cruise_helper.pause_spdlimit)
 
     return CS, RD
 
@@ -261,7 +259,7 @@ class Car:
   def params_thread(self, evt):
     while not evt.is_set():
       self.is_metric = self.params.get_bool("IsMetric")
-      self.experimental_mode = self.params.get_bool("ExperimentalMode")# and self.CP.openpilotLongitudinalControl
+      self.experimental_mode = self.params.get_bool("ExperimentalMode") and self.CP.openpilotLongitudinalControl
       time.sleep(0.1)
 
   def card_thread(self):

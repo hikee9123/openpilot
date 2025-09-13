@@ -20,7 +20,6 @@ widgets_src = ["qt/widgets/input.cc", "qt/widgets/wifi.cc", "qt/prime_state.cc",
                "qt/widgets/offroad_alerts.cc", "qt/widgets/prime.cc", "qt/widgets/keyboard.cc",
                "qt/widgets/scrollview.cc", "qt/widgets/cameraview.cc", "#third_party/qrcode/QrCode.cc",
                "qt/request_repeater.cc", "qt/qt_window.cc", "qt/network/networking.cc", "qt/network/wifi_manager.cc"]
-widgets_src += ["qt/widgets/kisapilot.cc", "qt/widgets/steerWidget.cc", "qt/widgets/groupWidget.cc" ]
 
 widgets = qt_env.Library("qt_widgets", widgets_src, LIBS=base_libs)
 Export('widgets')
@@ -32,10 +31,6 @@ qt_src = ["main.cc", "ui.cc", "qt/sidebar.cc", "qt/body.cc",
           "qt/offroad/driverview.cc", "qt/offroad/experimental_mode.cc", "qt/offroad/firehose.cc",
           "qt/onroad/onroad_home.cc", "qt/onroad/annotated_camera.cc", "qt/onroad/model.cc",
           "qt/onroad/buttons.cc", "qt/onroad/alerts.cc", "qt/onroad/driver_monitoring.cc", "qt/onroad/hud.cc"]
-qt_src += ["qt/offroad/kisaui.cc", "qt/offroad/kisadriving.cc", "qt/offroad/kisatuning.cc" ]
-
-if arch == 'larch64':
-  qt_src += ["qt/screenrecorder/omx_encoder.cc", "qt/screenrecorder/screenrecorder.cc"]
 
 # build translation files
 with open(File("translations/languages.json").abspath) as f:
@@ -63,13 +58,7 @@ qt_env.Depends(assets, Glob('#selfdrive/assets/*', exclude=[assets, assets_src, 
 asset_obj = qt_env.Object("assets", assets)
 
 # build main UI
-if arch == 'larch64':
-  qt_env['CPPPATH'] += ["qt/screenrecorder/openmax/include/"]
-  ui_libs = ['OmxCore', 'gsl', 'CB', 'avformat', 'avcodec', 'swscale', 'avutil', 'yuv', 'pthread']
-  qt_env.Program("ui", qt_src + [asset_obj], LIBS=qt_libs + ui_libs)
-else:
-  qt_env.Program("ui", qt_src + [asset_obj], LIBS=qt_libs)
-
+qt_env.Program("ui", qt_src + [asset_obj], LIBS=qt_libs)
 if GetOption('extras'):
   qt_src.remove("main.cc")  # replaced by test_runner
   qt_env.Program('tests/test_translations', [asset_obj, 'tests/test_runner.cc', 'tests/test_translations.cc'] + qt_src, LIBS=qt_libs)

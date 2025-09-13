@@ -11,11 +11,8 @@ from opendbc.car.mock.values import CAR as MOCK
 from opendbc.car.values import BRANDS
 from opendbc.car.vin import get_vin, is_valid_vin, VIN_UNKNOWN
 
-from openpilot.common.params import Params
-
 FRAME_FINGERPRINT = 100  # 1s
 
-CAR_NAME = Params().get("CarModel", return_default=True)
 
 def load_interfaces(brand_names):
   ret = {}
@@ -147,9 +144,6 @@ def fingerprint(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_mu
   carlog.error({"event": "fingerprinted", "car_fingerprint": str(car_fingerprint), "source": source, "fuzzy": not exact_match,
                 "cached": cached, "fw_count": len(car_fw), "ecu_responses": list(ecu_rx_addrs), "vin_rx_addr": vin_rx_addr,
                 "vin_rx_bus": vin_rx_bus, "fingerprints": repr(finger), "fw_query_time": fw_query_time})
-
-  if CAR_NAME is not None:
-    car_fingerprint = CAR_NAME.rstrip('\n')
 
   return car_fingerprint, finger, vin, car_fw, source, exact_match
 
