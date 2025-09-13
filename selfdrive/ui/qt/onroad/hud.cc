@@ -6,11 +6,7 @@
 
 constexpr int SET_SPEED_NA = 255;
 
-HudRenderer::HudRenderer() {
-
-  // #custom
-  m_pPaint = new OnPaint(this, width(), height());
-}
+HudRenderer::HudRenderer() {}
 
 void HudRenderer::updateState(const UIState &s) {
   is_metric = s.scene.is_metric;
@@ -40,10 +36,6 @@ void HudRenderer::updateState(const UIState &s) {
   v_ego_cluster_seen = v_ego_cluster_seen || car_state.getVEgoCluster() != 0.0;
   float v_ego = v_ego_cluster_seen ? car_state.getVEgoCluster() : car_state.getVEgo();
   speed = std::max<float>(0.0f, v_ego * (is_metric ? MS_TO_KPH : MS_TO_MPH));
-
-  // #custom
-  if( m_pPaint )
-     m_pPaint->updateState(s);
 }
 
 void HudRenderer::draw(QPainter &p, const QRect &surface_rect) {
@@ -59,16 +51,7 @@ void HudRenderer::draw(QPainter &p, const QRect &surface_rect) {
   if (is_cruise_available) {
     drawSetSpeed(p, surface_rect);
   }
-  //drawCurrentSpeed(p, surface_rect);
-
-  // #custom
-  if( m_pPaint )
-  {
-    QString speedStr = QString::number(std::nearbyint(speed));
-    QString speedUnit = is_metric ? tr("km/h") : tr("mph");
-    m_pPaint->drawHud(p);
-    m_pPaint->drawSpeed(p, rect().center().x(), speedStr, speedUnit );
-  }
+  drawCurrentSpeed(p, surface_rect);
 
   p.restore();
 }
