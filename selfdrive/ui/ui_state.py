@@ -51,6 +51,8 @@ class UIState:
         "managerState",
         "selfdriveState",
         "longitudinalPlan",
+        #custom
+        "peripheralState",
       ]
     )
 
