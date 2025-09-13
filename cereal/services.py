@@ -78,6 +78,10 @@ _services: dict[str, tuple] = {
   "bookmarkButton": (True, 0., 1),
   "audioFeedback": (True, 0., 1),
 
+  # #custom
+  "naviCustom": (True, 20., 5),
+  "uICustom": (True, 0.),
+
   # debug
   "uiDebug": (True, 0., 1),
   "testJoystick": (True, 0.),

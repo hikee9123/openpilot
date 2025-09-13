@@ -128,4 +128,13 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"UptimeOffroad", {PERSISTENT, FLOAT, "0.0"}},
     {"UptimeOnroad", {PERSISTENT, FLOAT, "0.0"}},
     {"Version", {PERSISTENT, STRING}},
+
+    // #custom
+    {"CustomParam", PERSISTENT},
+    {"UseExternalNaviRoutes", PERSISTENT},
+    {"ExternalNaviType", PERSISTENT},
+    {"MapboxToken", PERSISTENT},
+    {"SelectedCar", PERSISTENT},
+    {"SelectedModel", PERSISTENT},
+    {"EnableLogging", PERSISTENT},
 };

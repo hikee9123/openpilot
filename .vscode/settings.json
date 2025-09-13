@@ -30,6 +30,8 @@
     "xstring": "cpp",
     "xutility": "cpp",
     "subaru_preglobal.h": "c",
-    "chrysler.h": "c"
+    "chrysler.h": "c",
+    "random": "cpp",
+    "cmath": "cpp"
   }
 }
