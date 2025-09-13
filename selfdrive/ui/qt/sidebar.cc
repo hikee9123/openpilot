@@ -40,9 +40,6 @@ Sidebar::Sidebar(QWidget *parent) : QFrame(parent), onroad(false), flag_pressed(
   QObject::connect(uiState(), &UIState::uiUpdate, this, &Sidebar::updateState);
 
   pm = std::make_unique<PubMaster>(std::vector<const char*>{"bookmarkButton"});
-
-  // #custom
-  m_pSideBar = new CSidebar( nullptr );
 }
 
 void Sidebar::mousePressEvent(QMouseEvent *event) {
@@ -65,11 +62,7 @@ void Sidebar::mouseReleaseEvent(QMouseEvent *event) {
   }
   if (onroad && home_btn.contains(event->pos())) {
     MessageBuilder msg;
-    //msg.initEvent().initBookmarkButton();
-    // #custom
-    auto userFlag = msg.initEvent().initBookmarkButton();
-    m_pSideBar->mouseReleaseEvent( event, userFlag );
-
+    msg.initEvent().initBookmarkButton();
     pm->send("bookmarkButton", msg);
   } else if (settings_btn.contains(event->pos())) {
     emit openSettings();
@@ -122,13 +115,6 @@ void Sidebar::updateState(const UIState &s) {
   setProperty("pandaStatus", QVariant::fromValue(pandaStatus));
 
   setProperty("recordingAudio", s.scene.recording_audio);
-
-  // #custom
-  if( m_pSideBar )
-  {
-      if( m_pSideBar->updateState(s) )
-        update();
-  }
 }
 
 void Sidebar::paintEvent(QPaintEvent *event) {
@@ -176,8 +162,4 @@ void Sidebar::paintEvent(QPaintEvent *event) {
   drawMetric(p, temp_status.first, temp_status.second, 338);
   drawMetric(p, panda_status.first, panda_status.second, 496);
   drawMetric(p, connect_status.first, connect_status.second, 654);
-
-  // #custom
-  if( m_pSideBar )
-    m_pSideBar->paintEvent( p );
 }
