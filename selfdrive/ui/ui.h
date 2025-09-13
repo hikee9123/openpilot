@@ -62,6 +62,7 @@ typedef struct UIScene {
   uint64_t started_frame;
 
   // #custom
+  int fb_w = 0, fb_h = 0;
   struct _CUSTOM
   {
     int  m_powerflag = 0;

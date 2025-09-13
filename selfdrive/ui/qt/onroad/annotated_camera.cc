@@ -66,6 +66,10 @@ mat4 AnnotatedCameraWidget::calcFrameMatrix() {
   float x_offset = std::clamp<float>((Kep.x() / Kep.z() - center_x) * zoom, -max_x_offset, max_x_offset);
   float y_offset = std::clamp<float>((Kep.y() / Kep.z() - center_y) * zoom, -max_y_offset, max_y_offset);
 
+
+  s->fb_w = w;
+  s->fb_h = h;
+
   // Apply transformation such that video pixel coordinates match video
   // 1) Put (0, 0) in the middle of the video
   // 2) Apply same scaling as video
