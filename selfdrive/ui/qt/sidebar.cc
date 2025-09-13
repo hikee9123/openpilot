@@ -122,6 +122,13 @@ void Sidebar::updateState(const UIState &s) {
   setProperty("pandaStatus", QVariant::fromValue(pandaStatus));
 
   setProperty("recordingAudio", s.scene.recording_audio);
+
+  // #custom
+  if( m_pSideBar )
+  {
+      if( m_pSideBar->updateState(s) )
+        update();
+  }
 }
 
 void Sidebar::paintEvent(QPaintEvent *event) {
