@@ -23,5 +23,13 @@
     "system/**",
     "third_party/**",
     "tools/**",
-  ]
+  ],
+  "files.associations": {
+    "array": "cpp",
+    "vector": "cpp",
+    "xstring": "cpp",
+    "xutility": "cpp",
+    "subaru_preglobal.h": "c",
+    "chrysler.h": "c"
+  }
 }

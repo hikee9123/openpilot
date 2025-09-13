@@ -14,6 +14,7 @@
 #include "opendbc/safety/modes/gm.h"
 #include "opendbc/safety/modes/ford.h"
 #include "opendbc/safety/modes/hyundai.h"
+#include "opendbc/safety/modes/hyundai_community.h"   // #custom
 #include "opendbc/safety/modes/chrysler.h"
 #include "opendbc/safety/modes/rivian.h"
 #include "opendbc/safety/modes/subaru.h"
@@ -343,7 +344,7 @@ static void generic_rx_checks(void) {
 
   // exit controls on rising edge of brake press
   if (brake_pressed && (!brake_pressed_prev || vehicle_moving)) {
-    controls_allowed = false;
+    //controls_allowed = false;  // #custom
   }
   brake_pressed_prev = brake_pressed;
 
@@ -398,6 +399,7 @@ int set_safety_hooks(uint16_t mode, uint16_t param) {
     {SAFETY_NISSAN, &nissan_hooks},
     {SAFETY_NOOUTPUT, &nooutput_hooks},
     {SAFETY_HYUNDAI_LEGACY, &hyundai_legacy_hooks},
+     SAFETY_HYUNDAI_COMMUNITY, &hyundai_community_hooks},  // #custom
     {SAFETY_MAZDA, &mazda_hooks},
     {SAFETY_BODY, &body_hooks},
     {SAFETY_FORD, &ford_hooks},
