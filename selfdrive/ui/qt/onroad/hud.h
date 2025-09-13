@@ -2,6 +2,7 @@
 
 #include <QPainter>
 #include "selfdrive/ui/ui.h"
+#include "selfdrive/ui/qt/custom/paint.h"    // #custom
 
 class HudRenderer : public QObject {
   Q_OBJECT
@@ -23,4 +24,7 @@ private:
   bool is_metric = false;
   bool v_ego_cluster_seen = false;
   int status = STATUS_DISENGAGED;
+
+  // #custom
+  OnPaint *m_pPaint = nullptr;
 };
