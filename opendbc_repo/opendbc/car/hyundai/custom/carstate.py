@@ -105,7 +105,7 @@ class CarStateCustom():
     #  return
 
     carSCustom = car.CarState.CarSCustom.new_message()
-    carSCustom.supportedCars = self.cars
+    #carSCustom.supportedCars = self.cars
     carSCustom.breakPos = self.brakePos
     carSCustom.leadDistance = self.lead_distance
     carSCustom.gapSet = self.gapSet
