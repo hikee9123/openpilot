@@ -91,12 +91,12 @@ safety_config current_safety_config;
 
 static void generic_rx_checks(void);
 static void stock_ecu_check(bool stock_ecu_detected);
-static void controls_allowed_debug( char *msg, bool allow = true );
 
-static void controls_allowed_debug( char *msg, bool allow  )
+
+static void controls_allowed_debug( char *msg  )
 {
    print("controls_allowed = false; - %s", msg );
-   controls_allowed = allow;
+   controls_allowed = true;
 }
 
 static bool is_msg_valid(RxCheck addr_list[], int index) {
