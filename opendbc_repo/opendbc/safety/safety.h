@@ -91,7 +91,7 @@ safety_config current_safety_config;
 static void generic_rx_checks(void);
 static void stock_ecu_check(bool stock_ecu_detected);
 
-static void set_controls_allowed()
+static void set_controls_allowed_fun()
 {
    controls_allowed = true;
 }
@@ -102,7 +102,7 @@ static bool is_msg_valid(RxCheck addr_list[], int index) {
     if (!addr_list[index].status.valid_checksum || !addr_list[index].status.valid_quality_flag || (addr_list[index].status.wrong_counters >= MAX_WRONG_COUNTERS)) {
       valid = false;
       controls_allowed = false;
-      set_controls_allowed();
+      set_controls_allowed_fun();
     }
   }
   return valid;
@@ -329,7 +329,7 @@ void safety_tick(const safety_config *cfg) {
       cfg->rx_checks[i].status.lagging = lagging;
       if (lagging) {
         controls_allowed = false;
-        set_controls_allowed();
+        set_controls_allowed_fun();
       }
 
       if (lagging || !is_msg_valid(cfg->rx_checks, i)) {
@@ -359,7 +359,7 @@ static void generic_rx_checks(void) {
   if (regen_braking && (!regen_braking_prev || vehicle_moving)) {
     controls_allowed = false;
 
-    set_controls_allowed();
+    set_controls_allowed_fun();
   }
   regen_braking_prev = regen_braking;
 
@@ -367,7 +367,7 @@ static void generic_rx_checks(void) {
   if (steering_disengage && !steering_disengage_prev) {
     controls_allowed = false;
 
-     set_controls_allowed();
+     set_controls_allowed_fun();
   }
   steering_disengage_prev = steering_disengage;
 }
@@ -530,7 +530,7 @@ void pcm_cruise_check(bool cruise_engaged) {
   if (!cruise_engaged) {
     controls_allowed = false;
 
-    set_controls_allowed();
+    set_controls_allowed_fun();
   }
   if (cruise_engaged && !cruise_engaged_prev) {
     controls_allowed = true;
@@ -546,6 +546,6 @@ void speed_mismatch_check(const float speed_2) {
   if (is_invalid_speed) {
     controls_allowed = false;
 
-     set_controls_allowed();
+     set_controls_allowed_fun();
   }
 }
