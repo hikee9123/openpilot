@@ -2464,8 +2464,6 @@ struct EncodeData {
   height @5 :UInt32;
 }
 
-
-
 struct DebugAlert {
   alertText1 @0 :Text;
   alertText2 @1 :Text;
