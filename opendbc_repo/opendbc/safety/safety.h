@@ -1,5 +1,5 @@
 #pragma once
-#include <stdio.h>
+
 
 #include "opendbc/safety/helpers.h"
 #include "opendbc/safety/lateral.h"
@@ -98,7 +98,7 @@ static bool is_msg_valid(RxCheck addr_list[], int index) {
     if (!addr_list[index].status.valid_checksum || !addr_list[index].status.valid_quality_flag || (addr_list[index].status.wrong_counters >= MAX_WRONG_COUNTERS)) {
       valid = false;
       controls_allowed = false;
-      printf("controls_allowed = false; - is_msg_valid");
+      //printf("controls_allowed = false; - is_msg_valid");
     }
   }
   return valid;
@@ -325,7 +325,7 @@ void safety_tick(const safety_config *cfg) {
       cfg->rx_checks[i].status.lagging = lagging;
       if (lagging) {
         controls_allowed = false;
-        printf("controls_allowed = false; - safety_tick");
+        //printf("controls_allowed = false; - safety_tick");
       }
 
       if (lagging || !is_msg_valid(cfg->rx_checks, i)) {
@@ -354,14 +354,14 @@ static void generic_rx_checks(void) {
   // exit controls on rising edge of regen paddle
   if (regen_braking && (!regen_braking_prev || vehicle_moving)) {
     controls_allowed = false;
-    printf("controls_allowed = false; - 1.generic_rx_checks");
+   // printf("controls_allowed = false; - 1.generic_rx_checks");
   }
   regen_braking_prev = regen_braking;
 
   // exit controls on rising edge of steering override/disengage
   if (steering_disengage && !steering_disengage_prev) {
     controls_allowed = false;
-    printf("controls_allowed = false; - 2.generic_rx_checks");
+    //printf("controls_allowed = false; - 2.generic_rx_checks");
   }
   steering_disengage_prev = steering_disengage;
 }
@@ -523,7 +523,7 @@ void pcm_cruise_check(bool cruise_engaged) {
   // Enter controls on rising edge of stock ACC, exit controls if stock ACC disengages
   if (!cruise_engaged) {
     controls_allowed = false;
-    printf("controls_allowed = false; - pcm_cruise_check");
+    //printf("controls_allowed = false; - pcm_cruise_check");
   }
   if (cruise_engaged && !cruise_engaged_prev) {
     controls_allowed = true;
@@ -538,6 +538,6 @@ void speed_mismatch_check(const float speed_2) {
   bool is_invalid_speed = ABS(speed_2 - ((float)vehicle_speed.values[0] / VEHICLE_SPEED_FACTOR)) > MAX_SPEED_DELTA;
   if (is_invalid_speed) {
     controls_allowed = false;
-    printf("controls_allowed = false; - speed_mismatch_check");
+    //printf("controls_allowed = false; - speed_mismatch_check");
   }
 }
