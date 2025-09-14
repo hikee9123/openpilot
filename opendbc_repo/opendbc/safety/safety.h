@@ -91,18 +91,12 @@ safety_config current_safety_config;
 static void generic_rx_checks(void);
 static void stock_ecu_check(bool stock_ecu_detected);
 
-static void set_controls_allowed_fun(void)
-{
-   controls_allowed = false;
-}
-
 static bool is_msg_valid(RxCheck addr_list[], int index) {
   bool valid = true;
   if (index != -1) {
     if (!addr_list[index].status.valid_checksum || !addr_list[index].status.valid_quality_flag || (addr_list[index].status.wrong_counters >= MAX_WRONG_COUNTERS)) {
       valid = false;
-      //controls_allowed = false;
-      set_controls_allowed_fun();
+      controls_allowed = false;
     }
   }
   return valid;
@@ -328,8 +322,7 @@ void safety_tick(const safety_config *cfg) {
       bool lagging = elapsed_time > MAX(timestep * MAX_MISSED_MSGS, 1e6);
       cfg->rx_checks[i].status.lagging = lagging;
       if (lagging) {
-        //controls_allowed = false;
-        set_controls_allowed_fun();
+        controls_allowed = false;
       }
 
       if (lagging || !is_msg_valid(cfg->rx_checks, i)) {
@@ -351,23 +344,19 @@ static void generic_rx_checks(void) {
 
   // exit controls on rising edge of brake press
   if (brake_pressed && (!brake_pressed_prev || vehicle_moving)) {
-    //controls_allowed = false;  // #custom
+    controls_allowed = false;
   }
   brake_pressed_prev = brake_pressed;
 
   // exit controls on rising edge of regen paddle
   if (regen_braking && (!regen_braking_prev || vehicle_moving)) {
-    //controls_allowed = false;
-
-    set_controls_allowed_fun();
+    controls_allowed = false;
   }
   regen_braking_prev = regen_braking;
 
   // exit controls on rising edge of steering override/disengage
   if (steering_disengage && !steering_disengage_prev) {
-    //controls_allowed = false;
-
-     set_controls_allowed_fun();
+    controls_allowed = false;
   }
   steering_disengage_prev = steering_disengage;
 }
@@ -528,9 +517,7 @@ int ROUND(float val) {
 void pcm_cruise_check(bool cruise_engaged) {
   // Enter controls on rising edge of stock ACC, exit controls if stock ACC disengages
   if (!cruise_engaged) {
-    //controls_allowed = false;
-
-    set_controls_allowed_fun();
+    controls_allowed = false;
   }
   if (cruise_engaged && !cruise_engaged_prev) {
     controls_allowed = true;
@@ -544,8 +531,6 @@ void speed_mismatch_check(const float speed_2) {
   const float MAX_SPEED_DELTA = 2.0;  // m/s
   bool is_invalid_speed = ABS(speed_2 - ((float)vehicle_speed.values[0] / VEHICLE_SPEED_FACTOR)) > MAX_SPEED_DELTA;
   if (is_invalid_speed) {
-    //controls_allowed = false;
-
-     set_controls_allowed_fun();
+    controls_allowed = false;
   }
 }

@@ -130,29 +130,15 @@ static uint32_t hyundai_community_compute_checksum(const CANPacket_t *msg) {
 
 static void hyundai_community_rx_hook(const CANPacket_t *msg) {
 
-  if( hyundai_longitudinal )
-  {
-      // SCC12 is on bus 2 for camera-based SCC cars, bus 0 on all others
-      if (msg->addr == 0x421U) {
-        if (((msg->bus == 0U) && !hyundai_camera_scc) || ((msg->bus == 2U) && hyundai_camera_scc)) {
-          // 2 bits: 13-14
-          int cruise_engaged = (GET_BYTES(msg, 0, 4) >> 13) & 0x3U;
-          hyundai_common_cruise_state_check(cruise_engaged);
-        }
-      }
+  // SCC12 is on bus 2 for camera-based SCC cars, bus 0 on all others
+  if (msg->addr == 0x421U) {
+    if (((msg->bus == 0U) && !hyundai_camera_scc) || ((msg->bus == 2U) && hyundai_camera_scc)) {
+      // 2 bits: 13-14
+      int cruise_engaged = (GET_BYTES(msg, 0, 4) >> 13) & 0x3U;
+      hyundai_common_cruise_state_check(cruise_engaged);
+    }
   }
-  else
-  {
-      if (msg->addr == 0x420) {
-        if (((msg->bus == 0) && !hyundai_camera_scc) || ((msg->bus == 2) && hyundai_camera_scc)) {
-         // 0 bits
-         int cruise_engaged = GET_BYTES(msg, 0, 1)  & 0x1U; // ACC main_on signal
-         hyundai_common_cruise_state_check(cruise_engaged);
 
-        }
-     }
-
-  }
 
   if (msg->bus == 0U) {
     if (msg->addr == 0x251U) {
@@ -166,6 +152,12 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
       int cruise_button = msg->data[0] & 0x7U;
       bool main_button = GET_BIT(msg, 3U);
       hyundai_common_cruise_buttons_check(cruise_button, main_button);
+
+      if( !hyundai_longitudinal )
+      {
+        hyundai_common_cruise_state_check(main_button);
+      }
+
     }
 
     // gas press, different for EV, hybrid, and ICE models
@@ -191,7 +183,7 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
       brake_pressed = ((msg->data[5] >> 5U) & 0x3U) == 0x2U;
     }
 
-    controls_allowed = true;
+    //controls_allowed = true;
   }
 }
 
@@ -269,25 +261,6 @@ static bool hyundai_community_tx_hook(const CANPacket_t *msg) {
   return tx;
 }
 
-
-static bool hyundai_community_fwd_hook(int bus_num, int addr) {
-  bool blocked = true;
-
-
-  // forward cam to ccan and viceversa, except lkas cmd
-  if (bus_num == 0) {
-    if( addr != 0x251 ) { // LKAS 15 event disable.
-        blocked = false;
-    }
-  }
-  if ((bus_num == 2) && (addr != 0x340) && (addr != 0x485)) {
-    blocked = false;
-  }
-
-  return blocked;
-}
-
-
 static safety_config hyundai_community_init(uint16_t param) {
   static const CanMsg HYUNDAI_COMMUNITY_LONG_TX_MSGS[] = {
     HYUNDAI_COMMUNITY_LONG_COMMON_TX_MSGS(0)
@@ -359,6 +332,23 @@ static safety_config hyundai_community_init(uint16_t param) {
   return ret;
 }
 
+
+static bool hyundai_community_fwd_hook(int bus_num, int addr) {
+  bool blocked = true;
+
+
+  // forward cam to ccan and viceversa, except lkas cmd
+  if (bus_num == 0) {
+    if( addr != 0x251 ) { // LKAS 15 event disable.
+        blocked = false;
+    }
+  }
+  if ((bus_num == 2) && (addr != 0x340) && (addr != 0x485)) {
+    blocked = false;
+  }
+
+  return blocked;
+}
 
 
 const safety_hooks hyundai_community_hooks = {

@@ -153,13 +153,13 @@ class CarStateCustom():
 
     #log
     trace1.printf1( 'MD={:.0f},controlsAllowed={:.0f}'.format( self.control_mode,  self.controlsAllowed ) )
-    trace1.printf2( 'CV={:7.5f},{:.0f}'.format( self.desiredCurvature, self.mainMode_ACC ) )
+    trace1.printf2( 'CV={:7.5f} , {:.0f} , {:.0f}'.format( self.desiredCurvature, self.mainMode_ACC, self.clu_Main ) )
 
-    if self.CP.openpilotLongitudinalControl:
-      trace1.printf3( 'SW={:.0f},{:.0f},{:.0f} T={:.0f},{:.0f}'.format(
+    #if self.CP.openpilotLongitudinalControl:
+    trace1.printf3( 'SW={:.0f},{:.0f},{:.0f} T={:.0f},{:.0f}'.format(
           cp.vl["CLU11"]["CF_Clu_CruiseSwState"], cp.vl["CLU11"]["CF_Clu_CruiseSwMain"], cp.vl["CLU11"]["CF_Clu_SldMainSW"],
           cp.vl["TCS13"]["ACCEnable"], cp.vl["TCS13"]["ACC_REQ"]
-      ))
+    ))
 
 
   def cruise_speed_button( self ):
@@ -225,6 +225,7 @@ class CarStateCustom():
       if not self.mainMode_ACC:
         self.cruise_control_mode()
 
+
     # save the entire LFAHDA_MFC
     self.lfahda = copy.copy(cp_cam.vl["LFAHDA_MFC"])
     self.mdps12 = copy.copy(cp.vl["MDPS12"])
@@ -233,6 +234,7 @@ class CarStateCustom():
     self.brakePos = cp.vl["E_EMS11"]["Brake_Pedal_Pos"]
     self.is_highway = self.lfahda["HDA_Icon_State"] != 0.
     self.clu_Vanz = cp.vl["CLU11"]["CF_Clu_Vanz"]     # kph  현재 차량의 속도.
+    self.clu_Main = cp.vl["CLU11"]["CF_Clu_CruiseSwMain"]
 
     self.lfa_engage( ret)
 
