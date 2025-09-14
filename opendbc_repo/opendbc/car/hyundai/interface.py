@@ -97,6 +97,7 @@ class CarInterface(CarInterfaceBase):
         ret.flags |= HyundaiFlags.USE_FCA.value
 
       if interface.get_params( ret, candidate ):  #custom
+        print("SafetyModel\n")
         pass
       elif ret.flags & HyundaiFlags.LEGACY:
         # these cars require a special panda safety mode due to missing counters and checksums in the messages
