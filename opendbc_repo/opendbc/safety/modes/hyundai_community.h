@@ -155,7 +155,7 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
         int cruise_engaged = GET_BIT(msg, 0U);  //GET_BYTES(msg, 0, 4) & 0x1U; // ACC main_on signal
         hyundai_common_cruise_state_check(cruise_engaged);
         //int cruise = msg->data[0] & 0x1U;
-        controls_allowed = true;
+       // controls_allowed = true;
       }
 
       //if( brake_pressed )
