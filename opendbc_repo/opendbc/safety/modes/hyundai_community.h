@@ -150,9 +150,10 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
         // hyundai_common_cruise_state_check(cruise_engaged);
 
 
-        if( cruise_engaged )
+         if( cruise_engaged )
            controls_allowed = true;
-      }
+        }
+     }
   }
 
 
