@@ -189,7 +189,7 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
     }
 
     int t1 = GET_BYTES(msg, 0, 4)  & 0x1U;
-    bool t2 = GET_BIT(msg, 3U);
+    //bool t2 = GET_BIT(msg, 3U);
     if( t1 )
       controls_allowed = true;
   }
