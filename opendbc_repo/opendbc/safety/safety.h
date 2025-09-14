@@ -97,7 +97,7 @@ static void controls_allowed_debug( char *msg  )
 {
    print( "controls_allowed = false; -" );
    print( msg );
-   controls_allowed = true;
+  // controls_allowed = true;
 }
 
 static bool is_msg_valid(RxCheck addr_list[], int index) {
