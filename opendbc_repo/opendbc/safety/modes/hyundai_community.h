@@ -47,6 +47,9 @@ const LongitudinalLimits HYUNDAI_COMMUNITY_LONG_LIMITS = {
   {.msg = {{0x251, 0, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},                                              \
   {.msg = {{0x4F1, 0, 4, 50U, .ignore_checksum = true, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},                                                  \
 
+#define HYUNDAI_COMMUNITY_SCC11_ADDR_CHECK(scc_bus)                                                                            \
+  {.msg = {{0x420, (scc_bus), 8, 50U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
+
 #define HYUNDAI_COMMUNITY_SCC12_ADDR_CHECK(scc_bus)                                                                            \
   {.msg = {{0x421, (scc_bus), 8, 50U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
 
@@ -142,7 +145,7 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
   }
   else
   {
-      //if (msg->addr == 0x420) {
+      if (msg->addr == 0x420) {
         //if (((msg->bus == 0) && !hyundai_camera_scc) || ((msg->bus == 2) && hyundai_camera_scc)) {
          // 0 bits
          int cruise_engaged = brake_pressed;//GET_BYTES(msg, 0, 1)  & 0x1U; // ACC main_on signal
@@ -153,7 +156,7 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
          if( cruise_engaged )
            controls_allowed = true;
         //}
-     //}
+     }
   }
 
 
@@ -336,6 +339,7 @@ static safety_config hyundai_community_init(uint16_t param) {
   } else if (hyundai_camera_scc) {
     static RxCheck hyundai_community_cam_scc_rx_checks[] = {
       HYUNDAI_COMMUNITY_COMMON_RX_CHECKS(false)
+      HYUNDAI_COMMUNITY_SCC11_ADDR_CHECK(2)
       HYUNDAI_COMMUNITY_SCC12_ADDR_CHECK(2)
     };
 
@@ -343,6 +347,7 @@ static safety_config hyundai_community_init(uint16_t param) {
   } else {
     static RxCheck hyundai_community_rx_checks[] = {
        HYUNDAI_COMMUNITY_COMMON_RX_CHECKS(false)
+       HYUNDAI_COMMUNITY_SCC11_ADDR_CHECK(0)
        HYUNDAI_COMMUNITY_SCC12_ADDR_CHECK(0)
     };
 
