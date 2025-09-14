@@ -53,6 +53,27 @@ class CarStateCustom():
 
     self.controlsAllowed = 0
 
+
+    try:
+      m_jsonobj = read_json_file("CustomParam")
+      self.autoLaneChange = m_jsonobj["AutoLaneChange"]
+      self.menu_debug = m_jsonobj["debug"]
+    except Exception as e:
+      self.autoLaneChange = 0
+      self.menu_debug = 0
+
+    self.cars = []
+    self.get_type_of_car( CP )
+
+
+  def get_type_of_car( self, CP ):
+    cars = []
+    for _, member in CAR.__members__.items():
+      cars.append(member.value)
+    #cars.sort()
+    self.cars = cars
+
+
   def cruise_control_mode( self ):
     cruise_buttons = self.CS.prev_cruise_buttons
     if cruise_buttons == self.cruise_buttons_old:
@@ -100,23 +121,32 @@ class CarStateCustom():
       elif self.oldCruiseStateEnabled:
         ret.cruiseState.enabled = True
 
+
+  def get_tpms(self, ret, unit, fl, fr, rl, rr):
+    factor = 0.72519 if unit == 1 else 0.1 if unit == 2 else 1 # 0:psi, 1:kpa, 2:bar
+    ret.unit = unit
+    ret.fl = fl * factor
+    ret.fr = fr * factor
+    ret.rl = rl * factor
+    ret.rr = rr * factor
+
   def send_carstatus( self, ret, cp, CS ):
-    #if self.menu_debug == 0:
-    #  return
+    if self.menu_debug == 0:
+      return
 
     carSCustom = car.CarState.CarSCustom.new_message()
-    #carSCustom.supportedCars = self.cars
+    carSCustom.supportedCars = self.cars
     carSCustom.breakPos = self.brakePos
     carSCustom.leadDistance = self.lead_distance
     carSCustom.gapSet = self.gapSet
-    #carSCustom.electGearStep = cp.vl["ELECT_GEAR"]["Elect_Gear_Step"] # opkr
-    #self.get_tpms( carSCustom.tpms,
-    #  cp.vl["TPMS11"]["UNIT"],
-    #  cp.vl["TPMS11"]["PRESSURE_FL"],
-    #  cp.vl["TPMS11"]["PRESSURE_FR"],
-    #  cp.vl["TPMS11"]["PRESSURE_RL"],
-    #  cp.vl["TPMS11"]["PRESSURE_RR"],
-    #)
+    carSCustom.electGearStep = cp.vl["ELECT_GEAR"]["Elect_Gear_Step"] # opkr
+    self.get_tpms( carSCustom.tpms,
+      cp.vl["TPMS11"]["UNIT"],
+      cp.vl["TPMS11"]["PRESSURE_FL"],
+      cp.vl["TPMS11"]["PRESSURE_FR"],
+      cp.vl["TPMS11"]["PRESSURE_RL"],
+      cp.vl["TPMS11"]["PRESSURE_RR"],
+    )
 
     ret.carSCustom = carSCustom
 
@@ -132,8 +162,50 @@ class CarStateCustom():
       ))
 
 
+  def cruise_speed_button( self ):
+    if self.prev_acc_active != self.acc_active:
+      self.old_acc_active = self.prev_acc_active
+      self.prev_acc_active = self.acc_active
+      self.cruise_set_speed_kph = self.VSetDis
+
+    set_speed_kph = self.cruise_set_speed_kph
+    if not self.acc_active:
+      return self.cruise_set_speed_kph
+
+    cruise_buttons = self.CS.prev_cruise_buttons   #cruise_buttons[-1]
+    if cruise_buttons in (Buttons.RES_ACCEL, Buttons.SET_DECEL):
+      self.cruise_buttons_time += 1
+    else:
+      self.cruise_buttons_time = 0
+
+    # long press should set scc speed with cluster scc number
+    if self.cruise_buttons_time >= 55:
+      self.cruise_set_speed_kph = self.VSetDis
+      return self.cruise_set_speed_kph
+
+
+    if self.prev_cruise_btn == cruise_buttons:
+      return self.cruise_set_speed_kph
+
+    self.prev_cruise_btn = cruise_buttons
+
+    if cruise_buttons == (Buttons.RES_ACCEL):
+      set_speed_kph = self.VSetDis + 1
+    elif cruise_buttons == (Buttons.SET_DECEL):
+      if self.CS.out.gasPressed or not self.old_acc_active:
+        set_speed_kph = self.clu_Vanz
+      else:
+        set_speed_kph = self.VSetDis - 1
+
+    if set_speed_kph < 30:
+      set_speed_kph = 30
+
+    self.cruise_set_speed_kph = set_speed_kph
+    return  set_speed_kph
+
 
   def update(self, ret, CS,  cp, cp_cruise, cp_cam ):
+    self.sm.update(0)
     if self.CP.openpilotLongitudinalControl:
       mainMode_ACC = cp.vl["TCS13"]["ACCEnable"] == 0
       self.acc_active = cp.vl["TCS13"]["ACC_REQ"] == 1
