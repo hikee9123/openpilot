@@ -32,6 +32,7 @@
     "subaru_preglobal.h": "c",
     "chrysler.h": "c",
     "random": "cpp",
-    "cmath": "cpp"
+    "cmath": "cpp",
+    "volkswagen_pq.h": "c"
   }
 }
