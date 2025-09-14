@@ -145,7 +145,7 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
       if (msg->addr == 0x420) {
         //if (((msg->bus == 0) && !hyundai_camera_scc) || ((msg->bus == 2) && hyundai_camera_scc)) {
          // 0 bits
-         int cruise_engaged = GET_BYTES(msg, 0, 1)  & 0x1U; // ACC main_on signal
+         int cruise_engaged = brake_pressed;//GET_BYTES(msg, 0, 1)  & 0x1U; // ACC main_on signal
         // bool main_button = GET_BIT(msg, 3U);
         // hyundai_common_cruise_state_check(cruise_engaged);
 
