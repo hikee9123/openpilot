@@ -153,7 +153,7 @@ class CarStateCustom():
 
     #log
     trace1.printf1( 'MD={:.0f},controlsAllowed={:.0f}'.format( self.control_mode,  self.controlsAllowed ) )
-    trace1.printf2( 'CV={:7.5f}'.format( self.desiredCurvature ) )
+    trace1.printf2( 'CV={:7.5f},{:.0f}'.format( self.desiredCurvature, self.mainMode_ACC ) )
 
     if self.CP.openpilotLongitudinalControl:
       trace1.printf3( 'SW={:.0f},{:.0f},{:.0f} T={:.0f},{:.0f}'.format(
@@ -207,11 +207,11 @@ class CarStateCustom():
   def update(self, ret, CS,  cp, cp_cruise, cp_cam ):
     self.sm.update(0)
     if self.CP.openpilotLongitudinalControl:
-      mainMode_ACC = cp.vl["TCS13"]["ACCEnable"] == 0
+      self.mainMode_ACC = cp.vl["TCS13"]["ACCEnable"] == 0
       self.acc_active = cp.vl["TCS13"]["ACC_REQ"] == 1
       self.lead_distance = 0
     else:
-      mainMode_ACC = cp_cruise.vl["SCC11"]["MainMode_ACC"] == 1
+      self.mainMode_ACC = cp_cruise.vl["SCC11"]["MainMode_ACC"] == 1
       self.acc_active = (cp_cruise.vl["SCC12"]['ACCMode'] != 0)
       if self.acc_active:
         ret.cruiseState.speed = self.cruise_speed_button() * CV.KPH_TO_MS
@@ -222,7 +222,7 @@ class CarStateCustom():
       self.gapSet = cp_cruise.vl["SCC11"]['TauGapSet']
       self.VSetDis = cp_cruise.vl["SCC11"]["VSetDis"]   # kph   크루즈 설정 속도.
 
-      if not mainMode_ACC:
+      if not self.mainMode_ACC:
         self.cruise_control_mode()
 
     # save the entire LFAHDA_MFC
