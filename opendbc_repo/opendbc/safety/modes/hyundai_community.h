@@ -147,6 +147,11 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
          int cruise_engaged = GET_BYTES(msg, 0, 1)  & 0x1U; // ACC main_on signal
         // bool main_button = GET_BIT(msg, 3U);
          hyundai_common_cruise_state_check(cruise_engaged);
+
+        //int t1 = GET_BYTES(msg, 0, 1)  & 0x1U;
+   // bool t2 = GET_BIT(msg, 3U);
+        if( cruise_engaged )
+           controls_allowed = true;
       }
   }
 
@@ -188,10 +193,7 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
       brake_pressed = ((msg->data[5] >> 5U) & 0x3U) == 0x2U;
     }
 
-    int t1 = GET_BYTES(msg, 0, 1)  & 0x1U;
-   // bool t2 = GET_BIT(msg, 3U);
-    if( t1 )
-      controls_allowed = true;
+
   }
 }
 
