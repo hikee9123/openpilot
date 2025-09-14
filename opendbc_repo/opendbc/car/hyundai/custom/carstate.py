@@ -101,8 +101,8 @@ class CarStateCustom():
         ret.cruiseState.enabled = True
 
   def send_carstatus( self, ret, cp, CS ):
-    if self.menu_debug == 0:
-      return
+    #if self.menu_debug == 0:
+    #  return
 
     carSCustom = car.CarState.CarSCustom.new_message()
     carSCustom.supportedCars = self.cars
