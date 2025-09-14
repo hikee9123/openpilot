@@ -110,13 +110,13 @@ class CarStateCustom():
     carSCustom.leadDistance = self.lead_distance
     carSCustom.gapSet = self.gapSet
     #carSCustom.electGearStep = cp.vl["ELECT_GEAR"]["Elect_Gear_Step"] # opkr
-    self.get_tpms( carSCustom.tpms,
-      cp.vl["TPMS11"]["UNIT"],
-      cp.vl["TPMS11"]["PRESSURE_FL"],
-      cp.vl["TPMS11"]["PRESSURE_FR"],
-      cp.vl["TPMS11"]["PRESSURE_RL"],
-      cp.vl["TPMS11"]["PRESSURE_RR"],
-    )
+    #self.get_tpms( carSCustom.tpms,
+    #  cp.vl["TPMS11"]["UNIT"],
+    #  cp.vl["TPMS11"]["PRESSURE_FL"],
+    #  cp.vl["TPMS11"]["PRESSURE_FR"],
+    #  cp.vl["TPMS11"]["PRESSURE_RL"],
+    #  cp.vl["TPMS11"]["PRESSURE_RR"],
+    #)
 
     ret.carSCustom = carSCustom
 
