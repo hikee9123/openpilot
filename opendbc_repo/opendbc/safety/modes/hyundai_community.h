@@ -189,7 +189,7 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
       brake_pressed = ((msg->data[5] >> 5U) & 0x3U) == 0x2U;
     }
 
-    //controls_allowed = true;
+    controls_allowed = true;
   }
 }
 
