@@ -47,8 +47,6 @@ const LongitudinalLimits HYUNDAI_COMMUNITY_LONG_LIMITS = {
   {.msg = {{0x251, 0, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},                                              \
   {.msg = {{0x4F1, 0, 4, 50U, .ignore_checksum = true, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},                                                  \
 
-#define HYUNDAI_COMMUNITY_SCC11_ADDR_CHECK(scc_bus)                                                                            \
-  {.msg = {{0x420, (scc_bus), 8, 50U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
 
 #define HYUNDAI_COMMUNITY_SCC12_ADDR_CHECK(scc_bus)                                                                            \
   {.msg = {{0x421, (scc_bus), 8, 50U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
@@ -155,7 +153,6 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
      }
 
   }
-
 
   if (msg->bus == 0U) {
     if (msg->addr == 0x251U) {
@@ -272,7 +269,7 @@ static bool hyundai_community_tx_hook(const CANPacket_t *msg) {
   return tx;
 }
 
-/*
+
 static bool hyundai_community_fwd_hook(int bus_num, int addr) {
   bool blocked = true;
 
@@ -289,7 +286,7 @@ static bool hyundai_community_fwd_hook(int bus_num, int addr) {
 
   return blocked;
 }
-*/
+
 
 static safety_config hyundai_community_init(uint16_t param) {
   static const CanMsg HYUNDAI_COMMUNITY_LONG_TX_MSGS[] = {
@@ -336,7 +333,6 @@ static safety_config hyundai_community_init(uint16_t param) {
   } else if (hyundai_camera_scc) {
     static RxCheck hyundai_community_cam_scc_rx_checks[] = {
       HYUNDAI_COMMUNITY_COMMON_RX_CHECKS(false)
-      HYUNDAI_COMMUNITY_SCC11_ADDR_CHECK(2)
       HYUNDAI_COMMUNITY_SCC12_ADDR_CHECK(2)
     };
 
@@ -344,7 +340,6 @@ static safety_config hyundai_community_init(uint16_t param) {
   } else {
     static RxCheck hyundai_community_rx_checks[] = {
        HYUNDAI_COMMUNITY_COMMON_RX_CHECKS(false)
-       HYUNDAI_COMMUNITY_SCC11_ADDR_CHECK(0)
        HYUNDAI_COMMUNITY_SCC12_ADDR_CHECK(0)
     };
 
@@ -370,7 +365,7 @@ const safety_hooks hyundai_community_hooks = {
   .init = hyundai_community_init,
   .rx = hyundai_community_rx_hook,
   .tx = hyundai_community_tx_hook,
-  //.fwd = hyundai_community_fwd_hook,
+  .fwd = hyundai_community_fwd_hook,
   .get_counter = hyundai_community_get_counter,
   .get_checksum = hyundai_community_get_checksum,
   .compute_checksum = hyundai_community_compute_checksum,
