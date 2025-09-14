@@ -95,7 +95,7 @@ static void stock_ecu_check(bool stock_ecu_detected);
 
 static void controls_allowed_debug( char *msg  )
 {
-   print("controls_allowed = false; -" );
+   print("controls_allowed = false; -"+msg );
    controls_allowed = true;
 }
 
