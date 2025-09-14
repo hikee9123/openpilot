@@ -91,7 +91,7 @@ safety_config current_safety_config;
 static void generic_rx_checks(void);
 static void stock_ecu_check(bool stock_ecu_detected);
 
-static void set_controls_allowed_fun()
+static void set_controls_allowed_fun(void)
 {
    controls_allowed = true;
 }
