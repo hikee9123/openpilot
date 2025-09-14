@@ -533,15 +533,15 @@ void OnPaint::ui_main_debug(QPainter &p)
   int  bb_y = 90;
   int  nGap = 30;
 
-  if( m_param.debug.getIdx1() )
-  {
+  //if( m_param.debug.getIdx1() )
+  //{
     QString text;
 
     p.setFont(InterFont(38));
     p.setPen( QColor(255, 255, 255, 255) );
     text.sprintf("Panda=%d", m_param.controlsAllowed  );
     p.drawText( bb_x, bb_y+nGap, text );
-  }
+  //}
 }
 
 
