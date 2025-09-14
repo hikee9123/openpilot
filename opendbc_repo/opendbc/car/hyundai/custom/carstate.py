@@ -10,12 +10,14 @@ from opendbc.custom.params_json import read_json_file
 from openpilot.common.params import Params
 
 
+
 LaneChangeState = log.LaneChangeState
 
 class CarStateCustom():
   def __init__(self, CP, CS):
     self.CS = CS
     self.CP = CP
+    self.sm = messaging.SubMaster(['longitudinalPlan','modelV2','pandaStates','uICustom'], ignore_avg_freq=['uICustom'])
     self.params = Params()
     self.oldCruiseStateEnabled = False
     self.frame = 0
@@ -49,6 +51,8 @@ class CarStateCustom():
     self.desiredCurvature = 0
     self.modelxDistance = 0
 
+    self.controlsAllowed = 0
+
   def cruise_control_mode( self ):
     cruise_buttons = self.CS.prev_cruise_buttons
     if cruise_buttons == self.cruise_buttons_old:
@@ -64,6 +68,69 @@ class CarStateCustom():
       self.control_mode = 0
     elif self.control_mode > 5:
       self.control_mode = 0
+
+  def lfa_engage(self, ret):
+    if any(ps.controlsAllowed for ps in self.sm['pandaStates']):
+      self.controlsAllowed = 1
+    else:
+      self.controlsAllowed = 0
+
+    if self.timer_init > 0:
+      self.timer_init -= 1
+      ret.cruiseState.enabled = False
+    elif not self.CP.openpilotLongitudinalControl:
+      if self.acc_active:
+        pass
+      elif ret.parkingBrake:
+        self.timer_engaged = 100
+        self.oldCruiseStateEnabled = False
+      elif ret.doorOpen:
+        self.timer_engaged = 100
+        self.oldCruiseStateEnabled = False
+      elif ret.seatbeltUnlatched:
+        self.timer_engaged = 100
+        self.oldCruiseStateEnabled = False
+      elif ret.gearShifter != car.CarState.GearShifter.drive:
+        self.timer_engaged = 100
+        self.oldCruiseStateEnabled = False
+      elif not ret.cruiseState.available:
+        self.slow_engage = 1
+        self.timer_engaged = 0
+        self.oldCruiseStateEnabled = True
+      elif self.oldCruiseStateEnabled:
+        ret.cruiseState.enabled = True
+
+  def send_carstatus( self, ret, cp, CS ):
+    if self.menu_debug == 0:
+      return
+
+    carSCustom = car.CarState.CarSCustom.new_message()
+    carSCustom.supportedCars = self.cars
+    carSCustom.breakPos = self.brakePos
+    carSCustom.leadDistance = self.lead_distance
+    carSCustom.gapSet = self.gapSet
+    carSCustom.electGearStep = cp.vl["ELECT_GEAR"]["Elect_Gear_Step"] # opkr
+    self.get_tpms( carSCustom.tpms,
+      cp.vl["TPMS11"]["UNIT"],
+      cp.vl["TPMS11"]["PRESSURE_FL"],
+      cp.vl["TPMS11"]["PRESSURE_FR"],
+      cp.vl["TPMS11"]["PRESSURE_RL"],
+      cp.vl["TPMS11"]["PRESSURE_RR"],
+    )
+
+    ret.carSCustom = carSCustom
+
+
+    #log
+    trace1.printf1( 'MD={:.0f},controlsAllowed={:.0f}'.format( self.control_mode,  self.controlsAllowed ) )
+    trace1.printf2( 'CV={:7.5f}'.format( self.desiredCurvature ) )
+
+    if self.CP.openpilotLongitudinalControl:
+      trace1.printf3( 'SW={:.0f},{:.0f},{:.0f} T={:.0f},{:.0f}'.format(
+          cp.vl["CLU11"]["CF_Clu_CruiseSwState"], cp.vl["CLU11"]["CF_Clu_CruiseSwMain"], cp.vl["CLU11"]["CF_Clu_SldMainSW"],
+          cp.vl["TCS13"]["ACCEnable"], cp.vl["TCS13"]["ACC_REQ"]
+      ))
+
 
 
   def update(self, ret, CS,  cp, cp_cruise, cp_cam ):
@@ -95,27 +162,6 @@ class CarStateCustom():
     self.is_highway = self.lfahda["HDA_Icon_State"] != 0.
     self.clu_Vanz = cp.vl["CLU11"]["CF_Clu_Vanz"]     # kph  현재 차량의 속도.
 
-    if self.timer_init > 0:
-      self.timer_init -= 1
-      ret.cruiseState.enabled = False
-    elif not self.CP.openpilotLongitudinalControl:
-      if self.acc_active:
-        pass
-      elif ret.parkingBrake:
-        self.timer_engaged = 100
-        self.oldCruiseStateEnabled = False
-      elif ret.doorOpen:
-        self.timer_engaged = 100
-        self.oldCruiseStateEnabled = False
-      elif ret.seatbeltUnlatched:
-        self.timer_engaged = 100
-        self.oldCruiseStateEnabled = False
-      elif ret.gearShifter != car.CarState.GearShifter.drive:
-        self.timer_engaged = 100
-        self.oldCruiseStateEnabled = False
-      elif not ret.cruiseState.available:
-        self.slow_engage = 1
-        self.timer_engaged = 0
-        self.oldCruiseStateEnabled = True
-      elif self.oldCruiseStateEnabled:
-        ret.cruiseState.enabled = True
+    self.lfa_engage(self, ret)
+
+    self.send_carstatus( ret, cp, CS )

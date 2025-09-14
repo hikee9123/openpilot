@@ -21,6 +21,8 @@ from openpilot.selfdrive.pandad import can_capnp_to_list, can_list_to_can_capnp
 from openpilot.selfdrive.car.cruise import VCruiseHelper
 from openpilot.selfdrive.car.car_specific import MockCarState
 
+import opendbc.custom.loger as  trace1
+
 REPLAY = "REPLAY" in os.environ
 
 EventName = log.OnroadEvent.EventName
@@ -210,6 +212,11 @@ class Car:
     co_send.valid = self.sm.all_checks(['carControl'])
     co_send.carOutput.actuatorsOutput = self.last_actuators_output
     self.pm.send('carOutput', co_send)
+
+    global trace1
+    CS.carSCustom.alertTextMsg1 = str(trace1.global_alertTextMsg1)
+    CS.carSCustom.alertTextMsg2 = str(trace1.global_alertTextMsg2)
+    CS.carSCustom.alertTextMsg3 = str(trace1.global_alertTextMsg3)
 
     # kick off controlsd step while we actuate the latest carControl packet
     cs_send = messaging.new_message('carState')
