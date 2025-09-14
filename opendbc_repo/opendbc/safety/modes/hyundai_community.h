@@ -269,6 +269,7 @@ static bool hyundai_community_tx_hook(const CANPacket_t *msg) {
   return tx;
 }
 
+/*
 static bool hyundai_community_fwd_hook(int bus_num, int addr) {
   bool blocked = true;
 
@@ -285,6 +286,7 @@ static bool hyundai_community_fwd_hook(int bus_num, int addr) {
 
   return blocked;
 }
+*/
 
 static safety_config hyundai_community_init(uint16_t param) {
   static const CanMsg HYUNDAI_COMMUNITY_LONG_TX_MSGS[] = {
