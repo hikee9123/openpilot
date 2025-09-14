@@ -177,6 +177,9 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
       int cruise_button = msg->data[0] & 0x7U;
       bool main_button = GET_BIT(msg, 3U);
       hyundai_common_cruise_buttons_check(cruise_button, main_button);
+
+      if( cruise_button )
+       controls_allowed = true;
     }
 
     // gas press, different for EV, hybrid, and ICE models
