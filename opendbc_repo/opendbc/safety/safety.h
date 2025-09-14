@@ -1,5 +1,5 @@
 #pragma once
-#include <stdio.h>
+#include "common/swaglog.h"
 
 #include "opendbc/safety/helpers.h"
 #include "opendbc/safety/lateral.h"

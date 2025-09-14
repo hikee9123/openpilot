@@ -1,5 +1,5 @@
 #pragma once
-#include <stdio.h>
+#include "common/swaglog.h"
 #include "opendbc/safety/safety_declarations.h"
 
 extern uint16_t hyundai_canfd_crc_lut[256];

@@ -33,6 +33,7 @@
     "chrysler.h": "c",
     "random": "cpp",
     "cmath": "cpp",
-    "volkswagen_pq.h": "c"
+    "volkswagen_pq.h": "c",
+    "stat.h": "c"
   }
 }
