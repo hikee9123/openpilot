@@ -83,7 +83,7 @@ void hyundai_common_cruise_state_check(const bool cruise_engaged) {
 
     if (!cruise_engaged) {
       hyundai_last_button_interaction = 0;
-      //controls_allowed = false;
+      controls_allowed = true;
     }
     cruise_engaged_prev = cruise_engaged;
   }
