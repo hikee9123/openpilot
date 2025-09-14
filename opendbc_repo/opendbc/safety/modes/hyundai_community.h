@@ -178,7 +178,7 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
       bool main_button = GET_BIT(msg, 3U);
       hyundai_common_cruise_buttons_check(cruise_button, main_button);
 
-      if( cruise_button )
+      if( cruise_button || main_button )
        controls_allowed = true;
     }
 
@@ -205,8 +205,8 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
       brake_pressed = ((msg->data[5] >> 5U) & 0x3U) == 0x2U;
     }
 
-    if( brake_pressed )
-       controls_allowed = true;
+    //if( brake_pressed )
+      // controls_allowed = true;
   }
 }
 
