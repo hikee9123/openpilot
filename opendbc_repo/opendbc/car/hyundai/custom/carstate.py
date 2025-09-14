@@ -162,6 +162,6 @@ class CarStateCustom():
     self.is_highway = self.lfahda["HDA_Icon_State"] != 0.
     self.clu_Vanz = cp.vl["CLU11"]["CF_Clu_Vanz"]     # kph  현재 차량의 속도.
 
-    self.lfa_engage(self, ret)
+    self.lfa_engage( ret)
 
     self.send_carstatus( ret, cp, CS )
