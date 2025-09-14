@@ -66,6 +66,7 @@ class CarState(CarStateBase):
     self.params = CarControllerParams(CP)
 
     #custom
+    self.prev_cruise_buttons =  0
     self.customCS = CarStateCustom( CP, self )
 
   def recent_button_interaction(self) -> bool:
@@ -186,7 +187,7 @@ class CarState(CarStateBase):
     self.lkas11 = copy.copy(cp_cam.vl["LKAS11"])
     self.clu11 = copy.copy(cp.vl["CLU11"])
     self.steer_state = cp.vl["MDPS12"]["CF_Mdps_ToiActive"]  # 0 NOT ACTIVE, 1 ACTIVE
-    prev_cruise_buttons = self.cruise_buttons[-1]
+    self.prev_cruise_buttons = self.cruise_buttons[-1]
     prev_main_buttons = self.main_buttons[-1]
     prev_lda_button = self.lda_button
     self.cruise_buttons.extend(cp.vl_all["CLU11"]["CF_Clu_CruiseSwState"])
@@ -194,7 +195,7 @@ class CarState(CarStateBase):
     if self.CP.flags & HyundaiFlags.HAS_LDA_BUTTON:
       self.lda_button = cp.vl["BCM_PO_11"]["LDA_BTN"]
 
-    ret.buttonEvents = [*create_button_events(self.cruise_buttons[-1], prev_cruise_buttons, BUTTONS_DICT),
+    ret.buttonEvents = [*create_button_events(self.cruise_buttons[-1], self.prev_cruise_buttons, BUTTONS_DICT),
                         *create_button_events(self.main_buttons[-1], prev_main_buttons, {1: ButtonType.mainCruise}),
                         *create_button_events(self.lda_button, prev_lda_button, {1: ButtonType.lkas})]
 
@@ -281,7 +282,7 @@ class CarState(CarStateBase):
     if self.CP.flags & HyundaiFlags.EV:
       ret.cruiseState.nonAdaptive = cp.vl["MANUAL_SPEED_LIMIT_ASSIST"]["MSLA_ENABLED"] == 1
 
-    prev_cruise_buttons = self.cruise_buttons[-1]
+    self.prev_cruise_buttons = self.cruise_buttons[-1]
     prev_main_buttons = self.main_buttons[-1]
     prev_lda_button = self.lda_button
     self.cruise_buttons.extend(cp.vl_all[self.cruise_btns_msg_canfd]["CRUISE_BUTTONS"])
@@ -294,7 +295,7 @@ class CarState(CarStateBase):
       self.lfa_block_msg = copy.copy(cp_cam.vl["CAM_0x362"] if self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT
                                           else cp_cam.vl["CAM_0x2a4"])
 
-    ret.buttonEvents = [*create_button_events(self.cruise_buttons[-1], prev_cruise_buttons, BUTTONS_DICT),
+    ret.buttonEvents = [*create_button_events(self.cruise_buttons[-1], self.prev_cruise_buttons, BUTTONS_DICT),
                         *create_button_events(self.main_buttons[-1], prev_main_buttons, {1: ButtonType.mainCruise}),
                         *create_button_events(self.lda_button, prev_lda_button, {1: ButtonType.lkas})]
 
