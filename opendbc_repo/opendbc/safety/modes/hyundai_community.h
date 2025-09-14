@@ -130,7 +130,7 @@ static uint32_t hyundai_community_compute_checksum(const CANPacket_t *msg) {
 
 static void hyundai_community_rx_hook(const CANPacket_t *msg) {
 
-  //if( hyundai_longitudinal )
+  if( hyundai_longitudinal )
   {
     // SCC12 is on bus 2 for camera-based SCC cars, bus 0 on all others
     if (msg->addr == 0x421U) {
@@ -139,6 +139,15 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
         int cruise_engaged = (GET_BYTES(msg, 0, 4) >> 13) & 0x3U;
         hyundai_common_cruise_state_check(cruise_engaged);
       }
+    }
+  }
+  else
+  {
+    if ((msg->addr == 0x420) && (((msg->bus == 0) && !hyundai_camera_scc) || ((msg->bus == 2) && hyundai_camera_scc))) {
+      // 0 bits
+      int cruise_engaged = GET_BYTES(msg, 0, 4) & 0x1U; // ACC main_on signal
+
+      hyundai_common_cruise_state_check(cruise_engaged);
     }
   }
 
@@ -155,12 +164,6 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
       int cruise_button = msg->data[0] & 0x7U;
       bool main_button = GET_BIT(msg, 3U);
       hyundai_common_cruise_buttons_check(cruise_button, main_button);
-
-      if( !hyundai_longitudinal )
-      {
-       // hyundai_common_cruise_state_check(main_button);
-      }
-
     }
 
     // gas press, different for EV, hybrid, and ICE models
