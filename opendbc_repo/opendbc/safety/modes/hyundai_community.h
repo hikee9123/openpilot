@@ -144,7 +144,7 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
   else
   {
 
-    if ((msg->addr == 0x420) ) //  MainMode_ACC
+    if ((msg->addr == 0x420U) ) //  MainMode_ACC
     {
       int cruise_available = GET_BIT(msg, 0U);
       hyundai_common_cruise_state_check(cruise_available);
