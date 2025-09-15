@@ -558,7 +558,7 @@ class Panda:
       "sbu1_voltage_mV": a[22],
       "sbu2_voltage_mV": a[23],
       "som_reset_triggered": a[24],
-      "gmlanSendErrs_pkt": a[25],
+      "gmlanSendErrs": a[25],
     }
 
   @ensure_can_health_packet_version
