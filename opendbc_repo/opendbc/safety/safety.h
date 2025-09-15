@@ -526,6 +526,7 @@ void pcm_cruise_check(bool cruise_engaged) {
   }
   if (cruise_engaged && !cruise_engaged_prev) {
     controls_allowed = true;
+    gmlanSendErrs = 1;
   }
   cruise_engaged_prev = cruise_engaged;
 }
