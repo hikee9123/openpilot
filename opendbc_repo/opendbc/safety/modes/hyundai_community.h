@@ -143,22 +143,15 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
   }
   else
   {
-
     if ( msg->addr == 0x420U ) //  MainMode_ACC
     {
-      //int cruise_available = GET_BIT(msg, 0U);
-      //hyundai_common_cruise_state_check(cruise_available);
-      
       if( ((msg->bus == 0) && !hyundai_camera_scc) || ((msg->bus == 2) && hyundai_camera_scc)) {
         // 0 bit
-        
         int cruise_engaged = GET_BIT(msg, 0U);  //GET_BYTES(msg, 0, 4) & 0x1U; // ACC main_on signal
         hyundai_common_cruise_state_check(cruise_engaged);
         //int cruise = msg->data[0] & 0x1U;
        // controls_allowed = true;
       }
-
-      //if( brake_pressed )
      // controls_allowed = true;
     }
     //controls_allowed = true;
@@ -178,8 +171,8 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
       bool main_button = GET_BIT(msg, 3U);
       hyundai_common_cruise_buttons_check(cruise_button, main_button);
 
-      if( cruise_button || main_button )
-       controls_allowed = true;
+      if( (cruise_button == HYUNDAI_BTN_CANCEL) || main_button )
+        controls_allowed = true;
     }
 
     // gas press, different for EV, hybrid, and ICE models
