@@ -96,6 +96,7 @@ class CarStateCustom():
     else:
       self.controlsAllowed = 0
 
+
     if self.timer_init > 0:
       self.timer_init -= 1
       ret.cruiseState.enabled = False
