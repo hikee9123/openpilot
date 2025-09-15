@@ -199,7 +199,6 @@ static void tick_handler(void) {
         heartbeat_engaged_mismatches += 1U;
         if (heartbeat_engaged_mismatches >= 3U) {
           controls_allowed = false;
-          print("controls_allowed = false; => (heartbeat_engaged_mismatches >= 3U)\n");
         }
       } else {
         heartbeat_engaged_mismatches = 0U;
