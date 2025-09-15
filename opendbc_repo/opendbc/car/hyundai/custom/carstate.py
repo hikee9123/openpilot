@@ -155,7 +155,7 @@ class CarStateCustom():
 
 
     #log
-    trace1.printf1( 'MD={:.0f} controlsAllowed={:.0f} gmlanSendErrs={:0.f}'.format( self.control_mode,  self.controlsAllowed, self.gmlanSendErrsDEPRECATED ) )
+    trace1.printf1( 'MD={:.0f} controlsAllowed={:.0f} '.format( self.control_mode,  self.controlsAllowed ) )
     trace1.printf2( 'CV={:7.5f} , {:.0f} , {:.0f}'.format( self.desiredCurvature, self.mainMode_ACC, self.clu_Main ) )
 
     #if self.CP.openpilotLongitudinalControl:
