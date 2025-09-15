@@ -169,7 +169,7 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
 
       if ((cruise_button == HYUNDAI_BTN_CANCEL) || main_button)
       {
-          gmlanSendErrs = 1;
+          //gmlanSendErrs = 1;
           pcm_cruise_check(true);
       }
           
