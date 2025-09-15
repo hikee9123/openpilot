@@ -93,7 +93,7 @@ class CarStateCustom():
   def lfa_engage(self, ret):
     # 제어 허용 여부 (controlsAllowed)
     self.controlsAllowed = int(any(ps.controlsAllowed for ps in self.sm['pandaStates']))
-    self.gmlanSendErrsDEPRECATED = int(any(ps.gmlanSendErrsDEPRECATED for ps in self.sm['pandaStates']))
+    self.gmlanSendErrsDEPRECATED = 0 #int(any(ps.gmlanSendErrsDEPRECATED for ps in self.sm['pandaStates']))
 
 
     if self.timer_init > 0:
