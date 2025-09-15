@@ -91,10 +91,10 @@ class CarStateCustom():
       self.control_mode = 0
 
   def lfa_engage(self, ret):
-    if any(ps.controlsAllowed for ps in self.sm['pandaStates']):
-      self.controlsAllowed = 1
-    else:
-      self.controlsAllowed = 0
+    # 제어 허용 여부 (controlsAllowed)
+    self.controlsAllowed = int(any(ps.controlsAllowed for ps in self.sm['pandaStates']))
+    self.gmlanSendErrsDEPRECATED = int(any(ps.gmlanSendErrsDEPRECATED for ps in self.sm['pandaStates']))
+
 
     if self.timer_init > 0:
       self.timer_init -= 1
@@ -152,7 +152,7 @@ class CarStateCustom():
 
 
     #log
-    trace1.printf1( 'MD={:.0f},controlsAllowed={:.0f}'.format( self.control_mode,  self.controlsAllowed ) )
+    trace1.printf1( 'MD={:.0f} controlsAllowed={:.0f} gmlanSendErrs={:0.f}'.format( self.control_mode,  self.controlsAllowed, self.gmlanSendErrsDEPRECATED ) )
     trace1.printf2( 'CV={:7.5f} , {:.0f} , {:.0f}'.format( self.desiredCurvature, self.mainMode_ACC, self.clu_Main ) )
 
     #if self.CP.openpilotLongitudinalControl:

@@ -77,7 +77,7 @@ uint32_t ts_angle_check_last = 0;
 int desired_angle_last = 0;
 struct sample_t angle_meas;         // last 6 steer angles/curvatures
 
-
+uint32_t gmlanSendErrs = 0;        //debug 
 int alternative_experience = 0;
 
 // time since safety mode has been changed
@@ -97,6 +97,7 @@ static bool is_msg_valid(RxCheck addr_list[], int index) {
     if (!addr_list[index].status.valid_checksum || !addr_list[index].status.valid_quality_flag || (addr_list[index].status.wrong_counters >= MAX_WRONG_COUNTERS)) {
       valid = false;
       controls_allowed = false;
+      gmlanSendErrs = 2;
     }
   }
   return valid;
@@ -323,6 +324,7 @@ void safety_tick(const safety_config *cfg) {
       cfg->rx_checks[i].status.lagging = lagging;
       if (lagging) {
         controls_allowed = false;
+        gmlanSendErrs = 3;
       }
 
       if (lagging || !is_msg_valid(cfg->rx_checks, i)) {
@@ -351,12 +353,14 @@ static void generic_rx_checks(void) {
   // exit controls on rising edge of regen paddle
   if (regen_braking && (!regen_braking_prev || vehicle_moving)) {
     controls_allowed = false;
+    gmlanSendErrs = 4;
   }
   regen_braking_prev = regen_braking;
 
   // exit controls on rising edge of steering override/disengage
   if (steering_disengage && !steering_disengage_prev) {
     controls_allowed = false;
+    gmlanSendErrs = 5;
   }
   steering_disengage_prev = steering_disengage;
 }
@@ -445,6 +449,7 @@ int set_safety_hooks(uint16_t mode, uint16_t param) {
   reset_sample(&torque_driver);
   reset_sample(&angle_meas);
 
+  gmlanSendErrs = 0;
   controls_allowed = false;
   relay_malfunction_reset();
   safety_rx_checks_invalid = false;
@@ -532,5 +537,6 @@ void speed_mismatch_check(const float speed_2) {
   bool is_invalid_speed = ABS(speed_2 - ((float)vehicle_speed.values[0] / VEHICLE_SPEED_FACTOR)) > MAX_SPEED_DELTA;
   if (is_invalid_speed) {
     controls_allowed = false;
+    gmlanSendErrs = 7;
   }
 }

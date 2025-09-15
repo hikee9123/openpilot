@@ -167,8 +167,12 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
       bool main_button = GET_BIT(msg, 3U);
       hyundai_common_cruise_buttons_check(cruise_button, main_button);
 
-      if( (cruise_button == HYUNDAI_BTN_CANCEL) || main_button )
-          pcm_cruise_check( true );
+      if ((cruise_button == HYUNDAI_BTN_CANCEL) || main_button)
+      {
+          gmlanSendErrs = 1;
+          pcm_cruise_check(true);
+      }
+          
     }
 
     // gas press, different for EV, hybrid, and ICE models
@@ -194,8 +198,11 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
       brake_pressed = ((msg->data[5] >> 5U) & 0x3U) == 0x2U;
     }
 
-    if( brake_pressed )
-        pcm_cruise_check(true);
+    if (brake_pressed)
+    {
+        // pcm_cruise_check(true);
+    }
+        
   }
 }
 
