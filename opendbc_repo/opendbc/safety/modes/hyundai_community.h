@@ -129,8 +129,8 @@ static uint32_t hyundai_community_compute_checksum(const CANPacket_t *msg) {
 
 static void hyundai_community_rx_hook(const CANPacket_t *msg) {
 
-  //if( hyundai_longitudinal )
- // {
+  if( hyundai_longitudinal )
+  {
     // SCC12 is on bus 2 for camera-based SCC cars, bus 0 on all others
     if (msg->addr == 0x421U) {
       if (((msg->bus == 0U) && !hyundai_camera_scc) || ((msg->bus == 2U) && hyundai_camera_scc)) {
@@ -139,7 +139,7 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
         hyundai_common_cruise_state_check(cruise_engaged);
       }
     }
-  //}
+  }
   /*
   else
   {
