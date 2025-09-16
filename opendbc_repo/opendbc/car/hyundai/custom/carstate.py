@@ -91,9 +91,6 @@ class CarStateCustom():
       self.control_mode = 0
 
   def lfa_engage(self, ret):
-    #for ps in self.sm['pandaStates']:
-    #   self.controlsAllowed = ps.controlsAllowed
-    self.controlsAllowed = int(any(ps.controlsAllowed for ps in self.sm['pandaStates']))
     if any(ps.controlsAllowed for ps in self.sm['pandaStates']):
       self.controlsAllowed = 1
     else:
