@@ -129,8 +129,8 @@ static uint32_t hyundai_community_compute_checksum(const CANPacket_t *msg) {
 
 static void hyundai_community_rx_hook(const CANPacket_t *msg) {
 
-  if( hyundai_longitudinal )
-  {
+  //if( hyundai_longitudinal )
+ // {
     // SCC12 is on bus 2 for camera-based SCC cars, bus 0 on all others
     if (msg->addr == 0x421U) {
       if (((msg->bus == 0U) && !hyundai_camera_scc) || ((msg->bus == 2U) && hyundai_camera_scc)) {
@@ -139,7 +139,8 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
         hyundai_common_cruise_state_check(cruise_engaged);
       }
     }
-  }
+  //}
+  /*
   else
   {
     if ( msg->addr == 0x420U ) //  MainMode_ACC
@@ -150,8 +151,8 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
         hyundai_common_cruise_state_check(cruise_engaged);
       }
     }
-
   }
+  */
 
   if (msg->bus == 0U) {
     if (msg->addr == 0x251U) {
@@ -167,7 +168,8 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
       hyundai_common_cruise_buttons_check(cruise_button, main_button);
 
       if ((cruise_button == HYUNDAI_BTN_CANCEL) || main_button)
-        controls_allowed = true;
+        hyundai_common_cruise_state_check( true );
+        //controls_allowed = true;
     }
 
     // gas press, different for EV, hybrid, and ICE models
@@ -192,7 +194,7 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
     if (msg->addr == 0x394U) {
       brake_pressed = ((msg->data[5] >> 5U) & 0x3U) == 0x2U;
     }
-    brake_pressed = false;
+   // brake_pressed = false;
 
   }
 }
