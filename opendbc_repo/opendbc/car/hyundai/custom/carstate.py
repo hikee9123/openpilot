@@ -91,6 +91,9 @@ class CarStateCustom():
       self.control_mode = 0
 
   def lfa_engage(self, ret):
+    #for ps in self.sm['pandaStates']:
+    #   self.controlsAllowed = ps.controlsAllowed
+    self.controlsAllowed = int(any(ps.controlsAllowed for ps in self.sm['pandaStates']))
     if any(ps.controlsAllowed for ps in self.sm['pandaStates']):
       self.controlsAllowed = 1
     else:
@@ -220,7 +223,7 @@ class CarStateCustom():
 
       self.lead_distance = cp_cruise.vl["SCC11"]["ACC_ObjDist"]
       self.gapSet = cp_cruise.vl["SCC11"]['TauGapSet']
-      self.VSetDis = cp_cruise.vl["SCC11"]["VSetDis"]   # kph   ?¨Î£®Ï¶??§Ï†ï ?çÎèÑ.
+      self.VSetDis = cp_cruise.vl["SCC11"]["VSetDis"]   # kph   ??ÔºàÔßù???ºÏ†ô ??æÎ£Ñ.
 
       if not self.mainMode_ACC:
         self.cruise_control_mode()
@@ -233,7 +236,7 @@ class CarStateCustom():
 
     self.brakePos = cp.vl["E_EMS11"]["Brake_Pedal_Pos"]
     self.is_highway = self.lfahda["HDA_Icon_State"] != 0.
-    self.clu_Vanz = cp.vl["CLU11"]["CF_Clu_Vanz"]     # kph  ?ÑÏû¨ Ï∞®Îüâ???çÎèÑ.
+    self.clu_Vanz = cp.vl["CLU11"]["CF_Clu_Vanz"]     # kph  ?Íæ©Ïò± Ôß°‚ë§?????æÎ£Ñ.
     self.clu_Main = cp.vl["CLU11"]["CF_Clu_CruiseSwMain"]
 
     self.lfa_engage( ret)
