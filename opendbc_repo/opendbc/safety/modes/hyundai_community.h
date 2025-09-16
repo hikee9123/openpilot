@@ -170,6 +170,7 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
       {
         //hyundai_common_cruise_state_check( true );
          controls_allowed = true;
+        cruise_engaged_prev = true:
       }
     }
 
