@@ -91,13 +91,10 @@ class CarStateCustom():
       self.control_mode = 0
 
   def lfa_engage(self, ret):
-    #for ps in self.sm['pandaStates']:
-    #  self.controlsAllowed = ps.controlsAllowed
-    #self.controlsAllowed = int(any(ps.controlsAllowed for ps in self.sm['pandaStates']))
-
-    first_state = self.sm['pandaStates'][0]
-    self.controlsAllowed = first_state.controlsAllowed
-
+    if any(ps.controlsAllowed for ps in self.sm['pandaStates']):
+      self.controlsAllowed = 1
+    else:
+      self.controlsAllowed = 0
 
     if self.timer_init > 0:
       self.timer_init -= 1
@@ -155,7 +152,7 @@ class CarStateCustom():
 
 
     #log
-    trace1.printf1( 'MD={:.0f} controlsAllowed={:.0f} '.format( self.control_mode,  self.controlsAllowed ) )
+    trace1.printf1( 'MD={:.0f},controlsAllowed={:.0f}'.format( self.control_mode,  self.controlsAllowed ) )
     trace1.printf2( 'CV={:7.5f} , {:.0f} , {:.0f}'.format( self.desiredCurvature, self.mainMode_ACC, self.clu_Main ) )
 
     #if self.CP.openpilotLongitudinalControl:
@@ -223,7 +220,7 @@ class CarStateCustom():
 
       self.lead_distance = cp_cruise.vl["SCC11"]["ACC_ObjDist"]
       self.gapSet = cp_cruise.vl["SCC11"]['TauGapSet']
-      self.VSetDis = cp_cruise.vl["SCC11"]["VSetDis"]   # kph   크루즈 설정 속도.
+      self.VSetDis = cp_cruise.vl["SCC11"]["VSetDis"]   # kph   ?�루�??�정 ?�도.
 
       if not self.mainMode_ACC:
         self.cruise_control_mode()
@@ -236,7 +233,7 @@ class CarStateCustom():
 
     self.brakePos = cp.vl["E_EMS11"]["Brake_Pedal_Pos"]
     self.is_highway = self.lfahda["HDA_Icon_State"] != 0.
-    self.clu_Vanz = cp.vl["CLU11"]["CF_Clu_Vanz"]     # kph  현재 차량의 속도.
+    self.clu_Vanz = cp.vl["CLU11"]["CF_Clu_Vanz"]     # kph  ?�재 차량???�도.
     self.clu_Main = cp.vl["CLU11"]["CF_Clu_CruiseSwMain"]
 
     self.lfa_engage( ret)

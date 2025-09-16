@@ -47,7 +47,6 @@ const LongitudinalLimits HYUNDAI_COMMUNITY_LONG_LIMITS = {
   {.msg = {{0x251, 0, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},                                              \
   {.msg = {{0x4F1, 0, 4, 50U, .ignore_checksum = true, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},                                                  \
 
-
 #define HYUNDAI_COMMUNITY_SCC12_ADDR_CHECK(scc_bus)                                                                            \
   {.msg = {{0x421, (scc_bus), 8, 50U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
 
@@ -151,8 +150,8 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
         hyundai_common_cruise_state_check(cruise_engaged);
       }
     }
-  }
 
+  }
 
   if (msg->bus == 0U) {
     if (msg->addr == 0x251U) {
@@ -168,10 +167,7 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
       hyundai_common_cruise_buttons_check(cruise_button, main_button);
 
       if ((cruise_button == HYUNDAI_BTN_CANCEL) || main_button)
-      {
-          pcm_cruise_check(true);
-      }
-          
+        controls_allowed = true;
     }
 
     // gas press, different for EV, hybrid, and ICE models
@@ -197,7 +193,7 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
       brake_pressed = ((msg->data[5] >> 5U) & 0x3U) == 0x2U;
     }
     brake_pressed = false;
-        
+
   }
 }
 
