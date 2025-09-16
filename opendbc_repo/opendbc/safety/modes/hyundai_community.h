@@ -140,7 +140,6 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
       }
     }
   }
-  /*
   else
   {
     if ( msg->addr == 0x420U ) //  MainMode_ACC
@@ -152,7 +151,7 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
       }
     }
   }
-  */
+  
 
   if (msg->bus == 0U) {
     if (msg->addr == 0x251U) {
@@ -168,8 +167,10 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
       hyundai_common_cruise_buttons_check(cruise_button, main_button);
 
       if ((cruise_button == HYUNDAI_BTN_CANCEL) || main_button)
-        hyundai_common_cruise_state_check( true );
-        //controls_allowed = true;
+      {
+        //hyundai_common_cruise_state_check( true );
+         controls_allowed = true;
+      }
     }
 
     // gas press, different for EV, hybrid, and ICE models
