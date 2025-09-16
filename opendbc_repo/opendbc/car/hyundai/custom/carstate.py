@@ -92,11 +92,11 @@ class CarStateCustom():
 
   def lfa_engage(self, ret):
     #for ps in self.sm['pandaStates']:
-    #  self.controlsAllowed = ps.controlsAllowed
-    #self.controlsAllowed = int(any(ps.controlsAllowed for ps in self.sm['pandaStates']))
+    #   self.controlsAllowed = ps.controlsAllowed
+    self.controlsAllowed = int(any(ps.controlsAllowed for ps in self.sm['pandaStates']))
 
-    first_state = self.sm['pandaStates'][0]
-    self.controlsAllowed = first_state.controlsAllowed
+    #first_state = self.sm['pandaStates'][0]
+    #self.controlsAllowed = first_state.controlsAllowed
 
 
     if self.timer_init > 0:
