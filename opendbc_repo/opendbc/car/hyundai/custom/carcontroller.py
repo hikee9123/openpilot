@@ -4,7 +4,7 @@ from opendbc.car.hyundai.values import Buttons
 from opendbc.car.hyundai    import hyundaican
 from opendbc.car.hyundai.custom.cruisebuttonctrl  import CruiseButtonCtrl
 
-import openpilot.selfdrive.custom.loger as  trace1
+import opendbc.custom.loger as trace1
 
 
 class CarControllerCustom:
