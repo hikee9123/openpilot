@@ -1,4 +1,5 @@
 import copy
+import numpy as np
 import opendbc.custom.loger as trace1
 import cereal.messaging as messaging
 
@@ -46,19 +47,26 @@ class CarStateCustom:
     self.cruise_buttons_old = 0
     self.prev_cruise_btn = 0
     self.cruise_buttons_time = 0
-    self.cruise_set_speed_kph = 0
-    self.VSetDis = 0
-    self.lead_distance = 0
+    self.cruise_set_speed_kph = 0.0
+    self.VSetDis = 0.0
+    self.lead_distance = 0.0
     self.gapSet = 0
 
     # 차량/주행 상태
-    self.clu_Vanz = 0
+    self.clu_Vanz = 0.0
     self.is_highway = False
-    self.desiredCurvature = 0
-    self.modelxDistance = 0
-    self.brakePos = 0
+    self.desiredCurvature = 0.0
+    self.modelxDistance = 0.0
+    self.modelyDistance = 0.0
+    self.model_v2 = None
+    self.brakePos = 0.0
     self.clu_Main = 0
     self.mainMode_ACC = False
+
+    # 외부/플래너 파생
+    self.speed_plan_kps = 0.0
+    self.cruise_set_mode = 0
+    self.cruiseGap = 0
 
     # 좌/우 차선변경 헬퍼(유지)
     self.leftLaneTime = 50
@@ -86,7 +94,6 @@ class CarStateCustom:
       return cp.vl[msg]
     except Exception:
       return {}
-
 
   # ----------------------------
   # Helpers: CAN value access
@@ -151,7 +158,7 @@ class CarStateCustom:
       ret.cruiseState.enabled = False
       return
 
-    # OP Long off 인 경우만 아래 로직 적용 (원 코드 유지)
+    # OP Long on이면 여기서 추가 처리 없음 (원 코드 의도 유지)
     if self.CP.openpilotLongitudinalControl:
       return
 
@@ -281,16 +288,67 @@ class CarStateCustom:
     return float(set_speed_kph)
 
   # ----------------------------
+  # Model-based helpers
+  # ----------------------------
+  @staticmethod
+  def max_distance(model_v2):
+    """modelV2 position의 마지막 포인트를 가져와 범위를 클램프"""
+    if model_v2 is None or getattr(model_v2, "position", None) is None:
+      return None, None
+
+    x_positions = getattr(model_v2.position, "x", []) or []
+    y_positions = getattr(model_v2.position, "y", []) or []
+
+    last_x_value = x_positions[-1] if len(x_positions) else None
+    last_y_value = y_positions[-1] if len(y_positions) else None
+
+    x_distance = float(np.clip(last_x_value, 10, 500)) if last_x_value is not None else None
+    y_distance = float(np.clip(last_y_value, -60, 60)) if last_y_value is not None else None
+    return x_distance, y_distance
+
+  def _update_from_submaster(self):
+    """SubMaster에서 보조 신호 갱신. sm.update(0)는 여기서만 호출합니다."""
+    self.sm.update(0)
+
+    # Planner 기반 속도 (kph)
+    speeds = self.sm['longitudinalPlan'].speeds
+    if len(speeds):
+      self.speed_plan_kps = float(speeds[-1]) * CV.MS_TO_KPH
+
+    # UI Custom (모드/갭)
+    if self.sm.updated["uICustom"]:
+      cruiseMode = self.sm['uICustom'].community.cruiseMode
+      if self.cruise_set_mode != cruiseMode:
+        self.cruise_set_mode = int(cruiseMode)
+
+      cruiseGap = self.sm['uICustom'].community.cruiseGap
+      if self.cruiseGap != cruiseGap:
+        self.cruiseGap = int(cruiseGap)
+
+    # 모델 곡률/이격
+    self.model_v2 = self.sm['modelV2']
+    x_d, y_d = self.max_distance(self.model_v2)
+    # None 대비 기본값 0.0
+    self.modelxDistance = x_d if x_d is not None else 0.0
+    self.modelyDistance = y_d if y_d is not None else 0.0
+
+    # 곡률 기반 속도 페널티(간단한 예: 곡률 y 편차 10~60 → 0~10 kph 감속)
+    # np.interp 사용 (x, xp, fp)
+    spd_curv = float(np.interp(abs(self.modelyDistance), [10.0, 60.0], [0.0, 10.0], left=0.0, right=10.0))
+    self.speed_plan_kps = max(0.0, self.speed_plan_kps - spd_curv)
+
+  # ----------------------------
   # Update (entry point from CarState)
   # ----------------------------
   def update(self, ret, CS, cp, cp_cruise, cp_cam):
-    self.sm.update(0)
+    # SubMaster는 여기서만 업데이트
+    self._update_from_submaster()
 
     # openpilot Long on/off 에 따라 분리
     if self.CP.openpilotLongitudinalControl:
       self.mainMode_ACC = self._vl(cp, "TCS13", "ACCEnable", 1) == 0
       self.acc_active = self._vl(cp, "TCS13", "ACC_REQ", 0) == 1
-      self.lead_distance = 0
+      self.lead_distance = 0.0
       # OP long 때는 ret.cruiseState.speed는 OP가 관리
     else:
       self.mainMode_ACC = self._vl(cp_cruise, "SCC11", "MainMode_ACC", 0) == 1
