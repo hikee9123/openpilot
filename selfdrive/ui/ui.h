@@ -69,7 +69,10 @@ typedef struct UIScene {
     int   autoScreenOff;
     int   brightness;
     int   touched;
-    int   touched_old;
+
+
+
+    int   sleep_time = 1000;
   } custom;
 } UIScene;
 
@@ -122,7 +125,7 @@ private:
   bool awake = false;
   int interactive_timeout = 0;
   bool ignition_on = false;
-
+  int   touched_old = 0;
   int offroad_brightness = BACKLIGHT_OFFROAD;
   int last_brightness = 0;
   FirstOrderFilter brightness_filter;

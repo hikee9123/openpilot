@@ -168,7 +168,8 @@ void Device::updateBrightness(const UIState &s) {
 
     if( s.scene.custom.touched == s.scene.custom.touched_old )
     {
-        s.scene.custom.touched_old = s.scene.custom.touched;
+        touched_old = s.scene.custom.touched;
+        s.scene.custom.sleep_time = 10 * UI_FREQ;
     }
 
     int _bright = s.scene.custom.brightness;
