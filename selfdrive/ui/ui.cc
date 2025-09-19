@@ -166,7 +166,7 @@ void Device::updateBrightness(const UIState &s) {
     // Scale back to 10% to 100%
     clipped_brightness = std::clamp(100.0f * clipped_brightness, 10.0f, 100.0f);
 
-    if( s.scene.custom.touched == s.scene.custom.touched_old )
+    if( s.scene.custom.touched == touched_old )
     {
         touched_old = s.scene.custom.touched;
         s.scene.custom.sleep_time = 10 * UI_FREQ;

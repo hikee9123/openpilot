@@ -125,7 +125,7 @@ private:
   bool awake = false;
   int interactive_timeout = 0;
   bool ignition_on = false;
-  int   touched_old = 0;
+  int   touched_old = -1;
   int offroad_brightness = BACKLIGHT_OFFROAD;
   int last_brightness = 0;
   FirstOrderFilter brightness_filter;
