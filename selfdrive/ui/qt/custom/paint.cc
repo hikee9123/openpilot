@@ -543,7 +543,7 @@ void OnPaint::ui_main_debug(QPainter &p)
 
     p.setFont(InterFont(38));
     p.setPen( QColor(255, 255, 255, 255) );
-    text.sprintf("Panda=%d started=%d sensor=%d ignition=%d", m_param.controlsAllowed, scene->started, scene->light_sensor, scens->ignition  );
+    text.sprintf("Panda=%d started=%d sensor=%d ignition=%d", m_param.controlsAllowed, scene->started, scene->light_sensor, scene->ignition  );
     p.drawText( bb_x, bb_y+nGap, text );
   //}
 }

@@ -83,6 +83,9 @@ void HomeWindow::mousePressEvent(QMouseEvent* e) {
   if ((onroad->isVisible() || body->isVisible()) && (!sidebar->isVisible() || e->x() > sidebar->width())) {
     sidebar->setVisible(!sidebar->isVisible());
   }
+
+  printf( "mousePressEvent = (%d,%d)\n", e->x(), e->y() );
+  uiState()->scene.custom.touched++;
 }
 
 void HomeWindow::mouseDoubleClickEvent(QMouseEvent* e) {
