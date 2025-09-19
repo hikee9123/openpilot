@@ -277,6 +277,15 @@ signals:
 private slots:
 
 private:
+  struct ValueDef {
+    QString param;
+    QString title;
+    QString desc;
+    QString icon;
+    int min;
+    int max;
+    int unit;
+  };
   // 기본 아이콘 경로
   const QString kIcon = "../assets/offroad/icon_shell.png";
 
