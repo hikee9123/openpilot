@@ -66,6 +66,8 @@ typedef struct UIScene {
   {
     int  m_powerflag = 0;
     float leadDistance;
+    int   autoScreenOff;
+    int   brightness;
   } custom;
 } UIScene;
 

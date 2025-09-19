@@ -153,6 +153,10 @@ void OnPaint::updateState(const UIState &s)
   is_debug = m_param.ui.getShowDebugMessage();
   is_carTracking = m_param.ui.getShowCarTracking();
 
+  scene->custom.autoScreenOff = m_param.ui.getAutoScreenOff();
+  scene->custom.brightness = m_param.ui.getBrightness();
+
+
   if( !is_debug ) return;
 
   // 1.
@@ -539,7 +543,7 @@ void OnPaint::ui_main_debug(QPainter &p)
 
     p.setFont(InterFont(38));
     p.setPen( QColor(255, 255, 255, 255) );
-    text.sprintf("Panda=%d", m_param.controlsAllowed  );
+    text.sprintf("Panda=%d started=%d sensor=%d ignition=%d", m_param.controlsAllowed, scene->started, scene->light_sensor, scens->ignition  );
     p.drawText( bb_x, bb_y+nGap, text );
   //}
 }
