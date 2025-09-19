@@ -981,8 +981,6 @@ void UITab::updateToggles( int bSave )
   auto kegman_distance = toggles["kegmanDistance"];
   auto kegman_speed = toggles["kegmanSpeed"];
 
-  auto _autoScreenOff = toggles["autoScreenOff"];
-  auto _brightness = toggles["brightness"];
 
   tpms_mode_toggle->setEnabled(bDebug);
   debug_mode_toggle->setEnabled(bDebug);
@@ -999,9 +997,6 @@ void UITab::updateToggles( int bSave )
   kegman_engine->setEnabled(kegman);
   kegman_distance->setEnabled(kegman);
   kegman_speed->setEnabled(kegman);
-
-  _autoScreenOff->setEnabled(kegman);
-  _brightness->setEnabled(kegman);
 }
 
 
