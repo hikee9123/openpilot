@@ -365,8 +365,8 @@ void CustomPanel::updateToggles( int bSave )
   int kegmanSpeed = m_jsonobj["kegmanSpeed"].toBool();
   int kegmanLag = m_jsonobj["kegmanLag"].toBool();
 
-  int _autoScreenOff = m_jsonobj["autoScreenOff"].toInt();
-  int _brightness = m_jsonobj["brightness"].toInt();
+  int _autoScreenOff = m_jsonobj["AutoScreenOff"].toInt();
+  int _brightness = m_jsonobj["Brightness"].toInt();
 
 
 
@@ -526,6 +526,22 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidg
       "Auto lane change refers to the automatic activation of a system, commonly seen in autonomous driving, without manual intervention, based on detected conditions. 0:manual, 1:auto",
       "../assets/offroad/icon_shell.png",
       0,1,1
+    },
+    {
+      "Brightness",
+      " - brightness",
+      "0:Auto,Brightness",
+      "../assets/offroad/icon_shell.png",
+      -10,10,1
+
+    },
+    {
+      "AutoScreenOff",
+      " - autoScreenOff",
+      "0:Auto,auto Screen Off  (*10 sec)",
+      "../assets/offroad/icon_shell.png",
+      -10,10,1
+
     },
     {
       "PowerOff",
@@ -907,18 +923,7 @@ UITab::UITab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(parent), m_
       "",
       //"../assets/offroad/icon_shell.png",
     },
-    {
-      "brightness",
-      " - brightness",
-      "9. 0:Auto,Brightness",
-      "",
-    },
-    {
-      "autoScreenOff",
-      " - autoScreenOff",
-      "10. 0:Auto,auto Screen Off",
-      "",
-    },
+
 
   };
 
