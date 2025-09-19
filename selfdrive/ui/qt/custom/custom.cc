@@ -535,20 +535,6 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidg
       0,60,1
     },
     {
-      "brightness",
-      tr("brightness"),
-      "0:Auto,Brightness",
-      "../assets/offroad/icon_shell.png",
-      -50,50,1
-    },
-    {
-      "autoScreenOff",
-      tr("autoScreenOff"),
-      "0:Auto,auto Screen Off",
-      "../assets/offroad/icon_shell.png",
-      -50,50,1
-    },
-    {
       "DUAL_CAMERA_VIEW",
       tr("dual camera view"),
       "0:Not used:1",
@@ -921,7 +907,18 @@ UITab::UITab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(parent), m_
       "",
       //"../assets/offroad/icon_shell.png",
     },
-
+    {
+      "brightness",
+      " - brightness",
+      "9. 0:Auto,Brightness",
+      "",
+    },
+    {
+      "autoScreenOff",
+      " - autoScreenOff",
+      "10. 0:Auto,auto Screen Off",
+      "",
+    },
 
   };
 
