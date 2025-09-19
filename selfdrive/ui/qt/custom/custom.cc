@@ -535,9 +535,16 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidg
       0,60,1
     },
     {
-      "Brightness",
-      tr("Brightness"),
+      "brightness",
+      tr("brightness"),
       "0:Auto,Brightness",
+      "../assets/offroad/icon_shell.png",
+      -50,50,1
+    },
+    {
+      "autoScreenOff",
+      tr("autoScreenOff"),
+      "0:Auto,auto Screen Off",
       "../assets/offroad/icon_shell.png",
       -50,50,1
     },
@@ -549,6 +556,7 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidg
       0,1,1
     },
   };
+
 
   for (auto &[param, title, desc, icon, min,max,unit] : value_defs) {
     auto value =  new CValueControl( param, title, desc, icon, min, max, unit, m_jsonobj);
@@ -913,6 +921,8 @@ UITab::UITab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(parent), m_
       "",
       //"../assets/offroad/icon_shell.png",
     },
+
+
   };
 
   for (auto &[param, title, desc, icon] : toggle_defs) {
