@@ -528,6 +528,20 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidg
       0,1,1
     },
     {
+      "Brightness",
+      " - brightness",
+      "0:Auto,Brightness",
+      "../assets/offroad/icon_shell.png",
+      -10,10,1
+    },
+      {
+      "AutoScreenOff",
+      " - autoScreenOff",
+      "0:Auto,auto Screen Off  (*10 sec)",
+      "../assets/offroad/icon_shell.png",
+      -10,10,1
+    },
+    {
       "PowerOff",
       tr("Power Off Time"),
       "0:Not used,1~:Power Offset Time( *10 sec)",
@@ -544,20 +558,7 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidg
   };
 
     /*
-    {
-      "Brightness",
-      " - brightness",
-      "0:Auto,Brightness",
-      "../assets/offroad/icon_shell.png",
-      0,10,1
-    },
-      {
-      "AutoScreenOff",
-      " - autoScreenOff",
-      "0:Auto,auto Screen Off  (*10 sec)",
-      "../assets/offroad/icon_shell.png",
-      0,10,1
-    },
+
     */
 
   for (auto &[param, title, desc, icon, min,max,unit] : value_defs) {
