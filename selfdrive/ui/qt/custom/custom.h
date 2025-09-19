@@ -262,7 +262,7 @@ public:
 
 
 private:
-  std::map<std::string, CValueControl*> m_valueCtrl;
+  QMap<QString, CValueControl*> m_valueCtrl;
 
 
 protected:

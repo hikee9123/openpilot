@@ -544,7 +544,7 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
   for (const auto &d : value_defs) {
     auto *value = new CValueControl(d.param, d.title, d.desc, d.icon, d.min, d.max, d.unit, m_jsonobj);
     addItem(value);
-    m_valueCtrl.insert(d.param, value);
+    m_valueCtrl.emplace(d.param.toStdString(), value);
   }
 
   // 3) 토글류 이외의 스위치 예시
