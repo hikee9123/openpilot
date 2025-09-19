@@ -32,6 +32,9 @@ class CruiseButtonCtrl:
   LEAD_NOISE_EPS = 0.1
   VSET_MIN, VSET_MAX = 0.0, 250.0
 
+  # 4) 전이 히스테리시스 상수 추가 및 적용
+  DELTA_HYST_KPH = 0.2  # 클래스 상단 상수들 옆에 추가
+
   # ----------------------------
   # Lifecycle
   # ----------------------------
@@ -56,8 +59,6 @@ class CruiseButtonCtrl:
       State.RESUME:     self._case_resume,
     }
 
-    # UI/세팅 (0이면 FSM 비활성)
-    self.cruise_set_mode: int = 1
 
     # 타이머/보조
     self.waittime_press: int = self.WAIT_PRESS_FRAMES
@@ -65,6 +66,8 @@ class CruiseButtonCtrl:
     self.idle_cooldown_timer: int = 0
     self.wait_accsafety: int = 0
     self.last_lead_distance: float = 0.0
+
+    self.initialized  = False
 
   # ----------------------------
   # State handlers
@@ -94,9 +97,9 @@ class CruiseButtonCtrl:
         return self._goto(State.HOLD_NONE)
       return None
 
-    if delta >= (1.0 + self.EPS_KPH):
+    if delta >= (1.0 + self.EPS_KPH + self.DELTA_HYST_KPH):
       return self._goto(State.ACCEL)
-    if delta <= (-1.0 - self.EPS_KPH):
+    if delta <= (-1.0 - self.EPS_KPH - self.DELTA_HYST_KPH):
       return self._goto(State.DECEL)
     return None
 
@@ -176,10 +179,15 @@ class CruiseButtonCtrl:
     self.set_point = max(self.MIN_SET_SPEED_KPH, tgt)
     self._refresh_vset(CS)
 
+
   def _refresh_vset(self, CS) -> None:
     """차량의 현재 설정속도(VSetDis) 갱신 및 클램프"""
-    vset = float(getattr(CS.customCS, "VSetDis", self.VSetDis))
+    try:
+      vset = float(getattr(CS.customCS, "VSetDis", self.VSetDis))
+    except Exception:
+      vset = self.VSetDis
     self.VSetDis = float(np.clip(vset, self.VSET_MIN, self.VSET_MAX))
+
 
   def _reached_target(self) -> bool:
     """목표-설정속도 도달 판정(데드밴드)"""
@@ -201,7 +209,7 @@ class CruiseButtonCtrl:
 
   def _button_idle_ok(self, CS) -> bool:
     """버튼 입력 가능한 안전 상태인지 확인. cruise_set_mode==0이면 FSM 비활성."""
-    if self.cruise_set_mode == 0:
+    if CS.customCS.cruise_set_mode == 0:
       return False
     if (not self._is_acc_on(CS)) or (self._last_button(CS) != Buttons.NONE) or CS.out.brakePressed:
       self.idle_cooldown_timer = self.IDLE_COOLDOWN_FRAMES
@@ -216,11 +224,6 @@ class CruiseButtonCtrl:
   # ----------------------------
   # Public API
   # ----------------------------
-  def set_ui_state(self, cruise_mode: Optional[int] = None) -> None:
-    """UI에서 설정한 모드 주입: 0이면 FSM 동작 안 함"""
-    if cruise_mode is not None:
-      self.cruise_set_mode = int(cruise_mode)
-
   def set_target_speed(self, kph: Optional[float]) -> None:
     """외부(맵/커브/longPlan 등)에서 계산한 목표속도 주입"""
     if kph is None:
@@ -257,6 +260,14 @@ class CruiseButtonCtrl:
     if self.CP.openpilotLongitudinalControl:
       return None
 
+    if not self.initialized:
+      self.prime(CS)
+      self.initialized = True
+      return None
+
+    if CS.customCS.cruiseGap != CS.customCS.gapSet:
+      return None
+
     # ACC 꺼짐
     if not self._is_acc_on(CS):
       self.wait_accsafety = self.ACC_SAFETY_INIT_INACTIVE
@@ -268,9 +279,19 @@ class CruiseButtonCtrl:
       return None
 
     # 외부 목표 미지정
+    plan_kph = float(getattr(CS.customCS, "speed_plan_kps", 0.0))
+    if plan_kph < self.MIN_SET_SPEED_KPH:
+      plan_kph = self.MIN_SET_SPEED_KPH
+
     target = self._external_target_kph
-    if target is None:
+
+    # 허용 오차로 비교 (0.05kph 정도면 충분)
+    if target is None or abs(plan_kph - target) > 0.05:
+      self.set_target_speed(plan_kph)
+      target = self._external_target_kph
+    elif target is None:
       return None
+
 
     # 상태 핸들러 실행 → 버튼 신호 산출
     self._prepare_set_point(CS, target)

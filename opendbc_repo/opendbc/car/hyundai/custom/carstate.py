@@ -261,14 +261,15 @@ class CarStateCustom:
     cruise_buttons = getattr(self.CS, "prev_cruise_buttons", 0)
     self._update_button_press_timer(cruise_buttons)
 
-    # 길게 누름 처리
-    if self._handle_longpress_set_vset():
-      return float(self.cruise_set_speed_kph)
 
     # 같은 버튼 반복 입력 → 무시
     if self.prev_cruise_btn == cruise_buttons:
       return float(self.cruise_set_speed_kph)
     self.prev_cruise_btn = cruise_buttons
+
+    # 길게 누름 처리
+    if self._handle_longpress_set_vset():
+      return float(self.cruise_set_speed_kph)
 
     set_speed_kph = self.cruise_set_speed_kph
 
@@ -335,7 +336,9 @@ class CarStateCustom:
     # 곡률 기반 속도 페널티(간단한 예: 곡률 y 편차 10~60 → 0~10 kph 감속)
     # np.interp 사용 (x, xp, fp)
     spd_curv = float(np.interp(abs(self.modelyDistance), [10.0, 60.0], [0.0, 10.0], left=0.0, right=10.0))
-    self.speed_plan_kps = max(0.0, self.speed_plan_kps - spd_curv)
+    self.speed_plan_kps -= spd_curv
+    self.speed_plan_kps = max(0.0, self.speed_plan_kps)
+
 
   # ----------------------------
   # Update (entry point from CarState)
