@@ -152,54 +152,69 @@ void Device::resetInteractiveTimeout(int timeout) {
 }
 
 void Device::updateBrightness(const UIState &s) {
-  float clipped_brightness = offroad_brightness;
+  // ------------- 1) 기본 센서 → 화면 밝기 (CIE 1931 + 10~100% 클램프) -------------
+  float clipped_brightness = offroad_brightness;  // offroad 기본
   if (s.scene.started && s.scene.light_sensor >= 0) {
-    clipped_brightness = s.scene.light_sensor;
-
-    // CIE 1931 - https://www.photonstophotos.net/GeneralTopics/Exposure/Psychometric_Lightness_and_Gamma.htm
-    if (clipped_brightness <= 8) {
-      clipped_brightness = (clipped_brightness / 903.3);
+    float Y = s.scene.light_sensor;  // 0~100 범위 가정
+    // CIE 1931 psychometric lightness
+    if (Y <= 8.0f) {
+      Y = Y / 903.3f;
     } else {
-      clipped_brightness = std::pow((clipped_brightness + 16.0) / 116.0, 3.0);
+      Y = std::pow((Y + 16.0f) / 116.0f, 3.0f);
     }
-
-    // Scale back to 10% to 100%
-    clipped_brightness = std::clamp(100.0f * clipped_brightness, 10.0f, 100.0f);
-
-
-    int _screen_off = s.scene.custom.autoScreenOff;
-    if( s.scene.custom.touched == touched_old )
-    {
-        touched_old = s.scene.custom.touched;
-        sleep_time = 10 * UI_FREQ;
-    }
-    else if( sleep_time > 0 )
-    {
-        sleep_time--;
-    }
-    else if( _screen_off )
-    {
-
-    }
-
-    int _bright = s.scene.custom.brightness;
-    if( _bright )
-      clipped_brightness *=  _bright * 0.01;
+    clipped_brightness = std::clamp(100.0f * Y, 10.0f, 100.0f);
   }
 
+  // ------------- 2) 사용자 오프셋 적용 (Screen Brightness: -10~+10, 0=Auto) -------------
+  // 의도: -10은 약 -50% 어둡게, +10은 약 +50% 밝게 (선형이 직관적)
+  // factor = 1.0 + step * 0.05  →  [-10..+10] → [0.5..1.5]
+  {
+    const int user_step = s.scene.custom.brightness;  // -10..+10, 0=Auto
+    if (user_step != 0) {
+      const float factor = std::clamp(1.0f + (user_step * 0.05f), 0.2f, 2.0f);
+      clipped_brightness = std::clamp(clipped_brightness * factor, 1.0f, 100.0f);
+    }
+  }
+
+  // ------------- 3) 유휴(터치) 감지 & 화면 타임아웃 (Screen Timeout) -------------
+  // Screen Timeout: 0=Auto/Off(미사용), N>0 = N*10초
+  // touched가 "변할 때"를 터치 이벤트로 판단
+
+  if (s.scene.custom.touched != touched_old) {
+    touched_old = s.scene.custom.touched;
+    idle_ticks = 0;            // 유휴 시간 리셋
+    awake = true;              // 터치하면 즉시 깨움
+  } else {
+    ++idle_ticks;
+  }
+
+  int timeout_steps = s.scene.custom.autoScreenOff;  // 0 or 1..60 (10초 단위 가정)
+  const int64_t ticks_per_10s = static_cast<int64_t>(UI_FREQ) * 10;
+  const int64_t timeout_ticks = (timeout_steps > 0) ? timeout_steps * ticks_per_10s : 0;
+
+  // 두 단계: 디밍(마지막 2초) → 화면 꺼짐
+  if (timeout_ticks > 0) {
+    const int64_t dim_window_ticks = std::min<int64_t>(2 * UI_FREQ, timeout_ticks / 5); // 최대 2초 또는 20% 윈도우
+    if (idle_ticks >= timeout_ticks) {
+      awake = false;           // 화면 끔
+    } else if (idle_ticks >= (timeout_ticks - dim_window_ticks)) {
+      // 선형 디밍: 30% → 10%로 서서히 낮춤
+      float t = float(idle_ticks - (timeout_ticks - dim_window_ticks)) / float(dim_window_ticks);
+      float dim = 0.30f + (0.10f - 0.30f) * t;   // 0.30 → 0.10
+      clipped_brightness = std::max(100.0f * dim, 5.0f);
+    }
+  }
+
+  // ------------- 4) 최종 적용 -------------
   int brightness = brightness_filter.update(clipped_brightness);
-  if (!awake) {
-    brightness = 0;
-  }
+  if (!awake) brightness = 0;
 
-
-  if (brightness != last_brightness) {
-    if (!brightness_future.isRunning()) {
-      brightness_future = QtConcurrent::run(Hardware::set_brightness, brightness);
-      last_brightness = brightness;
-    }
+  if (brightness != last_brightness && !brightness_future.isRunning()) {
+    brightness_future = QtConcurrent::run(Hardware::set_brightness, brightness);
+    last_brightness = brightness;
   }
 }
+
 
 void Device::updateWakefulness(const UIState &s) {
   bool ignition_just_turned_off = !s.scene.ignition && ignition_on;

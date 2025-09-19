@@ -117,12 +117,15 @@ public:
     offroad_brightness = std::clamp(brightness, 0, 100);
   }
 
+private:  // #custom
+  int64_t idle_ticks = 0;
+  int   touched_old = -1;
+
 private:
   bool awake = false;
   int interactive_timeout = 0;
   bool ignition_on = false;
-  int   touched_old = -1;
-  int   sleep_time = 1000;
+
   int offroad_brightness = BACKLIGHT_OFFROAD;
   int last_brightness = 0;
   FirstOrderFilter brightness_filter;
