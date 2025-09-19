@@ -69,6 +69,7 @@ typedef struct UIScene {
     int   autoScreenOff;
     int   brightness;
     int   touched;
+    int   touched_old;
   } custom;
 } UIScene;
 

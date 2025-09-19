@@ -166,12 +166,16 @@ void Device::updateBrightness(const UIState &s) {
     // Scale back to 10% to 100%
     clipped_brightness = std::clamp(100.0f * clipped_brightness, 10.0f, 100.0f);
 
+    if( s.scene.custom.touched == s.scene.custom.touched_old )
+    {
+        s.scene.custom.touched_old = s.scene.custom.touched;
+    }
 
     int _bright = s.scene.custom.brightness;
     //int _screen_off = s.scene.custom.autoScreenOff;
 
     if( _bright )
-      brightness *=  _bright * 0.01;
+      clipped_brightness *=  _bright * 0.01;
   }
 
   int brightness = brightness_filter.update(clipped_brightness);
