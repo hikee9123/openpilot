@@ -217,6 +217,10 @@ class CarStateCustom:
       self._vl(cp, "TPMS11", "PRESSURE_RR", 0.0),
     )
 
+    cruise_buttons = self.CS.prev_cruise_buttons
+    if cruise_buttons == Buttons.CANCEL:
+      carSCustom.touched += 1
+
     ret.carSCustom = carSCustom
 
     # 로그 (원 포맷 유지)
@@ -378,6 +382,8 @@ class CarStateCustom:
     self.is_highway = bool(self._vl(cp_cam, "LFAHDA_MFC", "HDA_Icon_State", 0.0))
     self.clu_Vanz = self._vl(cp, "CLU11", "CF_Clu_Vanz", 0.0)          # kph
     self.clu_Main = self._vl(cp, "CLU11", "CF_Clu_CruiseSwMain", 0)
+
+
 
     # LFA/Engage 관리
     self.lfa_engage(ret)

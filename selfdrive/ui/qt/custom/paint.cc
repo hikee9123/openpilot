@@ -229,7 +229,12 @@ void OnPaint::updateState(const UIState &s)
   m_param.electGearStep  = carState_custom.getElectGearStep();
   m_param.breakPos = carState_custom.getBreakPos();
   scene->custom.leadDistance = carState_custom.getLeadDistance();
-
+  int touched = carState_custom.getTouched();
+  if( touched_old != touched)
+  {
+    touched_old = touched;
+    scene->custom.touched++;
+  }
 
   // 2.
   if (sm1.frame % (UI_FREQ) != 0)
@@ -244,7 +249,7 @@ void OnPaint::updateState(const UIState &s)
 
   auto pandaStates = sm1["pandaStates"].getPandaStates();
   if (pandaStates.size() > 0) {
-    m_param.controlsAllowed = pandaStates[0].getControlsAllowed();// PandaType();
+    m_param.controlsAllowed = pandaStates[0].getControlsAllowed();
   }
 }
 
