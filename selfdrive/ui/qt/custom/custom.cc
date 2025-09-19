@@ -365,8 +365,8 @@ void CustomPanel::updateToggles( int bSave )
   int kegmanSpeed = m_jsonobj["kegmanSpeed"].toBool();
   int kegmanLag = m_jsonobj["kegmanLag"].toBool();
 
-  //int _autoScreenOff = m_jsonobj["AutoScreenOff"].toInt();
-  //int _brightness = m_jsonobj["Brightness"].toInt();
+  int _autoScreenOff = m_jsonobj["AutoScreenOff"].toInt();
+  int _brightness = m_jsonobj["Brightness"].toInt();
 
 
 
@@ -387,8 +387,8 @@ void CustomPanel::updateToggles( int bSave )
   ui.setKegmanLag( kegmanLag );
 
 
-  //ui.setAutoScreenOff( _autoScreenOff );
-  //ui.setBrightness( _brightness );
+  ui.setAutoScreenOff( _autoScreenOff );
+  ui.setBrightness( _brightness );
 
   send("uICustom", msg);
 }
