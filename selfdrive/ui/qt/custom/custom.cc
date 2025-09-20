@@ -300,7 +300,7 @@ void CustomPanel::OnTimer()
   }
   else
   {
-    if ( (sm->frame % UI_FREQ) != 0 )
+    if ( (sm->frame % UI_FREQ) == 0 )  // 1sec
     {
       m_time++;
     }
