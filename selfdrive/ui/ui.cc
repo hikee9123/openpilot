@@ -151,6 +151,13 @@ void Device::resetInteractiveTimeout(int timeout) {
   interactive_timeout = timeout * UI_FREQ;
 }
 
+
+// 부드러운 이징: smoothstep(0..1)
+static inline float smoothstep01(float t) {
+  t = std::clamp(t, 0.0f, 1.0f);
+  return t * t * (3.0f - 2.0f * t);
+}
+
 void Device::updateBrightness( UIState &s) {
   // ------------- 1) 기본 센서 → 화면 밝기 (CIE 1931 + 10~100% 클램프) -------------
   float clipped_brightness = offroad_brightness;  // offroad 기본
@@ -209,31 +216,33 @@ void Device::updateBrightness( UIState &s) {
   // ------------- 4) 최종 적용 -------------
   //int brightness = brightness_filter.update(clipped_brightness);
   //if (!awake) brightness = 0;
-  // ----------------- 4) 최종 적용 (필터 + 페이드) -----------------
-  int target = std::clamp(int(brightness_filter.update(clipped_brightness)), 0, 100);
-  if (!awake) target = 0;
+  // ------------- 4) 최종 적용 (FirstOrderFilter + on/off 페이드) -------------
+  int filtered = (int)std::lround(std::clamp(brightness_filter.update(clipped_brightness), 0.0f, 100.0f));
 
-  // 페이드 시작 조건: 목표값이 last_brightness와 크게 달라졌을 때
-  if (!fade_active && target != last_brightness) {
+  // 켜짐/꺼짐 목표값 계산: 평상시엔 필터값, 꺼질 땐 0
+  int target = awake ? filtered : 0;
+
+  // awake 전환 감지 → 페이드 시작
+  if (prev_awake != awake) {
     fade_active = true;
-    fade_from = std::max(0, last_brightness);
+    fade_from = std::max(0, last_brightness < 0 ? (awake ? 0 : filtered) : last_brightness);
     fade_to   = target;
     fade_start = std::chrono::steady_clock::now();
-  }
 
+    // 켜짐/꺼짐에 따라 다른 시간 원하면 여기서 분기
+    // fade_duration_ms = awake ? 300 : 200;  // 예시
+  }
+  prev_awake = awake;
+
+  // 페이드 진행
   int to_apply = target;
   if (fade_active) {
-    auto now = std::chrono::steady_clock::now();
-    float dt_ms = std::chrono::duration<float, std::milli>(now - fade_start).count();
-    float t = dt_ms / float(fade_duration_ms);
+    const auto now = std::chrono::steady_clock::now();
+    const float t_ms = std::chrono::duration<float, std::milli>(now - fade_start).count();
+    float e = smoothstep01(t_ms / float(fade_duration_ms));
+    to_apply = (int)std::lround(fade_from + (fade_to - fade_from) * e);
 
-    // smoothstep easing
-    t = std::clamp(t, 0.0f, 1.0f);
-    float e = t * t * (3.0f - 2.0f * t);
-
-    to_apply = int(std::lround(fade_from + (fade_to - fade_from) * e));
-
-    if (t >= 1.0f) {
+    if (t_ms >= fade_duration_ms) {
       fade_active = false;
       to_apply = fade_to;
     }
