@@ -76,6 +76,7 @@ class CarStateCustom:
 
 
     self.control_mode = 0
+    self.curveSpeedLimit = 40
 
     # 커스텀 메뉴
     try:
