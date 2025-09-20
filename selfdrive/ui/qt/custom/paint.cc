@@ -550,11 +550,10 @@ void OnPaint::ui_main_debug(QPainter &p)
     p.setPen( QColor(255, 255, 255, 255) );
     text.sprintf("Panda=%d started=%d sensor=%.1f", m_param.controlsAllowed, scene->started, scene->light_sensor );
     p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
-    text.sprintf("ignition=%d", scene->ignition  );
-    p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
-    text.sprintf("idle_ticks=%d", scene->custom.idle_ticks  );
-    p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
-    text.sprintf("target=%d", scene->custom.target  );
+
+    text.sprintf("ignition=%d", scene->ignition  );               p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
+    text.sprintf("idle_ticks=%d", scene->custom.idle_ticks  );    p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
+    text.sprintf("target=%d", scene->custom.target  );            p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
   }
 }
 

@@ -523,8 +523,8 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
 
     { "AutoScreenOff",
       tr("Screen Timeout"),
-      tr("Set how long the screen stays on before turning off automatically (in 10-second steps). 0 = Auto."),
-      kIcon, 0, 60, 1 },
+      tr("Set how long the screen stays on before turning off automatically (in 10-second steps). 0 = None."),
+      kIcon, 0, 120, 5 },
 
     { "PowerOff",
       tr("Power off time"),
