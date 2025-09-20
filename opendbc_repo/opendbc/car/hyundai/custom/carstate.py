@@ -49,6 +49,7 @@ class CarStateCustom:
     self.VSetDis = 0.0
     self.lead_distance = 0.0
     self.gapSet = 0
+    self._gas_pressed_prev = False
 
     # 차량/주행 상태
     self.clu_Vanz = 0.0
