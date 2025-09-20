@@ -72,6 +72,8 @@ class CarStateCustom:
     self.leftLaneTime = 50
     self.rightLaneTime = 50
 
+    self.control_mode = 0
+
     # 커스텀 메뉴
     try:
       m_jsonobj = read_json_file("CustomParam")
@@ -135,9 +137,9 @@ class CarStateCustom:
 
     self.cruise_buttons_old = cruise_buttons
     if cruise_buttons == Buttons.RES_ACCEL:
-      self.control_mode = getattr(self, "control_mode", 0) + 1
+      self.control_mode +=   1
     elif cruise_buttons == Buttons.SET_DECEL:
-      self.control_mode = getattr(self, "control_mode", 0) - 1
+      self.control_mode -=  1
 
     if self.control_mode < 0 or self.control_mode > 5:
       self.control_mode = 0
