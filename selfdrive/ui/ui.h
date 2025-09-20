@@ -124,7 +124,7 @@ private:
   FirstOrderFilter brightness_filter;
   QFuture<void> brightness_future;
 
-  void updateBrightness(const UIState &s);
+  void updateBrightness( UIState &s);
   void updateWakefulness(const UIState &s);
   void setAwake(bool on);
 
