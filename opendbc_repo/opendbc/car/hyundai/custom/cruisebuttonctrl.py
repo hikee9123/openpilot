@@ -279,7 +279,7 @@ class CruiseButtonCtrl:
       return None
 
     # 외부 목표 미지정
-    plan_kph = float(getattr(CS.customCS, "speed_plan_kps", 0.0))
+    plan_kph = float(getattr(CS.customCS, "speed_plan_kph", 0.0))
     if plan_kph < self.MIN_SET_SPEED_KPH:
       plan_kph = self.MIN_SET_SPEED_KPH
 

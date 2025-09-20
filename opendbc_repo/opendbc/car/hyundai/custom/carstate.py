@@ -32,9 +32,7 @@ class CarStateCustom:
     # 상태/타이머
     self.frame = 0
     self.timer_init = self.INIT_DELAY_FRAMES
-    self.timer_resume = self.INIT_DELAY_FRAMES
-    self.timer_engaged = 0
-    self.slow_engage = 1
+
 
     # ACC/크루즈 상태
     self.acc_active = 0
@@ -64,7 +62,7 @@ class CarStateCustom:
     self.mainMode_ACC = False
 
     # 외부/플래너 파생
-    self.speed_plan_kps = 0.0
+    self.speed_plan_kph = 0.0
     self.cruise_set_mode = 0
     self.cruiseGap = 0
 
@@ -172,14 +170,12 @@ class CarStateCustom:
       ret.gearShifter != car.CarState.GearShifter.drive
     )
     if unsafe:
-      self.timer_engaged = 100
       self.oldCruiseStateEnabled = False
+      self.timer_init = self.INIT_DELAY_FRAMES  # 주석과 동작 일치
       return
 
     # 메인 ACC 사용불가 → 표시만 on
     if not ret.cruiseState.available:
-      self.slow_engage = 1
-      self.timer_engaged = 0
       self.oldCruiseStateEnabled = True
       return
 
@@ -261,8 +257,18 @@ class CarStateCustom:
       self.prev_acc_active = self.acc_active
       self.cruise_set_speed_kph = self.VSetDis
 
+    _gas_now = self.CS.out.gasPressed
     if not self.acc_active:
+      self._gas_pressed_prev = _gas_now
       return float(self.cruise_set_speed_kph)
+
+
+    # 가속 페달 눌림 시작 시 현재 속도로 동기화
+    if _gas_now and not self._gas_pressed_prev:
+      # 현재 계기판 속도(kph)로 설정, 최소 속도 가드
+      self.cruise_set_speed_kph = max(float(self.clu_Vanz), float(self.TARGET_MIN_KPH))
+    self._gas_pressed_prev = _gas_now
+
 
     cruise_buttons = getattr(self.CS, "prev_cruise_buttons", 0)
     self._update_button_press_timer(cruise_buttons)
@@ -283,7 +289,7 @@ class CarStateCustom:
       set_speed_kph = self.VSetDis + 1
     elif cruise_buttons == Buttons.SET_DECEL:
       # 가속 페달 중이거나 방금 ACC가 꺼져 있었다면 현재 속도로 세팅
-      if self.CS.out.gasPressed or (not self.old_acc_active):
+      if _gas_now or (not self.old_acc_active):
         set_speed_kph = self.clu_Vanz
       else:
         set_speed_kph = self.VSetDis - 1
@@ -320,7 +326,7 @@ class CarStateCustom:
     # Planner 기반 속도 (kph)
     speeds = self.sm['longitudinalPlan'].speeds
     if len(speeds):
-      self.speed_plan_kps = float(speeds[-1]) * CV.MS_TO_KPH
+      self.speed_plan_kph = float(speeds[-1]) * CV.MS_TO_KPH
 
     # UI Custom (모드/갭)
     if self.sm.updated["uICustom"]:
@@ -342,8 +348,8 @@ class CarStateCustom:
     # 곡률 기반 속도 페널티(간단한 예: 곡률 y 편차 10~60 → 0~10 kph 감속)
     # np.interp 사용 (x, xp, fp)
     spd_curv = float(np.interp(abs(self.modelyDistance), [10.0, 60.0], [0.0, 10.0], left=0.0, right=10.0))
-    self.speed_plan_kps -= spd_curv
-    self.speed_plan_kps = max(0.0, self.speed_plan_kps)
+    self.speed_plan_kph -= spd_curv
+    self.speed_plan_kph = max(0.0, self.speed_plan_kph)
 
 
   # ----------------------------
