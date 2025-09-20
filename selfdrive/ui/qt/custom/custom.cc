@@ -340,9 +340,11 @@ void CustomPanel::updateToggles( int bSave )
   auto comunity = custom.initCommunity();
   int cruiseMode = m_jsonobj["CruiseMode"].toInt();
   int cruiseGap = m_jsonobj["CruiseGap"].toInt();
+  int curveSpeedLimit = m_jsonobj["CurveSpeedLimit"].toInt();
   comunity.setCmdIdx( m_cmdIdx );
   comunity.setCruiseMode( cruiseMode );
   comunity.setCruiseGap( cruiseGap );
+  comunity.setCurveSpeedLimit( curveSpeedLimit );
 
 
   auto ui = custom.initUserInterface();
@@ -499,12 +501,18 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
     { "CruiseMode",
       tr("Cruise mode"),
       tr("Bit flags: 0=Off, bit1=Gas control, bit2=Comma speed (CruiseGap)"),
-      kIcon, 0, 15, 1 },
+      kIcon, 0, 15, 1 }, // min, max, unit
 
     { "CruiseGap",
       tr("Cruise gap"),
       tr("0=Not used, 1~4=Gap for Comma speed"),
       kIcon, 0, 4, 1 },
+
+    { "CurveSpeedLimit",
+      tr("Curve speed adjust"),
+      tr("Adjust maximum speed based on road curvature. "),
+      kIcon, 30, 120, 10 },
+
 
     { "AutoEngage",
       tr("Auto engage"),
@@ -514,7 +522,7 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
     { "AutoLaneChange",
       tr("Auto lane change"),
       tr("Automatically changes lanes when conditions are met. 0=Manual, 1=Auto"),
-      kIcon, 0, 1, 1 },
+      kIcon, 0, 100, 10 },
 
     { "Brightness",
       tr("Screen Brightness"),

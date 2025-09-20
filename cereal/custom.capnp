@@ -52,6 +52,8 @@ struct UICustom @0xda96579883444c35 {
        cmdIdx @0 :Int16;
        cruiseMode @1 :Int16;
        cruiseGap @2 :Int16;
+       curveSpeedLimit @3 :Int16;
+
     }
 
     struct UserInterface

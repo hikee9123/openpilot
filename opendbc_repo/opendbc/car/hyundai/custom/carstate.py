@@ -1,4 +1,5 @@
 import copy
+import math
 import numpy as np
 import opendbc.custom.loger as trace1
 import cereal.messaging as messaging
@@ -54,7 +55,7 @@ class CarStateCustom:
     # 차량/주행 상태
     self.clu_Vanz = 0.0
     self.is_highway = False
-    self.desiredCurvature = 0.0
+    self.steeringAngle = 0.0
     self.modelxDistance = 0.0
     self.modelyDistance = 0.0
     self.model_v2 = None
@@ -71,6 +72,8 @@ class CarStateCustom:
     # 좌/우 차선변경 헬퍼(유지)
     self.leftLaneTime = 50
     self.rightLaneTime = 50
+    self.lanechange_wait = 100
+
 
     self.control_mode = 0
 
@@ -115,6 +118,28 @@ class CarStateCustom:
       return cp.vl_all[msg][sig]
     except Exception:
       return default
+
+  @staticmethod
+  def _finite_or(v, fb=0.0):
+    try:
+      return v if math.isfinite(v) else fb
+    except Exception:
+      return fb
+
+  @staticmethod
+  def curvature_to_steering_angle(curvature, wheelbase_m=2.7):
+      """
+      curvature : float, 모델 출력 desiredCurvature [1/m]
+      wheelbase_m : 차량 휠베이스 [m] (기본값 2.7m 예시)
+
+      return: steering angle [deg]
+      """
+      if not math.isfinite(curvature):
+          return 0.0
+
+      angle_rad = math.atan(wheelbase_m * curvature)
+      angle_deg = math.degrees(angle_rad)
+      return angle_deg
 
   # ----------------------------
   # Public-ish helpers
@@ -189,8 +214,18 @@ class CarStateCustom:
   # Debug / telemetry
   # ----------------------------
   def _fill_tpms(self, tpms_msg, unit, fl, fr, rl, rr):
-    # unit: 0:psi, 1:kpa, 2:bar
-    factor = 0.72519 if unit == 1 else (0.1 if unit == 2 else 1.0)
+    """
+    unit: 0:psi(입력값이 psi), 1:kPa, 2:bar
+    내부 표시는 psi 기준으로 통일 (필요시 UI에서 단위 라벨만 바꾸세요)
+    """
+    # kPa -> psi = * 0.1450377377
+    # bar -> psi = * 14.5037738
+    if unit == 1:
+      factor = 0.1450377377
+    elif unit == 2:
+      factor = 14.5037738
+    else:
+      factor = 1.0  # 이미 psi
     tpms_msg.unit = unit
     tpms_msg.fl = fl * factor
     tpms_msg.fr = fr * factor
@@ -224,8 +259,8 @@ class CarStateCustom:
     ret.carSCustom = carSCustom
 
     # 로그 (원 포맷 유지)
-    trace1.printf1('MD={:.0f},controlsAllowed={:.0f}'.format(getattr(self, "control_mode", 0), self.controlsAllowed))
-    trace1.printf2('CV={:7.5f} , {:.0f} , {:.0f}'.format(self.desiredCurvature, int(self.mainMode_ACC), int(self.clu_Main)))
+    trace1.printf1('MD={:.0f},controlsAllowed={:.0f}'.format(self.control_mode, self.controlsAllowed))
+    trace1.printf2('SA={:7.1f} , {:.0f} , {:.0f}'.format(self.steeringAngle, int(self.mainMode_ACC), int(self.clu_Main)))
     trace1.printf3('SW={:.0f},{:.0f},{:.0f} T={:.0f},{:.0f}'.format(
       self._vl(cp, "CLU11", "CF_Clu_CruiseSwState", 0),
       self._vl(cp, "CLU11", "CF_Clu_CruiseSwMain", 0),
@@ -328,34 +363,121 @@ class CarStateCustom:
     self.sm.update(0)
 
     # Planner 기반 속도 (kph)
-    speeds = self.sm['longitudinalPlan'].speeds
+    speeds = getattr(self.sm['longitudinalPlan'], 'speeds', [])
     if len(speeds):
       self.speed_plan_kph = float(speeds[-1]) * CV.MS_TO_KPH
 
-    # UI Custom (모드/갭)
-    if self.sm.updated["uICustom"]:
-      cruiseMode = self.sm['uICustom'].community.cruiseMode
-      if self.cruise_set_mode != cruiseMode:
-        self.cruise_set_mode = int(cruiseMode)
+    # UI Custom
+    if self.sm.updated.get("uICustom", False):
+      ui_comm = self.sm['uICustom'].community
+      cm = int(getattr(ui_comm, 'cruiseMode', getattr(self, 'cruise_set_mode', 0)))
+      cg = int(getattr(ui_comm, 'cruiseGap', getattr(self, 'cruiseGap', 0)))
+      csl = int(getattr(ui_comm, 'curveSpeedLimit', getattr(self, 'curveSpeedLimit', 0)))
+      if self.cruise_set_mode != cm: self.cruise_set_mode = cm
+      if self.cruiseGap != cg:       self.cruiseGap = cg
+      if getattr(self, 'curveSpeedLimit', None) != csl: self.curveSpeedLimit = csl
 
-      cruiseGap = self.sm['uICustom'].community.cruiseGap
-      if self.cruiseGap != cruiseGap:
-        self.cruiseGap = int(cruiseGap)
 
     # 모델 곡률/이격
-    self.model_v2 = self.sm['modelV2']
-    x_d, y_d = self.max_distance(self.model_v2)
-    # None 대비 기본값 0.0
-    self.modelxDistance = x_d if x_d is not None else 0.0
-    self.modelyDistance = y_d if y_d is not None else 0.0
+    mdl = self.sm['modelV2']
+    self.model_v2 = mdl
+    self.laneChangeState = getattr(mdl.meta, 'laneChangeState', None)
+    self.laneLineProbs = list(getattr(mdl, 'laneLineProbs', []))
 
-    if self.clu_Vanz > 30:
+    try:
+      desired_curv = float(mdl.action.desiredCurvature)
+      if not math.isfinite(desired_curv): desired_curv = 0.0
+    except Exception:
+      desired_curv = 0.0
+
+    # 곡률 → 조향각(도)
+    wb = self._finite_or(getattr(self.CP, 'wheelbase', 2.7), 2.7)
+    self.steeringAngle = self.curvature_to_steering_angle( desired_curv, wb )
+
+    x_d, y_d = self.max_distance(mdl)
+    # None 대비 기본값 0.0
+    self.modelxDistance = x_d if x_d is not None else 0.0  # 앞차와의 거리
+    self.modelyDistance = y_d if y_d is not None else 0.0  # 곡률
+
+    if self.clu_Vanz > self.curveSpeedLimit:
       # 곡률 기반 속도 페널티(간단한 예: 곡률 y 편차 10~60 → 0~10 kph 감속)
       # np.interp 사용 (x, xp, fp)
       spd_curv = float(np.interp(abs(self.modelyDistance), [10.0, 60.0], [0.0, 10.0], left=0.0, right=10.0))
       self.speed_plan_kph -= spd_curv
       self.speed_plan_kph = max(0.0, self.speed_plan_kph)
 
+
+
+  def auto_lane_change(self, ret):
+    if self.autoLaneChange == 0:
+      return
+    """
+    자동 차선변경 보조 로직
+    - 튜닝 상수 상단 집약
+    - 가드절 정리
+    - lane 가시성/타이머/토크 가압 분리
+    - 예외/누락 필드 방어
+    """
+    # ===== 튜닝 상수 =====
+    LANE_PROB_TH      = 0.50   # 차선 인식 확률 임계값
+    LANE_HOLD_TICKS   = 50     # 차선 가시 타이머 초기값
+    WAIT_SYNC_TICKS   = 200    # 좌/우 깜빡이 동시 입력 시 대기
+    WAIT_MIN_TICKS    = self.autoLaneChange     # def:50 최소 대기 보장 (pre 단계에서 과한 토크 방지)
+
+
+    # ===== 차선 가시성 계산 =====
+    def _lane_visibility(probs):
+      """probs[0..3]을 읽어 좌/우 가시 플래그를 구성한다. (bit1|bit2)"""
+      left_vis, right_vis = 0, 0
+      if probs and len(probs) >= 4:
+        p0, p1, p2, p3 = map(float, probs[:4])
+        if p3 > LANE_PROB_TH: right_vis |= 2
+        if p2 > LANE_PROB_TH: right_vis |= 1
+        if p1 > LANE_PROB_TH: left_vis  |= 1
+        if p0 > LANE_PROB_TH: left_vis  |= 2
+      return left_vis, right_vis
+
+    left_vis, right_vis = _lane_visibility( self.laneLineProbs )
+
+    # “안쪽” 차선이 보이면 타이머 리셋
+    if (left_vis  & 2): self.leftLaneTime  = LANE_HOLD_TICKS
+    if (right_vis & 2): self.rightLaneTime = LANE_HOLD_TICKS
+
+    # ===== 타이머 갱신 =====
+    self.lanechange_wait = max(0, self.lanechange_wait - 1)
+    self.leftLaneTime    = max(0, self.leftLaneTime - 1)
+    self.rightLaneTime   = max(0, self.rightLaneTime - 1)
+
+    leftBlinker  = bool(getattr(ret, "leftBlinker", False))
+    rightBlinker = bool(getattr(ret, "rightBlinker", False))
+
+    # 안전한 토크 임계값
+    steer_th = self.CS.params.STEER_THRESHOLD
+
+    # ===== 상태 머신 =====
+    if self.laneChangeState == LaneChangeState.off:
+      # 양쪽 깜빡이 동시: 동기화 대기 진입
+      if leftBlinker and rightBlinker:
+        self.lanechange_wait = WAIT_SYNC_TICKS
+        # 기존 코드 유지: 즉시 해제 (불필요하면 주석처리)
+        ret.leftBlinker = False
+        ret.rightBlinker = False
+      # 최소 대기 보장
+      elif self.lanechange_wait < WAIT_MIN_TICKS:
+        self.lanechange_wait = WAIT_MIN_TICKS
+      return
+
+    if self.laneChangeState == LaneChangeState.preLaneChange:
+      # 토크 가압 조건: 해당 방향 차선이 일정 시간 보였고(wait==0)
+      if leftBlinker and self.leftLaneTime > 0 and self.lanechange_wait <= 0:
+        ret.steeringTorque =  steer_th
+        ret.steeringPressed = True
+      elif rightBlinker and self.rightLaneTime > 0 and self.lanechange_wait <= 0:
+        ret.steeringTorque = -steer_th
+        ret.steeringPressed = True
+      return
+
+    return
 
 
   # ----------------------------
@@ -402,6 +524,8 @@ class CarStateCustom:
 
     # LFA/Engage 관리
     self.lfa_engage(ret)
+
+    self.auto_lane_change(ret)
 
     # 디버그 전송
     self.send_carstatus(ret, cp)
