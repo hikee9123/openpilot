@@ -158,7 +158,7 @@ static inline float smoothstep01(float t) {
   return t * t * (3.0f - 2.0f * t);
 }
 
-void Device::updateBrightness( UIState &s) {
+void Device::updateBrightness(const UIState &s) {
   // ------------- 1) 기본 센서 → 화면 밝기 (CIE 1931 + 10~100% 클램프) -------------
   float clipped_brightness = offroad_brightness;  // offroad 기본
   if (s.scene.started && s.scene.light_sensor >= 0) {
@@ -195,7 +195,7 @@ void Device::updateBrightness( UIState &s) {
     ++idle_ticks;
   }
 
-  s.scene.custom.idle_ticks = idle_ticks;
+  //s.scene.custom.idle_ticks = idle_ticks;
   int timeout_steps = s.scene.custom.autoScreenOff;  // 0 or 1..60 (10초 단위 가정)
   const int64_t ticks_per_10s = static_cast<int64_t>(UI_FREQ) * 10;
   const int64_t timeout_ticks = (timeout_steps > 0) ? timeout_steps * ticks_per_10s : 0;
