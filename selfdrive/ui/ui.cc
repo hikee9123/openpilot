@@ -151,7 +151,7 @@ void Device::resetInteractiveTimeout(int timeout) {
   interactive_timeout = timeout * UI_FREQ;
 }
 
-void Device::updateBrightness(const UIState &s) {
+void Device::updateBrightness( UIState &s) {
   // ------------- 1) 기본 센서 → 화면 밝기 (CIE 1931 + 10~100% 클램프) -------------
   float clipped_brightness = offroad_brightness;  // offroad 기본
   if (s.scene.started && s.scene.light_sensor >= 0) {
@@ -188,6 +188,7 @@ void Device::updateBrightness(const UIState &s) {
     ++idle_ticks;
   }
 
+  s.scene.custom.idle_ticks = idle_ticks;
   int timeout_steps = s.scene.custom.autoScreenOff;  // 0 or 1..60 (10초 단위 가정)
   const int64_t ticks_per_10s = static_cast<int64_t>(UI_FREQ) * 10;
   const int64_t timeout_ticks = (timeout_steps > 0) ? timeout_steps * ticks_per_10s : 0;
@@ -206,12 +207,44 @@ void Device::updateBrightness(const UIState &s) {
   }
 
   // ------------- 4) 최종 적용 -------------
-  int brightness = brightness_filter.update(clipped_brightness);
-  if (!awake) brightness = 0;
+  //int brightness = brightness_filter.update(clipped_brightness);
+  //if (!awake) brightness = 0;
+  // ----------------- 4) 최종 적용 (필터 + 페이드) -----------------
+  int target = std::clamp(int(brightness_filter.update(clipped_brightness)), 0, 100);
+  if (!awake) target = 0;
 
-  if (brightness != last_brightness && !brightness_future.isRunning()) {
-    brightness_future = QtConcurrent::run(Hardware::set_brightness, brightness);
-    last_brightness = brightness;
+  // 페이드 시작 조건: 목표값이 last_brightness와 크게 달라졌을 때
+  if (!fade_active && target != last_brightness) {
+    fade_active = true;
+    fade_from = std::max(0, last_brightness);
+    fade_to   = target;
+    fade_start = std::chrono::steady_clock::now();
+  }
+
+  int to_apply = target;
+  if (fade_active) {
+    auto now = std::chrono::steady_clock::now();
+    float dt_ms = std::chrono::duration<float, std::milli>(now - fade_start).count();
+    float t = dt_ms / float(fade_duration_ms);
+
+    // smoothstep easing
+    t = std::clamp(t, 0.0f, 1.0f);
+    float e = t * t * (3.0f - 2.0f * t);
+
+    to_apply = int(std::lround(fade_from + (fade_to - fade_from) * e));
+
+    if (t >= 1.0f) {
+      fade_active = false;
+      to_apply = fade_to;
+    }
+  }
+
+
+
+  // 실제 하드웨어 반영
+  if (to_apply != last_brightness && !brightness_future.isRunning()) {
+    brightness_future = QtConcurrent::run(Hardware::set_brightness, to_apply);
+    last_brightness = to_apply;
   }
 }
 

@@ -542,15 +542,19 @@ void OnPaint::ui_main_debug(QPainter &p)
   int  bb_y = 90;
   int  nGap = 30;
 
-  //if( m_param.debug.getIdx1() )
-  //{
+  if( m_param.debug.getIdx1() )
+  {
     QString text;
 
     p.setFont(InterFont(38));
     p.setPen( QColor(255, 255, 255, 255) );
-    text.sprintf("Panda=%d started=%d sensor=%.3f ignition=%d", m_param.controlsAllowed, scene->started, scene->light_sensor, scene->ignition  );
-    p.drawText( bb_x, bb_y+nGap, text );
-  //}
+    text.sprintf("Panda=%d started=%d sensor=%.1f", m_param.controlsAllowed, scene->started, scene->light_sensor );
+    p.drawText( bb_x, bb_y+nGap, text ); nGap += 30;
+    text.sprintf("ignition=%d", scene->ignition  );
+    p.drawText( bb_x, bb_y+nGap, text ); nGap += 30;
+    text.sprintf("idle_ticks=%d", scene->custom.idle_ticks  );
+    p.drawText( bb_x, bb_y+nGap, text ); nGap += 30;
+  }
 }
 
 

@@ -61,6 +61,7 @@ class CarStateCustom:
     self.clu_Main = 0
     self.mainMode_ACC = False
 
+
     # 외부/플래너 파생
     self.speed_plan_kph = 0.0
     self.cruise_set_mode = 0
@@ -263,25 +264,27 @@ class CarStateCustom:
       return float(self.cruise_set_speed_kph)
 
 
-    # 가속 페달 눌림 시작 시 현재 속도로 동기화
-    if _gas_now and not self._gas_pressed_prev:
-      # 현재 계기판 속도(kph)로 설정, 최소 속도 가드
-      self.cruise_set_speed_kph = max(float(self.clu_Vanz), float(self.TARGET_MIN_KPH))
+    # === 가속 페달 해제 시 현재 속도로 동기화 ===
+    if not _gas_now and self._gas_pressed_prev:
+        diff = float(self.clu_Vanz) - float(self.cruise_set_speed_kph)
+        if diff >= 5.0:
+            self.cruise_set_speed_kph = max(float(self.clu_Vanz), float(self.TARGET_MIN_KPH))
     self._gas_pressed_prev = _gas_now
 
 
     cruise_buttons = getattr(self.CS, "prev_cruise_buttons", 0)
     self._update_button_press_timer(cruise_buttons)
 
+    # 길게 누름 처리
+    if self._handle_longpress_set_vset():
+      return float(self.cruise_set_speed_kph)
 
     # 같은 버튼 반복 입력 → 무시
     if self.prev_cruise_btn == cruise_buttons:
       return float(self.cruise_set_speed_kph)
     self.prev_cruise_btn = cruise_buttons
 
-    # 길게 누름 처리
-    if self._handle_longpress_set_vset():
-      return float(self.cruise_set_speed_kph)
+
 
     set_speed_kph = self.cruise_set_speed_kph
 
@@ -345,11 +348,12 @@ class CarStateCustom:
     self.modelxDistance = x_d if x_d is not None else 0.0
     self.modelyDistance = y_d if y_d is not None else 0.0
 
-    # 곡률 기반 속도 페널티(간단한 예: 곡률 y 편차 10~60 → 0~10 kph 감속)
-    # np.interp 사용 (x, xp, fp)
-    spd_curv = float(np.interp(abs(self.modelyDistance), [10.0, 60.0], [0.0, 10.0], left=0.0, right=10.0))
-    self.speed_plan_kph -= spd_curv
-    self.speed_plan_kph = max(0.0, self.speed_plan_kph)
+    if self.clu_Vanz > 60:
+      # 곡률 기반 속도 페널티(간단한 예: 곡률 y 편차 10~60 → 0~10 kph 감속)
+      # np.interp 사용 (x, xp, fp)
+      spd_curv = float(np.interp(abs(self.modelyDistance), [10.0, 60.0], [0.0, 10.0], left=0.0, right=10.0))
+      self.speed_plan_kph -= spd_curv
+      self.speed_plan_kph = max(0.0, self.speed_plan_kph)
 
 
   # ----------------------------
@@ -358,6 +362,7 @@ class CarStateCustom:
   def update(self, ret, CS, cp, cp_cruise, cp_cam):
     # SubMaster는 여기서만 업데이트
     self._update_from_submaster()
+
 
     # openpilot Long on/off 에 따라 분리
     if self.CP.openpilotLongitudinalControl:

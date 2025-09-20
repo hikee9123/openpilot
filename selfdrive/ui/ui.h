@@ -69,6 +69,8 @@ typedef struct UIScene {
     int   autoScreenOff;
     int   brightness;
     int   touched;
+
+    int   idle_ticks;
   } custom;
 } UIScene;
 
@@ -121,15 +123,20 @@ private:  // #custom
   int64_t idle_ticks = 0;
   int   touched_old = -1;
 
+  // 추가: 페이드 상태
+  bool fade_active = false;
+  int fade_from = 0;
+  int fade_to = 0;
+  int fade_duration_ms = 300;  // 페이드 총 시간 (원하면 설정값으로 변경 가능)
+  std::chrono::steady_clock::time_point fade_start;
+
+
 private:
   bool awake = false;
   int interactive_timeout = 0;
   bool ignition_on = false;
 
-  int offroad_brightness = BACKLIGHT_OFFROAD;
-  int last_brightness = 0;
-  FirstOrderFilter brightness_filter;
-  QFuture<void> brightness_future;
+
 
   void updateBrightness(const UIState &s);
   void updateWakefulness(const UIState &s);

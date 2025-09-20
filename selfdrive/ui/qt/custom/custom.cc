@@ -272,12 +272,9 @@ void CustomPanel::offroadTransition( bool offroad  )
   sm->update(0);
 
   int isActive = timer->isActive();
-  printf("CustomPanel::offroadTransition offroad=%d  isActive=%d \n", offroad, isActive );
   if( !isActive  )
   {
     m_cmdIdx = 0;
-    //timer->start(1000);
-    //printf("timer start \n");
   }
    updateToggles( false );
 }
@@ -527,7 +524,7 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
     { "AutoScreenOff",
       tr("Screen Timeout"),
       tr("Set how long the screen stays on before turning off automatically (in 10-second steps). 0 = Auto."),
-      kIcon, -10, 10, 1 },
+      kIcon, 0, 60, 1 },
 
     { "PowerOff",
       tr("Power off time"),
