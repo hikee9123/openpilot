@@ -158,23 +158,26 @@ static inline float smoothstep01(float t) {
   return t * t * (3.0f - 2.0f * t);
 }
 
+// 지각 밝기(CIE 1931) 보정: 입력 0..100 → 0..1
+static inline float cie1931_from_percent(float Ypct) {
+  if (!std::isfinite(Ypct)) return 0.0f;
+  float Y = std::clamp(Ypct, 0.0f, 100.0f);
+  if (Y <= 8.0f) {
+    return Y / 903.3f;
+  } else {
+    return std::pow((Y + 16.0f) / 116.0f, 3.0f);
+  }
+}
+
 void Device::updateBrightness(const UIState &s) {
-  // ------------- 1) 기본 센서 → 화면 밝기 (CIE 1931 + 10~100% 클램프) -------------
-  float clipped_brightness = offroad_brightness;  // offroad 기본
+  // ------------- 1) 센서 → 화면 밝기 (CIE 1931 + 10~100%) -------------
+  float clipped_brightness = offroad_brightness;  // offroad 기본 (1..100 가정)
   if (s.scene.started && s.scene.light_sensor >= 0) {
-    float Y = s.scene.light_sensor;  // 0~100 범위 가정
-    // CIE 1931 psychometric lightness
-    if (Y <= 8.0f) {
-      Y = Y / 903.3f;
-    } else {
-      Y = std::pow((Y + 16.0f) / 116.0f, 3.0f);
-    }
-    clipped_brightness = std::clamp(100.0f * Y, 10.0f, 100.0f);
+    const float Y01 = cie1931_from_percent(s.scene.light_sensor); // 0..1
+    clipped_brightness = std::clamp(100.0f * Y01, 10.0f, 100.0f);
   }
 
-  // ------------- 2) 사용자 오프셋 적용 (Screen Brightness: -10~+10, 0=Auto) -------------
-  // 의도: -10은 약 -50% 어둡게, +10은 약 +50% 밝게 (선형이 직관적)
-  // factor = 1.0 + step * 0.05  →  [-10..+10] → [0.5..1.5]
+  // ------------- 2) 사용자 오프셋 (-10..+10 → 0.5..1.5) -------------
   {
     const int user_step = s.scene.custom.brightness;  // -10..+10, 0=Auto
     if (user_step != 0) {
@@ -183,63 +186,72 @@ void Device::updateBrightness(const UIState &s) {
     }
   }
 
-  // ------------- 3) 유휴(터치) 감지 & 화면 타임아웃 (Screen Timeout) -------------
-  // Screen Timeout: 0=Auto/Off(미사용), N>0 = N*10초
-  // touched가 "변할 때"를 터치 이벤트로 판단
-
+  // ------------- 3) 유휴 감지 & 화면 타임아웃 -------------
+  // touched 플립을 '터치'로 간주
   if (s.scene.custom.touched != touched_old) {
     touched_old = s.scene.custom.touched;
-    idle_ticks = 0;            // 유휴 시간 리셋
-    awake = true;              // 터치하면 즉시 깨움
+    idle_ticks = 0;
+    awake = true; // 즉시 깨움
   } else {
     ++idle_ticks;
   }
 
-  //s.scene.custom.idle_ticks = idle_ticks;
-  int timeout_steps = s.scene.custom.autoScreenOff;  // 0 or 1..60 (10초 단위 가정)
+  UIState *pui = uiState();
+  pui->scene.custom.idle_ticks = idle_ticks;
+
+  const int timeout_steps = s.scene.custom.autoScreenOff;  // 0 or 1..60 (10초 단위)
   const int64_t ticks_per_10s = static_cast<int64_t>(UI_FREQ) * 10;
   const int64_t timeout_ticks = (timeout_steps > 0) ? timeout_steps * ticks_per_10s : 0;
 
-  // 두 단계: 디밍(마지막 2초) → 화면 꺼짐
   if (timeout_ticks > 0) {
-    const int64_t dim_window_ticks = std::min<int64_t>(2 * UI_FREQ, timeout_ticks / 5); // 최대 2초 또는 20% 윈도우
+    // 디밍 윈도우: 최대 2초 또는 전체의 20% 중 작은 값, 최소 1틱 보장
+    int64_t dim_window_ticks = std::min<int64_t>(2 * UI_FREQ, timeout_ticks / 5);
+    dim_window_ticks = std::max<int64_t>(1, dim_window_ticks);
+
     if (idle_ticks >= timeout_ticks) {
-      awake = false;           // 화면 끔
+      awake = false; // 화면 끔
     } else if (idle_ticks >= (timeout_ticks - dim_window_ticks)) {
-      // 선형 디밍: 30% → 10%로 서서히 낮춤
-      float t = float(idle_ticks - (timeout_ticks - dim_window_ticks)) / float(dim_window_ticks);
-      float dim = 0.30f + (0.10f - 0.30f) * t;   // 0.30 → 0.10
+      // 30% → 10% 선형 디밍
+      const int64_t tnum = idle_ticks - (timeout_ticks - dim_window_ticks);
+      const float t = std::clamp(float(tnum) / float(dim_window_ticks), 0.0f, 1.0f);
+      const float dim = 0.30f + (0.10f - 0.30f) * t;   // 0.30 → 0.10
       clipped_brightness = std::max(100.0f * dim, 5.0f);
     }
   }
 
-  // ------------- 4) 최종 적용 -------------
-  //int brightness = brightness_filter.update(clipped_brightness);
-  //if (!awake) brightness = 0;
-  // ------------- 4) 최종 적용 (FirstOrderFilter + on/off 페이드) -------------
-  int filtered = (int)std::lround(std::clamp(brightness_filter.update(clipped_brightness), 0.0f, 100.0f));
+  // ------------- 4) 1차 필터 + on/off 페이드 -------------
+  // 1) FirstOrderFilter 출력을 0..100으로 제한
+  const float filtered_f = std::clamp(brightness_filter.update(clipped_brightness), 0.0f, 100.0f);
+  const int filtered = (int)std::lround(filtered_f);
 
-  // 켜짐/꺼짐 목표값 계산: 평상시엔 필터값, 꺼질 땐 0
+  // 2) 켜짐/꺼짐 목표값
   int target = awake ? filtered : 0;
+  pui->scene.custom.target = target;
+  // 3) Deadband로 소진동 제거 (±1% 이내는 무시)
+  if (last_brightness >= 0) {
+    if (std::abs(target - last_brightness) <= 1) {
+      target = last_brightness;
+    }
+  }
 
-  // awake 전환 감지 → 페이드 시작
+  // 4) 상태 전환시 페이드 시퀀스 재시작 (중간값에서 이어가기)
   if (prev_awake != awake) {
     fade_active = true;
-    fade_from = std::max(0, last_brightness < 0 ? (awake ? 0 : filtered) : last_brightness);
-    fade_to   = target;
+    // last_brightness가 유효하면 그 값에서 시작, 아니면 논리적 시작점
+    const int start_from = (last_brightness >= 0) ? last_brightness : (awake ? 0 : filtered);
+    fade_from  = std::clamp(start_from, 0, 100);
+    fade_to    = std::clamp(target, 0, 100);
     fade_start = std::chrono::steady_clock::now();
-
-    // 켜짐/꺼짐에 따라 다른 시간 원하면 여기서 분기
-    // fade_duration_ms = awake ? 300 : 200;  // 예시
+    // 필요시 서로 다른 시간 적용 가능
+    // fade_duration_ms = awake ? 300 : 200;
   }
   prev_awake = awake;
 
-  // 페이드 진행
   int to_apply = target;
   if (fade_active) {
     const auto now = std::chrono::steady_clock::now();
     const float t_ms = std::chrono::duration<float, std::milli>(now - fade_start).count();
-    float e = smoothstep01(t_ms / float(fade_duration_ms));
+    const float e = smoothstep01(t_ms / float(std::max(1, fade_duration_ms)));
     to_apply = (int)std::lround(fade_from + (fade_to - fade_from) * e);
 
     if (t_ms >= fade_duration_ms) {
@@ -248,13 +260,26 @@ void Device::updateBrightness(const UIState &s) {
     }
   }
 
-
-
-  // 실제 하드웨어 반영
-  if (to_apply != last_brightness && !brightness_future.isRunning()) {
-    brightness_future = QtConcurrent::run(Hardware::set_brightness, to_apply);
-    last_brightness = to_apply;
+  // ------------- 5) 실제 하드웨어 반영 (스큐/중복 방지) -------------
+  // future 실행 중이면 직전 값과 동일 변화는 스킵하고, 목표를 캐시
+  // (watcher 등에서 future 완료시 캐시를 반영하는 패턴 추천)
+  if (to_apply != last_brightness) {
+    if (!brightness_future.isRunning()) {
+      brightness_future = QtConcurrent::run(Hardware::set_brightness, to_apply);
+      last_brightness = to_apply;
+      pending_brightness = -1; // 캐시 클리어
+    } else {
+      // 실행 중이면 최신 목표만 저장해두고 중복 호출 방지
+      pending_brightness = to_apply;
+    }
   }
+
+  // (선택) 어디선가 주기적으로 호출되는 틱/타이머에서 future 완료 체크 후 반영:
+  // if (!brightness_future.isRunning() && pending_brightness >= 0) {
+  //   int v = pending_brightness; pending_brightness = -1;
+  //   brightness_future = QtConcurrent::run(Hardware::set_brightness, v);
+  //   last_brightness = v;
+  // }
 }
 
 

@@ -354,6 +354,10 @@ class CarStateCustom:
       spd_curv = float(np.interp(abs(self.modelyDistance), [10.0, 60.0], [0.0, 10.0], left=0.0, right=10.0))
       self.speed_plan_kph -= spd_curv
       self.speed_plan_kph = max(0.0, self.speed_plan_kph)
+    else:
+      spd_curv = float(np.interp(abs(self.modelyDistance), [20.0, 60.0], [1.0, 0.5], left=0.0, right=10.0))
+      self.speed_plan_kph *= spd_curv
+      self.speed_plan_kph = max(0.0, self.speed_plan_kph)
 
 
   # ----------------------------

@@ -71,6 +71,7 @@ typedef struct UIScene {
     int   touched;
 
     int   idle_ticks;
+    int   target;
   } custom;
 } UIScene;
 
@@ -124,6 +125,7 @@ private:  // #custom
   int   touched_old = -1;
 
   // 추가: 켜짐/꺼짐 전환 페이드 전용 상태
+  int pending_brightness = -1;    // future 실행 중 최신 목표 캐시
   bool prev_awake = true;                 // 이전 프레임의 awake
   bool fade_active = false;
   int  fade_from = 0;
@@ -138,7 +140,7 @@ private:
   bool ignition_on = false;
 
   int offroad_brightness = BACKLIGHT_OFFROAD;
-  int last_brightness = -1;
+  int last_brightness = 0;
   FirstOrderFilter brightness_filter;
   QFuture<void> brightness_future;
 
