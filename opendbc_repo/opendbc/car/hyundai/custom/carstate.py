@@ -349,16 +349,13 @@ class CarStateCustom:
     self.modelxDistance = x_d if x_d is not None else 0.0
     self.modelyDistance = y_d if y_d is not None else 0.0
 
-    if self.clu_Vanz > 60:
+    if self.clu_Vanz > 30:
       # 곡률 기반 속도 페널티(간단한 예: 곡률 y 편차 10~60 → 0~10 kph 감속)
       # np.interp 사용 (x, xp, fp)
       spd_curv = float(np.interp(abs(self.modelyDistance), [10.0, 60.0], [0.0, 10.0], left=0.0, right=10.0))
       self.speed_plan_kph -= spd_curv
       self.speed_plan_kph = max(0.0, self.speed_plan_kph)
-    else:
-      spd_curv = float(np.interp(abs(self.modelyDistance), [20.0, 60.0], [1.0, 0.5], left=0.0, right=10.0))
-      self.speed_plan_kph *= spd_curv
-      self.speed_plan_kph = max(0.0, self.speed_plan_kph)
+
 
 
   # ----------------------------
@@ -386,7 +383,7 @@ class CarStateCustom:
 
       self.lead_distance = self._vl(cp_cruise, "SCC11", "ACC_ObjDist", 0.0)
       self.gapSet = self._vl(cp_cruise, "SCC11", "TauGapSet", 0)
-      self.VSetDis = self._vl(cp_cruise, "SCC11", "VSetDis", 0.0)
+      self.VSetDis = self._vl(cp_cruise, "SCC11", "VSetDis", 0.0) # kph   크루즈 설정 속도
 
       if not self.mainMode_ACC:
         self.cruise_control_mode()

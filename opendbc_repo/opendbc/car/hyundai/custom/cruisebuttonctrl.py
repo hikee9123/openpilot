@@ -94,7 +94,7 @@ class CruiseButtonCtrl:
       if clu_v - self.VSetDis > (5.0 + self.EPS_KPH):
         if hasattr(CS.customCS, "set_cruise_speed"):
           CS.customCS.set_cruise_speed(clu_v)
-        return self._goto(State.HOLD_NONE)
+          return self._goto(State.DECEL)
       return None
 
     if delta >= (1.0 + self.EPS_KPH + self.DELTA_HYST_KPH):
