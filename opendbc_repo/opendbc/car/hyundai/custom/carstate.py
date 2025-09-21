@@ -257,6 +257,8 @@ class CarStateCustom:
     cruise_buttons = self.CS.prev_cruise_buttons
     if cruise_buttons in (Buttons.CANCEL, Buttons.RES_ACCEL, Buttons.SET_DECEL):
       carSCustom.touched += 1
+    elif self.CS.out.gasPressed:
+      carSCustom.touched += 1
 
     ret.carSCustom = carSCustom
 

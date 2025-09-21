@@ -300,13 +300,10 @@ void CustomPanel::OnTimer()
   }
   else
   {
-    if ( (sm->frame % UI_FREQ) == 0 )  // 1sec
-    {
-      m_time++;
-    }
+    m_time++;
 
     int PowerOff = m_jsonobj["ParamPowerOff"].toInt();
-    if( PowerOff && (m_time > (PowerOff*10)) && (scene.custom.m_powerflag) )
+    if( PowerOff && (m_time > (PowerOff*UI_FREQ)) && (scene.custom.m_powerflag) )
     {
          scene.custom.m_powerflag = 0;
          params.putBool("DoShutdown", true);
@@ -536,7 +533,7 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
 
     { "ParamPowerOff",
       tr("Power off time"),
-      tr("0=Not used, 1~ = power off delay (*10 sec)"),
+      tr("0=Not used, 1~ = power off delay (1 sec)"),
       kIcon, 0, 60, 1 },
 
     { "DUAL_CAMERA_VIEW",

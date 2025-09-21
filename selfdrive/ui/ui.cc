@@ -225,7 +225,7 @@ void Device::updateBrightness(const UIState &s) {
   const int filtered = (int)std::lround(filtered_f);
 
   // 2) 켜짐/꺼짐 목표값
-  int target = awake ? filtered : 1;
+  int target = awake ? filtered : 5;
   pui->scene.custom.target = target;
   // 3) Deadband로 소진동 제거 (±1% 이내는 무시)
   if (last_brightness >= 0) {
@@ -243,7 +243,7 @@ void Device::updateBrightness(const UIState &s) {
     fade_to    = std::clamp(target, 0, 100);
     fade_start = std::chrono::steady_clock::now();
     // 필요시 서로 다른 시간 적용 가능
-    fade_duration_ms = awake ? 300 : 2000;
+    fade_duration_ms = awake ? 300 : 5000;
   }
   prev_awake = awake;
 
