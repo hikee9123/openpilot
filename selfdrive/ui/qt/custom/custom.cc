@@ -352,7 +352,7 @@ void CustomPanel::updateToggles( int bSave )
   int bCarTracking = m_jsonobj["ShowCarTracking"].toBool();
 
   int tpms = m_jsonobj["tpms"].toBool();
-  int ndebug = m_jsonobj["debug"].toBool();
+  int ndebug = m_jsonobj["ParamDebug"].toBool();
 
   int kegman = m_jsonobj["kegman"].toBool();
   int kegmanCPU = m_jsonobj["kegmanCPU"].toBool();
