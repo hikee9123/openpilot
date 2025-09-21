@@ -857,7 +857,7 @@ UITab::UITab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(parent), m_
       "../assets/offroad/icon_shell.png",
     },
     {
-      "debug",
+      "ParamDebug",
       "Show debug trace message",
       "",
       "../assets/offroad/icon_shell.png",
