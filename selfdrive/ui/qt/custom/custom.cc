@@ -340,7 +340,7 @@ void CustomPanel::updateToggles( int bSave )
   auto comunity = custom.initCommunity();
   int cruiseMode = m_jsonobj["ParamCruiseMode"].toInt();
   int cruiseGap = m_jsonobj["ParamCruiseGap"].toInt();
-  int curveSpeedLimit = m_jsonobj["CurveSpeedLimit"].toInt();
+  int curveSpeedLimit = m_jsonobj["ParamCurveSpeedLimit"].toInt();
   comunity.setCmdIdx( m_cmdIdx );
   comunity.setCruiseMode( cruiseMode );
   comunity.setCruiseGap( cruiseGap );
