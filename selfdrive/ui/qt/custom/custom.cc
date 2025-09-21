@@ -352,7 +352,7 @@ void CustomPanel::updateToggles( int bSave )
   int bCarTracking = m_jsonobj["ShowCarTracking"].toBool();
 
   int tpms = m_jsonobj["tpms"].toBool();
-  int ndebug = m_jsonobj["Paramdebug"].toBool();
+  int ndebug = m_jsonobj["debug"].toBool();
 
   int kegman = m_jsonobj["kegman"].toBool();
   int kegmanCPU = m_jsonobj["kegmanCPU"].toBool();
@@ -857,7 +857,7 @@ UITab::UITab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(parent), m_
       "../assets/offroad/icon_shell.png",
     },
     {
-      "Paramdebug",
+      "debug",
       "Show debug trace message",
       "",
       "../assets/offroad/icon_shell.png",
