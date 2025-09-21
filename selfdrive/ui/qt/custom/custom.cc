@@ -972,7 +972,7 @@ void UITab::updateToggles( int bSave )
 
   int bDebug = m_jsonobj["ShowDebugMessage"].toBool();
   auto tpms_mode_toggle = toggles["tpms"];
-  auto debug_mode_toggle = toggles["debug"];
+  auto debug_mode_toggle = toggles["ParamDebug"];
   auto kegman_mode_toggle = toggles["kegman"];
   auto kegman_cpu = toggles["kegmanCPU"];
   auto kegman_battery = toggles["kegmanBattery"];
