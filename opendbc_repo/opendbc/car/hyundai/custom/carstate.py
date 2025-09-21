@@ -68,6 +68,8 @@ class CarStateCustom:
     self.speed_plan_kph = 0.0
     self.cruise_set_mode = 0
     self.cruiseGap = 0
+    self.control_mode = 0
+    self.curveSpeedLimit = 40
 
     # 좌/우 차선변경 헬퍼(유지)
     self.leftLaneTime = 50
@@ -75,17 +77,16 @@ class CarStateCustom:
     self.lanechange_wait = 100
 
 
-    self.control_mode = 0
-    self.curveSpeedLimit = 40
-
     # 커스텀 메뉴
     try:
       m_jsonobj = read_json_file("CustomParam")
-      self.autoLaneChange = m_jsonobj.get("AutoLaneChange", 0)
-      self.menu_debug = m_jsonobj.get("debug", 0)
+      self.autoLaneChange = m_jsonobj.get("ParamAutoLaneChange", 0)
+      self.menu_debug = m_jsonobj.get("Paramdebug", 0)
+      self.curveSpeedLimit = m_jsonobj.get("ParamCurveSpeedLimit", 0)
     except Exception:
       self.autoLaneChange = 0
       self.menu_debug = 0
+      self.curveSpeedLimit = 40
 
     # 지원 차량 목록
     self.cars = self._get_supported_cars(CP)
@@ -371,9 +372,9 @@ class CarStateCustom:
     # UI Custom
     if self.sm.updated.get("uICustom", False):
       ui_comm = self.sm['uICustom'].community
-      cm = int(getattr(ui_comm, 'cruiseMode', getattr(self, 'cruise_set_mode', 0)))
-      cg = int(getattr(ui_comm, 'cruiseGap', getattr(self, 'cruiseGap', 0)))
-      csl = int(getattr(ui_comm, 'curveSpeedLimit', getattr(self, 'curveSpeedLimit', 0)))
+      cm = int(getattr(ui_comm, 'cruiseMode', self.cruise_set_mode))
+      cg = int(getattr(ui_comm, 'cruiseGap', self.cruiseGap))
+      csl = int(getattr(ui_comm, 'curveSpeedLimit', self.curveSpeedLimit))
       if self.cruise_set_mode != cm: self.cruise_set_mode = cm
       if self.cruiseGap != cg:       self.cruiseGap = cg
       if getattr(self, 'curveSpeedLimit', None) != csl: self.curveSpeedLimit = csl

@@ -305,7 +305,7 @@ void CustomPanel::OnTimer()
       m_time++;
     }
 
-    int PowerOff = m_jsonobj["PowerOff"].toInt();
+    int PowerOff = m_jsonobj["ParamPowerOff"].toInt();
     if( PowerOff && (m_time > (PowerOff*10)) && (scene.custom.m_powerflag) )
     {
          scene.custom.m_powerflag = 0;
@@ -338,8 +338,8 @@ void CustomPanel::updateToggles( int bSave )
 
 
   auto comunity = custom.initCommunity();
-  int cruiseMode = m_jsonobj["CruiseMode"].toInt();
-  int cruiseGap = m_jsonobj["CruiseGap"].toInt();
+  int cruiseMode = m_jsonobj["ParamCruiseMode"].toInt();
+  int cruiseGap = m_jsonobj["ParamCruiseGap"].toInt();
   int curveSpeedLimit = m_jsonobj["CurveSpeedLimit"].toInt();
   comunity.setCmdIdx( m_cmdIdx );
   comunity.setCruiseMode( cruiseMode );
@@ -352,7 +352,7 @@ void CustomPanel::updateToggles( int bSave )
   int bCarTracking = m_jsonobj["ShowCarTracking"].toBool();
 
   int tpms = m_jsonobj["tpms"].toBool();
-  int ndebug = m_jsonobj["debug"].toBool();
+  int ndebug = m_jsonobj["Paramdebug"].toBool();
 
   int kegman = m_jsonobj["kegman"].toBool();
   int kegmanCPU = m_jsonobj["kegmanCPU"].toBool();
@@ -364,8 +364,8 @@ void CustomPanel::updateToggles( int bSave )
   int kegmanSpeed = m_jsonobj["kegmanSpeed"].toBool();
   int kegmanLag = m_jsonobj["kegmanLag"].toBool();
 
-  int _autoScreenOff = m_jsonobj["AutoScreenOff"].toInt();
-  int _brightness = m_jsonobj["Brightness"].toInt();
+  int _autoScreenOff = m_jsonobj["ParamAutoScreenOff"].toInt();
+  int _brightness = m_jsonobj["ParamBrightness"].toInt();
 
 
 
@@ -498,43 +498,43 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
 {
   // 1) 항목 정의 (오탈자 및 설명 정리, tr 적용)
   const std::vector<ValueDef> value_defs = {
-    { "CruiseMode",
+    { "ParamCruiseMode",
       tr("Cruise mode"),
       tr("Bit flags: 0=Off, bit1=Gas control, bit2=Comma speed (CruiseGap)"),
       kIcon, 0, 15, 1 }, // min, max, unit
 
-    { "CruiseGap",
+    { "ParamCruiseGap",
       tr("Cruise gap"),
       tr("0=Not used, 1~4=Gap for Comma speed"),
       kIcon, 0, 4, 1 },
 
-    { "CurveSpeedLimit",
+    { "ParamCurveSpeedLimit",
       tr("Curve speed adjust"),
       tr("Adjust maximum speed based on road curvature. "),
       kIcon, 30, 120, 10 },
 
 
-    { "AutoEngage",
+    { "ParamAutoEngage",
       tr("Auto engage"),
       tr("Automatically engages when conditions are met. 0=Manual, 1=Auto"),
       kIcon, 0, 1, 1 },
 
-    { "AutoLaneChange",
+    { "ParamAutoLaneChange",
       tr("Auto lane change"),
       tr("Automatically changes lanes when conditions are met. 0=Manual, 1=Auto"),
       kIcon, 0, 100, 10 },
 
-    { "Brightness",
+    { "ParamBrightness",
       tr("Screen Brightness"),
       tr("Adjust the brightness level. 0 = Auto, negative = darker, positive = brighter."),
       kIcon, -10, 10, 1 },
 
-    { "AutoScreenOff",
+    { "ParamAutoScreenOff",
       tr("Screen Timeout"),
       tr("Set how long the screen stays on before turning off automatically (in 10-second steps). 0 = None."),
       kIcon, 0, 120, 5 },
 
-    { "PowerOff",
+    { "ParamPowerOff",
       tr("Power off time"),
       tr("0=Not used, 1~ = power off delay (*10 sec)"),
       kIcon, 0, 60, 1 },
@@ -561,15 +561,15 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
 
   // 4) CruiseMode ↔ CruiseGap 의존성 동기화
   auto syncCruiseGapEnabled = [this]() {
-    const int cruiseMode = m_jsonobj.value("CruiseMode").toInt(0);
-    if (auto *gap = m_valueCtrl.value("CruiseGap", nullptr)) {
+    const int cruiseMode = m_jsonobj.value("ParamCruiseMode").toInt(0);
+    if (auto *gap = m_valueCtrl.value("ParamCruiseGap", nullptr)) {
       gap->setEnabled(cruiseMode != 0);
     }
   };
 
   // CValueControl에 value 변경 신호가 있으면 그걸 쓰는 게 가장 좋음.
   // 여기서는 예제로 clicked에 연결(기존 시그널 유지 가정).
-  if (auto *mode = m_valueCtrl.value("CruiseMode", nullptr)) {
+  if (auto *mode = m_valueCtrl.value("ParamCruiseMode", nullptr)) {
     QObject::connect(mode, &CValueControl::clicked, this, [=] {
       // 최신값 반영(컨트롤 내부가 즉시 m_jsonobj를 업데이트한다고 가정)
       syncCruiseGapEnabled();
@@ -857,7 +857,7 @@ UITab::UITab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(parent), m_
       "../assets/offroad/icon_shell.png",
     },
     {
-      "debug",
+      "Paramdebug",
       "Show debug trace message",
       "",
       "../assets/offroad/icon_shell.png",
