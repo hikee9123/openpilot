@@ -123,10 +123,12 @@ public:
 private:  // #custom
   int64_t idle_ticks = 0;
   int   touched_old = -1;
+  bool  cmd_awake = true;
+  bool  prev_awake = true;                 // 이전 프레임의 awake
 
   // 추가: 켜짐/꺼짐 전환 페이드 전용 상태
   int pending_brightness = -1;    // future 실행 중 최신 목표 캐시
-  bool prev_awake = true;                 // 이전 프레임의 awake
+
   bool fade_active = false;
   int  fade_from = 0;
   int  fade_to = 0;
