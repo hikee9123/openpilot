@@ -75,6 +75,7 @@ void OnroadAlerts::paintEvent(QPaintEvent *event) {
 
   QPainter p(this);
 
+  uiState()->scene.custom.touched++;  // #custom
   // draw background + gradient
   p.setPen(Qt::NoPen);
   p.setCompositionMode(QPainter::CompositionMode_SourceOver);

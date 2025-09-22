@@ -25,7 +25,7 @@
 
 
 
-CValueControl::CValueControl(const QString& param, const QString& title, const QString& desc, const QString& icon, int min, int max, int unit, QJsonObject &jsonobj  ) 
+CValueControl::CValueControl(const QString& param, const QString& title, const QString& desc, const QString& icon, int min, int max, int unit, QJsonObject &jsonobj  )
               : AbstractControl(title, desc, icon) , m_jsonobj(jsonobj)
 {
     key = param;
@@ -38,17 +38,17 @@ CValueControl::CValueControl(const QString& param, const QString& title, const Q
     hlayout->addWidget( &label );
 
     int state = min;
-    if ( !m_jsonobj.contains(key) ) 
+    if ( !m_jsonobj.contains(key) )
     {
       m_jsonobj.insert(key, state);
     }
     else
     {
-      state  = m_jsonobj[key].toInt(); 
+      state  = m_jsonobj[key].toInt();
     }
 
     m_value = state;
-  
+
     btnminus.setStyleSheet(R"(
       padding: 0;
       border-radius: 50px;
@@ -71,21 +71,21 @@ CValueControl::CValueControl(const QString& param, const QString& title, const Q
     hlayout->addWidget( &btnminus );
     hlayout->addWidget( &btnplus );
 
-    QObject::connect(&btnminus, &QPushButton::released, [=]() 
+    QObject::connect(&btnminus, &QPushButton::released, [=]()
     {
         int value = m_value;
         value = value - m_unit;
-        if (value < m_min) 
+        if (value < m_min)
             value = m_min;
-  
+
         setValue( value );
     });
 
-    QObject::connect(&btnplus, &QPushButton::released, [=]() 
+    QObject::connect(&btnplus, &QPushButton::released, [=]()
     {
         int value = m_value;
         value = value + m_unit;
-        if (value > m_max) 
+        if (value > m_max)
             value = m_max;
 
         setValue( value );
@@ -118,13 +118,13 @@ void CValueControl::setValue( int value )
     m_value = value;
     refresh();
 
-    emit clicked(); 
+    emit clicked();
   }
 }
 
 
 
-CValueControl2::CValueControl2(const QString& key, const QString& title, const QString& desc, const QString& icon, int min, int max, int unit/*=1*/) 
+CValueControl2::CValueControl2(const QString& key, const QString& title, const QString& desc, const QString& icon, int min, int max, int unit/*=1*/)
     : AbstractControl(title, desc, icon)
 {
 
@@ -201,7 +201,7 @@ void CValueControl2::refresh()
 //
 //
 
-CustomPanel::CustomPanel(SettingsWindow *parent) : QWidget(parent) 
+CustomPanel::CustomPanel(SettingsWindow *parent) : QWidget(parent)
 {
   pm.reset( new PubMaster({"uICustom"}) );
   sm.reset( new SubMaster({"carState"}) );
@@ -209,12 +209,12 @@ CustomPanel::CustomPanel(SettingsWindow *parent) : QWidget(parent)
   m_jsonobj = readJsonFile( "CustomParam" );
 
     QList<QPair<QString, QWidget *>> panels = {
-        {tr("UI"), new UITab(this, m_jsonobj)},      
+        {tr("UI"), new UITab(this, m_jsonobj)},
         {tr("Community"), new CommunityTab(this, m_jsonobj)},
         {tr("Git"), new GitTab(this, m_jsonobj)},
         {tr("Model"), new ModelTab(this, m_jsonobj)},
-        {tr("Navigation"), new NavigationTab(this, m_jsonobj)},
         {tr("Debug"), new Debug(this,m_jsonobj)},
+        {tr("Navigation"), new NavigationTab(this, m_jsonobj)},
     };
 
 
@@ -263,7 +263,7 @@ CustomPanel::CustomPanel(SettingsWindow *parent) : QWidget(parent)
 
     timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, &CustomPanel::OnTimer);
-    timer->start(1000);    
+    timer->start(1000);
 }
 
 
@@ -272,21 +272,18 @@ void CustomPanel::offroadTransition( bool offroad  )
   sm->update(0);
 
   int isActive = timer->isActive();
-  printf("CustomPanel::offroadTransition offroad=%d  isActive=%d \n", offroad, isActive );
   if( !isActive  )
   {
     m_cmdIdx = 0;
-    //timer->start(1000);
-    //printf("timer start \n");
   }
    updateToggles( false );
 }
 
-void CustomPanel::OnTimer() 
+void CustomPanel::OnTimer()
 {
   UIState   *s = uiState();
   UIScene   &scene = s->scene;
-  SubMaster &sm2 = *(s->sm);  
+  SubMaster &sm2 = *(s->sm);
 
 
 
@@ -299,17 +296,14 @@ void CustomPanel::OnTimer()
     const auto car_state = sm2["carState"].getCarState();
     float vEgo = car_state.getVEgo();
     if( vEgo > 10 )
-       scene.custom.m_powerflag = 1; 
+       scene.custom.m_powerflag = 1;
   }
   else
   {
-    if ( (sm->frame % UI_FREQ) != 0 ) 
-    {
-      m_time++;
-    }
+    m_time++;
 
-    int PowerOff = m_jsonobj["PowerOff"].toInt();
-    if( PowerOff && (m_time > (PowerOff*10)) && (scene.custom.m_powerflag) )
+    int PowerOff = m_jsonobj["ParamPowerOff"].toInt();
+    if( PowerOff && (m_time > (PowerOff*UI_FREQ)) && (scene.custom.m_powerflag) )
     {
          scene.custom.m_powerflag = 0;
          params.putBool("DoShutdown", true);
@@ -317,13 +311,13 @@ void CustomPanel::OnTimer()
   }
 }
 
-// 
+//
 void CustomPanel::updateToggles( int bSave )
 {
   MessageBuilder msg;
 
   m_cmdIdx++;
-  auto custom = msg.initEvent().initUICustom();  
+  auto custom = msg.initEvent().initUICustom();
   auto debug = custom.initDebug();
 
   int idx1 = m_jsonobj["debug1"].toBool();
@@ -332,7 +326,7 @@ void CustomPanel::updateToggles( int bSave )
   int idx4 = m_jsonobj["debug4"].toBool();
   int idx5 = m_jsonobj["debug5"].toBool();
 
-  debug.setCmdIdx( m_cmdIdx );    
+  debug.setCmdIdx( m_cmdIdx );
   debug.setIdx1( idx1 );
   debug.setIdx2( idx2);
   debug.setIdx3( idx3 );
@@ -341,19 +335,21 @@ void CustomPanel::updateToggles( int bSave )
 
 
   auto comunity = custom.initCommunity();
-  int cruiseMode = m_jsonobj["CruiseMode"].toInt();
-  int cruiseGap = m_jsonobj["CruiseGap"].toInt();  
+  int cruiseMode = m_jsonobj["ParamCruiseMode"].toInt();
+  int cruiseGap = m_jsonobj["ParamCruiseGap"].toInt();
+  int curveSpeedLimit = m_jsonobj["ParamCurveSpeedLimit"].toInt();
   comunity.setCmdIdx( m_cmdIdx );
   comunity.setCruiseMode( cruiseMode );
   comunity.setCruiseGap( cruiseGap );
+  comunity.setCurveSpeedLimit( curveSpeedLimit );
 
 
   auto ui = custom.initUserInterface();
   int bDebug = m_jsonobj["ShowDebugMessage"].toBool();
   int bCarTracking = m_jsonobj["ShowCarTracking"].toBool();
-    
+
   int tpms = m_jsonobj["tpms"].toBool();
-  int ndebug = m_jsonobj["debug"].toBool();
+  int ndebug = m_jsonobj["ParamDebug"].toBool();
 
   int kegman = m_jsonobj["kegman"].toBool();
   int kegmanCPU = m_jsonobj["kegmanCPU"].toBool();
@@ -365,8 +361,12 @@ void CustomPanel::updateToggles( int bSave )
   int kegmanSpeed = m_jsonobj["kegmanSpeed"].toBool();
   int kegmanLag = m_jsonobj["kegmanLag"].toBool();
 
+  int _autoScreenOff = m_jsonobj["ParamAutoScreenOff"].toInt();
+  int _brightness = m_jsonobj["ParamBrightness"].toInt();
 
-  ui.setCmdIdx( m_cmdIdx );  
+
+
+  ui.setCmdIdx( m_cmdIdx );
   ui.setShowDebugMessage( bDebug );
   ui.setShowCarTracking( bCarTracking );
   ui.setTpms( tpms );
@@ -382,6 +382,9 @@ void CustomPanel::updateToggles( int bSave )
   ui.setKegmanSpeed( kegmanSpeed );
   ui.setKegmanLag( kegmanLag );
 
+
+  ui.setAutoScreenOff( _autoScreenOff );
+  ui.setBrightness( _brightness );
 
   send("uICustom", msg);
 }
@@ -410,7 +413,7 @@ void CustomPanel::showEvent(QShowEvent *event)
 
   UIState   *s = uiState();
  // UIScene   &scene = s->scene;
-  SubMaster &sm2 = *(s->sm);  
+  SubMaster &sm2 = *(s->sm);
 
   const auto car_state = sm2["carState"].getCarState();
 
@@ -424,10 +427,10 @@ void CustomPanel::showEvent(QShowEvent *event)
       QJsonArray surportCar = m_jsonobj["SurportCars"].toArray();
       for (const auto& item : surportCar) {
             m_cars.append(item.toString());
-      }      
+      }
   }
   else
-  {  
+  {
     for (int i = 0; i<nCnt; i++) {
       QString car = QString::fromStdString( carSupport[i] );
       m_cars.append( car );
@@ -456,7 +459,7 @@ void CustomPanel::writeJson()
 
 
 
-QJsonObject CustomPanel::readJsonFile(const QString& filePath ) 
+QJsonObject CustomPanel::readJsonFile(const QString& filePath )
 {
     QJsonObject jsonObject;
 
@@ -469,15 +472,15 @@ QJsonObject CustomPanel::readJsonFile(const QString& filePath )
     if (doc.isNull()) {
         printf( "Failed to parse the JSON document: %s  ", filePath.toStdString().c_str() );
         return jsonObject;  // Return an empty object in case of failure
-    }  
+    }
     jsonObject = doc.object();
     return jsonObject;
 }
 
-void CustomPanel::writeJsonToFile(const QJsonObject& jsonObject, const QString& fileName) 
+void CustomPanel::writeJsonToFile(const QJsonObject& jsonObject, const QString& fileName)
 {
     QJsonDocument jsonDoc(jsonObject);
-    QByteArray jsonData = jsonDoc.toJson();  
+    QByteArray jsonData = jsonDoc.toJson();
     params.put( fileName.toStdString(), jsonData.toStdString() );
 }
 
@@ -485,101 +488,120 @@ void CustomPanel::writeJsonToFile(const QJsonObject& jsonObject, const QString& 
 //
 //
 
-CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(parent) , m_jsonobj(jsonobj)
+CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
+  : ListWidget(parent)
+  , m_jsonobj(jsonobj)
+  , m_pCustom(parent)
 {
-  m_pCustom = parent;
-
-
-  // param, title, desc, icon, min, max, unit
-  std::vector<std::tuple<QString, QString, QString, QString, int, int, int>> value_defs{
-    {
-      "CruiseMode",
+  // 1) 항목 정의 (오탈자 및 설명 정리, tr 적용)
+  const std::vector<ValueDef> value_defs = {
+    { "ParamCruiseMode",
       tr("Cruise mode"),
-      "0:Not used,bit1:Gas control,bit2:Comma speed(CruiseGap)",
-      "../assets/offroad/icon_shell.png",
-      0,15,1
-    },
-    {
-      "CruiseGap",
-      tr("Cruise Gap"),
-      "0:Not used,1~4:Gap Comma speed",
-      "../assets/offroad/icon_shell.png",
-      0,4,1
-    },
-    {
-      "AutoEngage",
-      tr("auto engage"),
-      "Auto engage refers to the automatic activation of a system, commonly seen in autonomous driving, without manual intervention, based on detected conditions. 0:manual, 1:auto",
-      "../assets/offroad/icon_shell.png",
-      0,1,1
-    },
-    {
-      "AutoLaneChange",
-      tr("auto lane change"),
-      "Auto lane change refers to the automatic activation of a system, commonly seen in autonomous driving, without manual intervention, based on detected conditions. 0:manual, 1:auto",
-      "../assets/offroad/icon_shell.png",
-      0,1,1
-    }, 
-    {
-      "PowerOff",
-      tr("Power Off Time"),
-      "0:Not used,1~:Power Offset Time( *10 sec)",
-      "../assets/offroad/icon_shell.png",
-      0,60,1
-    },
-    {
-      "DUAL_CAMERA_VIEW",
-      tr("dual camera view"),
-      "0:Not used:1",
-      "../assets/offroad/icon_shell.png",
-      0,1,1
-    },          
+      tr("Bit flags: 0=Off, bit1=Gas control, bit2=Comma speed (CruiseGap)"),
+      kIcon, 0, 15, 1 }, // min, max, unit
+
+    { "ParamCruiseGap",
+      tr("Cruise gap"),
+      tr("0=Not used, 1~4=Gap for Comma speed"),
+      kIcon, 0, 4, 1 },
+
+    { "ParamCurveSpeedLimit",
+      tr("Curve speed adjust"),
+      tr("Adjust maximum speed based on road curvature. "),
+      kIcon, 30, 120, 10 },
+
+
+    { "ParamAutoEngage",
+      tr("Auto engage"),
+      tr("Automatically engages when conditions are met. 0=Manual, 1=Auto"),
+      kIcon, 0, 1, 1 },
+
+    { "ParamAutoLaneChange",
+      tr("Auto lane change"),
+      tr("Automatically changes lanes when conditions are met. 0=Manual, 1=Auto"),
+      kIcon, 0, 100, 10 },
+
+    { "ParamBrightness",
+      tr("Screen Brightness"),
+      tr("Adjust the brightness level. 0 = Auto, negative = darker, positive = brighter."),
+      kIcon, -10, 10, 1 },
+
+    { "ParamAutoScreenOff",
+      tr("Screen Timeout"),
+      tr("Set how long the screen stays on before turning off automatically (in 10-second steps). 0 = None."),
+      kIcon, 0, 120, 5 },
+
+    { "ParamPowerOff",
+      tr("Power off time"),
+      tr("0=Not used, 1~ = power off delay (1 sec)"),
+      kIcon, 0, 60, 1 },
+
+    { "DUAL_CAMERA_VIEW",
+      tr("Dual camera view"),
+      tr("0=Off, 1=On"),
+      kIcon, 0, 1, 1 },
   };
 
-  for (auto &[param, title, desc, icon, min,max,unit] : value_defs) {
-    auto value =  new CValueControl( param, title, desc, icon, min, max, unit, m_jsonobj);
+  // 2) ValueControl 생성 및 등록 (키는 QString으로 통일)
+  for (const auto &d : value_defs) {
+    auto *value = new CValueControl(d.param, d.title, d.desc, d.icon, d.min, d.max, d.unit, m_jsonobj);
     addItem(value);
-    m_valueCtrl[ param.toStdString() ] = value;
+    m_valueCtrl.insert(d.param, value);
   }
 
-  addItem(  new ParamControl("EnableLogging", "Enable Logging", "Recording logs", "../assets/offroad/icon_shell.png", this) );
+  // 3) 토글류 이외의 스위치 예시
+  addItem(new ParamControl("EnableLogging",
+                           tr("Enable logging"),
+                           tr("Record runtime logs"),
+                           kIcon,
+                           this));
 
-  QObject::connect( m_valueCtrl["CruiseMode"], &CValueControl::clicked, [=]() {
-    int cruiseMode = m_jsonobj["CruiseMode"].toInt();
-    if( cruiseMode == 0 )
-    {
-      m_valueCtrl[ "CruiseGap" ]->setEnabled(false);
+  // 4) CruiseMode ↔ CruiseGap 의존성 동기화
+  auto syncCruiseGapEnabled = [this]() {
+    const int cruiseMode = m_jsonobj.value("ParamCruiseMode").toInt(0);
+    if (auto *gap = m_valueCtrl.value("ParamCruiseGap", nullptr)) {
+      gap->setEnabled(cruiseMode != 0);
     }
-    else
-    {
-       m_valueCtrl[ "CruiseGap" ]->setEnabled(true);
-    }
-    update();
-  });
+  };
 
-  // SelectedCar
-  QString selected_car = QString::fromStdString(Params().get("SelectedCar"));
-  auto changeCar = new ButtonControl(selected_car.length() ? selected_car : tr("Select your car"),
-                    selected_car.length() ? tr("CHANGE") : tr("SELECT"), "");
+  // CValueControl에 value 변경 신호가 있으면 그걸 쓰는 게 가장 좋음.
+  // 여기서는 예제로 clicked에 연결(기존 시그널 유지 가정).
+  if (auto *mode = m_valueCtrl.value("ParamCruiseMode", nullptr)) {
+    QObject::connect(mode, &CValueControl::clicked, this, [=] {
+      // 최신값 반영(컨트롤 내부가 즉시 m_jsonobj를 업데이트한다고 가정)
+      syncCruiseGapEnabled();
+      update();
+    });
+  }
+  // 최초 진입 시 상태 동기화
+  syncCruiseGapEnabled();
 
-  QObject::connect( changeCar, &ButtonControl::clicked, [=]() {
-    QStringList items = m_pCustom->m_cars;
+  // 5) 차종 선택 버튼
+  const QString selected_car = QString::fromStdString(Params().get("SelectedCar"));
+  auto *changeCar = new ButtonControl(
+      selected_car.isEmpty() ? tr("Select your car") : selected_car,
+      selected_car.isEmpty() ? tr("SELECT") : tr("CHANGE"),
+      ""
+  );
 
+  QObject::connect(changeCar, &ButtonControl::clicked, this, [=] {
+    const QStringList items = m_pCustom ? m_pCustom->m_cars : QStringList();
 
-      QJsonArray jsonArray;
-      foreach (const QString &item, items) {
-        jsonArray.append(item);
-      }
-      m_jsonobj["SurportCars"] = jsonArray;
+    // 지원 차종을 JSON에 반영(보기/동기화 용도)
+    QJsonArray jsonArray;
+    for (const auto &item : items) jsonArray.append(item);
+    m_jsonobj["SupportCars"] = jsonArray; // SurportCars → SupportCars 로 수정
 
-    QString selection = MultiOptionDialog::getSelection(tr("Select a car"), items, selected_car, this);
-    if ( !selection.isEmpty() ) 
-    {
+    const QString current = QString::fromStdString(Params().get("SelectedCar"));
+    const QString selection = MultiOptionDialog::getSelection(tr("Select a car"), items, current, this);
+    if (!selection.isEmpty()) {
       Params().put("SelectedCar", selection.toStdString());
+      // 버튼 라벨도 즉시 갱신
+      changeCar->setTitle(selection);
+      changeCar->setValue(tr("CHANGE"));
     }
   });
   addItem(changeCar);
-
 
   setStyleSheet(R"(
     * {
@@ -591,10 +613,10 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidg
       color: white;
       background-color: black;
     }
-  )");  
+  )");
 }
 
-void CommunityTab::showEvent(QShowEvent *event) 
+void CommunityTab::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
 }
@@ -632,7 +654,7 @@ GitTab::GitTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(parent) ,
     auto current = Params().get("GitBranch");
    // QString gitCommand = QString("git reset --hard origin/%1").arg(current.c_str() );
     QString gitCommand = "git reset --hard origin/"+QString::fromStdString( Params().get("GitBranch") );
-    
+
     QProcess::execute("git fetch origin"); // 원격 저장소에서 최신 업데이트를 가져옴
     QProcess::execute( gitCommand );  // 지정된 브랜치로 하드 리셋
 
@@ -666,10 +688,10 @@ GitTab::GitTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(parent) ,
       color: white;
       background-color: black;
     }
-  )");  
+  )");
 }
 
-void GitTab::showEvent(QShowEvent *event) 
+void GitTab::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
 }
@@ -701,14 +723,14 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(paren
       "7.North Dakota Model,supercombo_DM",
       "6.WD40 model,supercombo_WD40",
       "5.Duck_Amigo model,supercombo_DA",
-      "4.Recertified_Herbalist,supercombo_RH", 
-      "3.Los_Angeles model,supercombo_LA", 
-      "2.Certified_Herbalist2,supercombo_CH2", 
-      "1.Certified_Herbalist1,supercombo_CH1", 
+      "4.Recertified_Herbalist,supercombo_RH",
+      "3.Los_Angeles model,supercombo_LA",
+      "2.Certified_Herbalist2,supercombo_CH2",
+      "1.Certified_Herbalist1,supercombo_CH1",
       };
 
     QString selection = MultiOptionDialog::getSelection(tr("Select a model"), items, selected_model, this);
-    if ( !selection.isEmpty() ) 
+    if ( !selection.isEmpty() )
     {
       //  int selectedIndex = items.indexOf(selection);
       Params().put("SelectedModel", selection.toStdString());
@@ -734,10 +756,10 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(paren
       color: white;
       background-color: black;
     }
-  )");  
+  )");
 }
 
-void ModelTab::showEvent(QShowEvent *event) 
+void ModelTab::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
 }
@@ -789,9 +811,9 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWi
 
 
   auto toggle1 = new CValueControl2(
-    "ExternalNaviType", 
-    tr(" - Use external navi type"), 
-    "0.comma  1.mappy  2.NDA", 
+    "ExternalNaviType",
+    tr(" - Use external navi type"),
+    "0.comma  1.mappy  2.NDA",
     "",
     //"../assets/offroad/icon_openpilot.png",
     0,5 );
@@ -824,7 +846,7 @@ UITab::UITab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(parent), m_
       "Show Car Tracking",
       "",
       "../assets/offroad/icon_shell.png",
-    },    
+    },
     {
       "tpms",
       "Show tpms",
@@ -832,7 +854,7 @@ UITab::UITab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(parent), m_
       "../assets/offroad/icon_shell.png",
     },
     {
-      "debug",
+      "ParamDebug",
       "Show debug trace message",
       "",
       "../assets/offroad/icon_shell.png",
@@ -899,6 +921,8 @@ UITab::UITab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(parent), m_
       "",
       //"../assets/offroad/icon_shell.png",
     },
+
+
   };
 
   for (auto &[param, title, desc, icon] : toggle_defs) {
@@ -911,17 +935,17 @@ UITab::UITab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(parent), m_
 
   connect(toggles["ShowDebugMessage"], &ToggleControl::toggleFlipped, [=]() {
     updateToggles( false );
-  });    
+  });
 }
 
 
 
-void UITab::closeEvent(QCloseEvent *event) 
+void UITab::closeEvent(QCloseEvent *event)
 {
     QWidget::closeEvent(event);
 }
 
-void UITab::showEvent(QShowEvent *event) 
+void UITab::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
 }
@@ -945,7 +969,7 @@ void UITab::updateToggles( int bSave )
 
   int bDebug = m_jsonobj["ShowDebugMessage"].toBool();
   auto tpms_mode_toggle = toggles["tpms"];
-  auto debug_mode_toggle = toggles["debug"];
+  auto debug_mode_toggle = toggles["ParamDebug"];
   auto kegman_mode_toggle = toggles["kegman"];
   auto kegman_cpu = toggles["kegmanCPU"];
   auto kegman_battery = toggles["kegmanBattery"];
@@ -954,6 +978,7 @@ void UITab::updateToggles( int bSave )
   auto kegman_engine = toggles["kegmanEngine"];
   auto kegman_distance = toggles["kegmanDistance"];
   auto kegman_speed = toggles["kegmanSpeed"];
+
 
   tpms_mode_toggle->setEnabled(bDebug);
   debug_mode_toggle->setEnabled(bDebug);
@@ -970,7 +995,6 @@ void UITab::updateToggles( int bSave )
   kegman_engine->setEnabled(kegman);
   kegman_distance->setEnabled(kegman);
   kegman_speed->setEnabled(kegman);
-
 }
 
 
@@ -1024,17 +1048,17 @@ Debug::Debug(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(parent), m_
     addItem(toggle);
     toggles[param.toStdString()] = toggle;
   }
- 
+
 }
 
 
 
-void Debug::closeEvent(QCloseEvent *event) 
+void Debug::closeEvent(QCloseEvent *event)
 {
     QWidget::closeEvent(event);
 }
 
-void Debug::showEvent(QShowEvent *event) 
+void Debug::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
 }

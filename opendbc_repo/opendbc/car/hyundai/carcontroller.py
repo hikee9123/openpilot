@@ -8,6 +8,9 @@ from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.values import HyundaiFlags, Buttons, CarControllerParams, CAR
 from opendbc.car.interfaces import CarControllerBase
 
+from opendbc.car.hyundai.custom.carcontroller import CarControllerCustom   #custom
+
+
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 LongCtrlState = structs.CarControl.Actuators.LongControlState
 
@@ -54,6 +57,9 @@ class CarController(CarControllerBase):
     self.apply_torque_last = 0
     self.car_fingerprint = CP.carFingerprint
     self.last_button_frame = 0
+
+    #custom
+    self.customCC = CarControllerCustom(CP)
 
   def update(self, CC, CS, now_nanos):
     actuators = CC.actuators
@@ -130,6 +136,7 @@ class CarController(CarControllerBase):
     if not self.CP.openpilotLongitudinalControl:
       if CC.cruiseControl.cancel:
         can_sends.append(hyundaican.create_clu11(self.packer, self.frame, CS.clu11, Buttons.CANCEL, self.CP))
+        self.customCC.NC.reset()  #custom 혹은 self.customCC 내부에 reset 노출
       elif CC.cruiseControl.resume:
         # send resume at a max freq of 10Hz
         if (self.frame - self.last_button_frame) * DT_CTRL > 0.1:
@@ -137,6 +144,8 @@ class CarController(CarControllerBase):
           can_sends.extend([hyundaican.create_clu11(self.packer, self.frame, CS.clu11, Buttons.RES_ACCEL, self.CP)] * 25)
           if (self.frame - self.last_button_frame) * DT_CTRL >= 0.15:
             self.last_button_frame = self.frame
+      elif CS.customCS.acc_active: #custom
+        self.customCC.create_button_messages( self.packer, can_sends, CC, CS, self.frame )
 
     if self.frame % 2 == 0 and self.CP.openpilotLongitudinalControl:
       # TODO: unclear if this is needed

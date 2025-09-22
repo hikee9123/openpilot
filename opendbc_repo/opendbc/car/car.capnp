@@ -295,6 +295,7 @@ struct CarState {
     breakPos @6 :Float32;
     leadDistance @7 :Float32;
     gapSet @8 :Int16;
+    touched @9 :Int16;
 
     struct Tpms {
       unit @0 :Int16;

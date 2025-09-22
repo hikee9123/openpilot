@@ -153,6 +153,10 @@ void OnPaint::updateState(const UIState &s)
   is_debug = m_param.ui.getShowDebugMessage();
   is_carTracking = m_param.ui.getShowCarTracking();
 
+  scene->custom.autoScreenOff = m_param.ui.getAutoScreenOff();
+  scene->custom.brightness = m_param.ui.getBrightness();
+
+
   if( !is_debug ) return;
 
   // 1.
@@ -225,7 +229,12 @@ void OnPaint::updateState(const UIState &s)
   m_param.electGearStep  = carState_custom.getElectGearStep();
   m_param.breakPos = carState_custom.getBreakPos();
   scene->custom.leadDistance = carState_custom.getLeadDistance();
-
+  int touched = carState_custom.getTouched();
+  if( touched_old != touched)
+  {
+    touched_old = touched;
+    scene->custom.touched++;
+  }
 
   // 2.
   if (sm1.frame % (UI_FREQ) != 0)
@@ -240,7 +249,7 @@ void OnPaint::updateState(const UIState &s)
 
   auto pandaStates = sm1["pandaStates"].getPandaStates();
   if (pandaStates.size() > 0) {
-    m_param.controlsAllowed = pandaStates[0].getControlsAllowed();// PandaType();
+    m_param.controlsAllowed = pandaStates[0].getControlsAllowed();
   }
 }
 
@@ -533,15 +542,19 @@ void OnPaint::ui_main_debug(QPainter &p)
   int  bb_y = 90;
   int  nGap = 30;
 
-  //if( m_param.debug.getIdx1() )
-  //{
+  if( m_param.debug.getIdx1() )
+  {
     QString text;
 
     p.setFont(InterFont(38));
     p.setPen( QColor(255, 255, 255, 255) );
-    text.sprintf("Panda=%d", m_param.controlsAllowed  );
-    p.drawText( bb_x, bb_y+nGap, text );
-  //}
+    text.sprintf("Panda=%d started=%d sensor=%.1f", m_param.controlsAllowed, scene->started, scene->light_sensor );
+    p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
+
+    text.sprintf("ignition=%d", scene->ignition  );               p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
+    text.sprintf("idle_ticks=%d", scene->custom.idle_ticks  );    p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
+    text.sprintf("target=%d", scene->custom.target  );            p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
+  }
 }
 
 

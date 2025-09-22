@@ -66,6 +66,12 @@ typedef struct UIScene {
   {
     int  m_powerflag = 0;
     float leadDistance;
+    int   autoScreenOff;
+    int   brightness;
+    int   touched;
+
+    int   idle_ticks;
+    int   target;
   } custom;
 } UIScene;
 
@@ -113,6 +119,20 @@ public:
   void setOffroadBrightness(int brightness) {
     offroad_brightness = std::clamp(brightness, 0, 100);
   }
+
+private:  // #custom
+  int64_t idle_ticks = 0;
+  int   touched_old = -1;
+
+  // 추가: 켜짐/꺼짐 전환 페이드 전용 상태
+  int pending_brightness = -1;    // future 실행 중 최신 목표 캐시
+  bool prev_awake = true;                 // 이전 프레임의 awake
+  bool fade_active = false;
+  int  fade_from = 0;
+  int  fade_to = 0;
+  int  fade_duration_ms = 300;            // 전환 페이드 시간(ms). 필요시 조절
+  std::chrono::steady_clock::time_point fade_start;
+
 
 private:
   bool awake = false;

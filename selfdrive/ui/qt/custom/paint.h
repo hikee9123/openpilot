@@ -70,6 +70,8 @@ private:
   int bbh_right = 0;
   const int bdr_s = 30;
 
+  int  touched_old = 0;
+
   struct _PARAM_
   {
     cereal::RadarState::LeadData::Reader lead_radar;

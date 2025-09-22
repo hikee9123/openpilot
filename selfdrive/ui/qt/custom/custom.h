@@ -30,7 +30,7 @@ class JsonControl : public ToggleControl {
   Q_OBJECT
 
 public:
-  JsonControl(const QString &param, const QString &title, const QString &desc, const QString &icon, QWidget *parent, QJsonObject &jsonobj) 
+  JsonControl(const QString &param, const QString &title, const QString &desc, const QString &icon, QWidget *parent, QJsonObject &jsonobj)
     : ToggleControl(title, desc, icon, false, parent),m_jsonobj(jsonobj) {
     key = param;
     QObject::connect(this, &JsonControl::toggleFlipped, [=](bool state) {
@@ -45,7 +45,7 @@ public:
         toggle.togglePosition();
       }
     });
-    
+
   }
 
   void setConfirmation(bool _confirm, bool _store_confirm) {
@@ -62,18 +62,18 @@ public:
         toggle.togglePosition();
       }
     }
-    
+
   }
 
   void showEvent(QShowEvent *event) override {
     refresh();
   }
 
-  void setEnabled(bool enabled) 
+  void setEnabled(bool enabled)
   {
     ToggleControl::setEnabled(enabled);
     QFrame::setEnabled(  enabled );
-  }  
+  }
 
 private:
   QString key;
@@ -101,7 +101,7 @@ private:
     int     m_value;
 
 
-    QJsonObject &m_jsonobj;  
+    QJsonObject &m_jsonobj;
 
 signals:
   void clicked();
@@ -118,7 +118,7 @@ public:
 
  public:
     void setValue( int value );
-    int  getValue();   
+    int  getValue();
 };
 
 
@@ -171,7 +171,7 @@ public:
         refresh();
       }
     });
-    refresh();   
+    refresh();
   }
 
 private:
@@ -187,13 +187,13 @@ private:
     {
        setTitle( "Mapbox token" );
        setDescription( strMapboxToken );
-       btn.setText("CHANGE");  
+       btn.setText("CHANGE");
     }
     else
     {
        setTitle( "input your Mapbox token" );
        setDescription( "Put your MapboxToken starting with sk." );
-       btn.setText("SET");  
+       btn.setText("SET");
     }
 
 
@@ -210,8 +210,8 @@ class CustomPanel : public QWidget {
 public:
   explicit CustomPanel(SettingsWindow *parent);
 
-protected:  
-  void closeEvent(QCloseEvent *event) override;  
+protected:
+  void closeEvent(QCloseEvent *event) override;
 
 protected:
   virtual void showEvent(QShowEvent *event) override;
@@ -222,7 +222,7 @@ signals:
 
 private slots:  // 시그널과 연결되어 특정 이벤트에 응답할 때
   void offroadTransition( bool offroad  );
-  void OnTimer();  
+  void OnTimer();
 
 private:
   void  updateToggles( int bSave );
@@ -239,7 +239,7 @@ private:
 
 
 private:
-  std::unique_ptr<PubMaster> pm; 
+  std::unique_ptr<PubMaster> pm;
   std::unique_ptr<SubMaster> sm;
 
 public:
@@ -262,7 +262,7 @@ public:
 
 
 private:
-  std::map<std::string, CValueControl*> m_valueCtrl;
+  QMap<QString, CValueControl*> m_valueCtrl;
 
 
 protected:
@@ -270,18 +270,28 @@ protected:
   virtual void hideEvent(QHideEvent *event) override;
 
 
-protected:  
+protected:
 
 signals:
 
 private slots:
 
 private:
-
+  struct ValueDef {
+    QString param;
+    QString title;
+    QString desc;
+    QString icon;
+    int min;
+    int max;
+    int unit;
+  };
+  // 기본 아이콘 경로
+  const QString kIcon = "../assets/offroad/icon_shell.png";
 
 private:
   CustomPanel *m_pCustom = nullptr;
-  QJsonObject &m_jsonobj;  
+  QJsonObject &m_jsonobj;
 
 };
 
@@ -302,7 +312,7 @@ protected:
   virtual void hideEvent(QHideEvent *event) override;
 
 
-protected:  
+protected:
 
 signals:
 
@@ -313,7 +323,7 @@ private:
 
 private:
   CustomPanel *m_pCustom = nullptr;
-  QJsonObject &m_jsonobj;  
+  QJsonObject &m_jsonobj;
 
 };
 
@@ -334,7 +344,7 @@ protected:
   virtual void hideEvent(QHideEvent *event) override;
 
 
-protected:  
+protected:
 
 signals:
 
@@ -345,7 +355,7 @@ private:
 
 private:
   CustomPanel *m_pCustom = nullptr;
-  QJsonObject &m_jsonobj;  
+  QJsonObject &m_jsonobj;
 
 };
 
@@ -362,7 +372,7 @@ private:
 protected:
 
 
-protected:  
+protected:
 
 signals:
 
@@ -373,7 +383,7 @@ private slots:
 private:
   Params params;
   CustomPanel *m_pCustom = nullptr;
-  QJsonObject &m_jsonobj;  
+  QJsonObject &m_jsonobj;
 };
 
 
@@ -398,8 +408,8 @@ protected:
   virtual void hideEvent(QHideEvent *event) override;
 
 
-protected:  
-  void closeEvent(QCloseEvent *event) override;  
+protected:
+  void closeEvent(QCloseEvent *event) override;
 
 private slots:
   //void offroadTransition( bool offroad  );
@@ -410,7 +420,7 @@ private:
 
 private:
   CustomPanel *m_pCustom = nullptr;
-  QJsonObject &m_jsonobj;  
+  QJsonObject &m_jsonobj;
   int  m_cmdIdx = 0;
 };
 
@@ -424,7 +434,7 @@ public:
 
 private:
   std::map<std::string, JsonControl*> toggles;
-  QJsonObject &m_jsonobj;  
+  QJsonObject &m_jsonobj;
 
 
 
@@ -435,8 +445,8 @@ protected:
   virtual void hideEvent(QHideEvent *event) override;
 
 
-protected:  
-  void closeEvent(QCloseEvent *event) override;  
+protected:
+  void closeEvent(QCloseEvent *event) override;
 
 signals:
 
