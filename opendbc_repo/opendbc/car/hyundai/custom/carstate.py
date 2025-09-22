@@ -222,9 +222,9 @@ class CarStateCustom:
     """
     # kPa -> psi = * 0.1450377377
     # bar -> psi = * 14.5037738
-    if unit == 1:
+    if unit == 1: # kPa -> psi
       factor = 0.1450377377
-    elif unit == 2:
+    elif unit == 2:  # bar -> psi
       factor = 14.5037738
     else:
       factor = 1.0  # 이미 psi
