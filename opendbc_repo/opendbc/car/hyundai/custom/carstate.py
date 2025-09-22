@@ -222,9 +222,9 @@ class CarStateCustom:
     """
     # kPa -> psi = * 0.1450377377
     # bar -> psi = * 14.5037738
-    if unit == 1:
+    if unit == 1: # kPa -> psi
       factor = 0.1450377377
-    elif unit == 2:
+    elif unit == 2:  # bar -> psi
       factor = 14.5037738
     else:
       factor = 1.0  # 이미 psi
@@ -257,7 +257,7 @@ class CarStateCustom:
     cruise_buttons = self.CS.prev_cruise_buttons
     if cruise_buttons in (Buttons.CANCEL, Buttons.RES_ACCEL, Buttons.SET_DECEL):
       carSCustom.touched += 1
-    elif self.CS.out.gasPressed:
+    elif self.acc_active and self.CS.out.gasPressed:
       carSCustom.touched += 1
 
     ret.carSCustom = carSCustom
