@@ -265,8 +265,6 @@ class CruiseButtonCtrl:
       self.initialized = True
       return None
 
-
-
     # ACC 꺼짐
     if not self._is_acc_on(CS):
       self.wait_accsafety = self.ACC_SAFETY_INIT_INACTIVE
@@ -278,16 +276,17 @@ class CruiseButtonCtrl:
       return None
 
     # 외부 목표 미지정
-    plan_kph = float(getattr(CS.customCS, "speed_plan_kph", 0.0))
+    if CS.customCS.cruiseGap == CS.customCS.gapSet:
+      plan_kph = float(getattr(CS.customCS, "speed_plan_kph", 0.0))
+    else:
+      plan_kph = CS.customCS.cruise_set_speed_kph
+
     if plan_kph < self.MIN_SET_SPEED_KPH:
       plan_kph = self.MIN_SET_SPEED_KPH
 
-    if CS.customCS.cruiseGap == CS.customCS.gapSet:
-      target = self._external_target_kph
-    else:
-      target = CS.customCS.cruise_set_speed_kph
 
     # 허용 오차로 비교 (0.05kph 정도면 충분)
+    target = self._external_target_kph
     if target is None or abs(plan_kph - target) > 0.05:
       self.set_target_speed(plan_kph)
       target = self._external_target_kph
