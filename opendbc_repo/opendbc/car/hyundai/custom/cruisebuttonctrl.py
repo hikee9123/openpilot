@@ -265,8 +265,7 @@ class CruiseButtonCtrl:
       self.initialized = True
       return None
 
-    if CS.customCS.cruiseGap != CS.customCS.gapSet:
-      return None
+
 
     # ACC 꺼짐
     if not self._is_acc_on(CS):
@@ -283,7 +282,10 @@ class CruiseButtonCtrl:
     if plan_kph < self.MIN_SET_SPEED_KPH:
       plan_kph = self.MIN_SET_SPEED_KPH
 
-    target = self._external_target_kph
+    if CS.customCS.cruiseGap == CS.customCS.gapSet:
+      target = self._external_target_kph
+    else:
+      target = CS.customCS.cruise_set_speed_kph
 
     # 허용 오차로 비교 (0.05kph 정도면 충분)
     if target is None or abs(plan_kph - target) > 0.05:
