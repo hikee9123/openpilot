@@ -35,6 +35,7 @@ class CruiseButtonCtrl:
   # 4) 전이 히스테리시스 상수 추가 및 적용
   DELTA_HYST_KPH = 0.2  # 클래스 상단 상수들 옆에 추가
 
+
   # ----------------------------
   # Lifecycle
   # ----------------------------
@@ -167,6 +168,11 @@ class CruiseButtonCtrl:
     ACC가 꺼진 상태에서 가속 페달 입력으로 ACC를 켜는 동작을 처리.
     차량마다 ACC on 버튼은 다르지만, 일반적으로 RES_ACCEL을 사용.
     """
+    if CS.customCS.autoEngage == 0:
+      return None
+    if CS.customCS.clu_Vanz <= self.MIN_SET_SPEED_KPH:
+      return None
+
     acc_on = self._is_acc_on(CS)
     gas = bool(CS.out.gasPressed)
 
@@ -176,7 +182,7 @@ class CruiseButtonCtrl:
       self.reset()
       self._goto(State.IDLE)
 
-      # ACC on 버튼 신호 반환 (보통 SET_DECEL)
+      # ACC on 버튼 신호 반환 (보통 SET_DECEL) 현재의 속도로 설정됨
       return Buttons.SET_DECEL
 
     return None

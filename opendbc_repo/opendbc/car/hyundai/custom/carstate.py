@@ -69,7 +69,7 @@ class CarStateCustom:
     self.cruise_set_mode = 0
     self.cruiseGap = 0
     self.control_mode = 0
-    self.curveSpeedLimit = 40
+
 
     # 좌/우 차선변경 헬퍼(유지)
     self.leftLaneTime = 50
@@ -83,10 +83,12 @@ class CarStateCustom:
       self.autoLaneChange = m_jsonobj.get("ParamAutoLaneChange", 0)
       self.menu_debug = m_jsonobj.get("ParamDebug", 0)
       self.curveSpeedLimit = m_jsonobj.get("ParamCurveSpeedLimit", 0)
+      self.autoEngage = m_jsonobj.get("ParamAutoEngage", 0)
     except Exception:
       self.autoLaneChange = 0
       self.menu_debug = 0
       self.curveSpeedLimit = 40
+      self.autoEngage = 0
 
     # 지원 차량 목록
     self.cars = self._get_supported_cars(CP)

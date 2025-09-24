@@ -525,7 +525,7 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
     { "ParamBrightness",
       tr("Screen Brightness"),
       tr("Adjust the brightness level. 0 = Auto, negative = darker, positive = brighter."),
-      kIcon, -10, 10, 1 },
+      kIcon, -20, 5, 1 },
 
     { "ParamAutoScreenOff",
       tr("Screen Timeout"),
