@@ -298,7 +298,7 @@ class CruiseButtonCtrl:
 
 
     # ACC 꺼짐
-    if not self._is_acc_on(CS):
+    if not self._is_acc_on(CS) and (CS.customCS.cruiseGap == CS.customCS.gapSet):
       # 가속페달로 ACC 활성화 시도
       btn = self._try_enable_acc(CS)
       if btn is not None:
