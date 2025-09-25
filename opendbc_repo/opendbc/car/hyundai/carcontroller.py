@@ -137,7 +137,7 @@ class CarController(CarControllerBase):
       if CC.cruiseControl.cancel:
         can_sends.append(hyundaican.create_clu11(self.packer, self.frame, CS.clu11, Buttons.CANCEL, self.CP))
         self.customCC.NC.reset()  #custom 혹은 self.customCC 내부에 reset 노출
-      elif CC.cruiseControl.resume:
+      elif CC.out.cruiseControl.resume:
         # send resume at a max freq of 10Hz
         if (self.frame - self.last_button_frame) * DT_CTRL > 0.1:
           # send 25 messages at a time to increases the likelihood of resume being accepted
