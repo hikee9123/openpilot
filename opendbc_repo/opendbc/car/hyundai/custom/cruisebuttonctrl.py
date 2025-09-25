@@ -35,6 +35,7 @@ class CruiseButtonCtrl:
   # 4) 전이 히스테리시스 상수 추가 및 적용
   DELTA_HYST_KPH = 0.2  # 클래스 상단 상수들 옆에 추가
 
+
   # ----------------------------
   # Lifecycle
   # ----------------------------
@@ -68,6 +69,8 @@ class CruiseButtonCtrl:
     self.last_lead_distance: float = 0.0
 
     self.initialized  = False
+    self._prev_acc_active = False
+
 
   # ----------------------------
   # State handlers
@@ -80,6 +83,9 @@ class CruiseButtonCtrl:
 
     delta = self.target_speed - self.VSetDis
     standstill = bool(CS.out.cruiseState.standstill)
+
+    if not self._is_acc_on(CS):
+      return self._goto(State.HOLD_NONE)
 
     if standstill:
       self.last_lead_distance = 0.0
@@ -157,6 +163,32 @@ class CruiseButtonCtrl:
       return self._goto(State.HOLD_NONE)
     return Buttons.RES_ACCEL
 
+  def _try_enable_acc(self, CS) -> Optional[Buttons]:
+    """
+    ACC가 꺼진 상태에서 가속 페달 입력으로 ACC를 켜는 동작을 처리.
+    차량마다 ACC on 버튼은 다르지만, 일반적으로 RES_ACCEL을 사용.
+    """
+    if CS.customCS.autoEngage == 0:
+      return None
+    if CS.customCS.cruiseGap != CS.customCS.gapSet:
+      return None
+    if CS.customCS.clu_Vanz <= self.MIN_SET_SPEED_KPH:
+      return None
+
+    acc_on = self._is_acc_on(CS)
+    gas = bool(CS.out.gasPressed)
+
+    # ACC가 꺼져 있고, 가속페달이 눌린 경우 → ACC 켜기
+    if (not acc_on) and gas:
+      # 상태 머신 초기화
+      self.reset()
+      self._goto(State.IDLE)
+
+      # ACC on 버튼 신호 반환 (보통 SET_DECEL) 현재의 속도로 설정됨
+      return Buttons.SET_DECEL
+
+    return None
+
   # ----------------------------
   # Internal helpers
   # ----------------------------
@@ -221,6 +253,7 @@ class CruiseButtonCtrl:
     return bool(getattr(CS.customCS, "acc_active", False))
 
 
+
   # ----------------------------
   # Public API
   # ----------------------------
@@ -265,11 +298,13 @@ class CruiseButtonCtrl:
       self.initialized = True
       return None
 
-    if CS.customCS.cruiseGap != CS.customCS.gapSet:
-      return None
 
     # ACC 꺼짐
     if not self._is_acc_on(CS):
+      # 가속페달로 ACC 활성화 시도
+      btn = self._try_enable_acc(CS)
+      if btn is not None:
+        return btn
       self.wait_accsafety = self.ACC_SAFETY_INIT_INACTIVE
       return None
 
@@ -278,14 +313,19 @@ class CruiseButtonCtrl:
       self.wait_accsafety = self.ACC_SAFETY_INIT
       return None
 
+
     # 외부 목표 미지정
-    plan_kph = float(getattr(CS.customCS, "speed_plan_kph", 0.0))
+    if CS.customCS.cruiseGap == CS.customCS.gapSet:
+      plan_kph = float(getattr(CS.customCS, "speed_plan_kph", 0.0))
+    else:
+      plan_kph = CS.customCS.cruise_set_speed_kph
+
     if plan_kph < self.MIN_SET_SPEED_KPH:
       plan_kph = self.MIN_SET_SPEED_KPH
 
-    target = self._external_target_kph
 
     # 허용 오차로 비교 (0.05kph 정도면 충분)
+    target = self._external_target_kph
     if target is None or abs(plan_kph - target) > 0.05:
       self.set_target_speed(plan_kph)
       target = self._external_target_kph

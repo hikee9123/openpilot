@@ -144,7 +144,7 @@ class CarController(CarControllerBase):
           can_sends.extend([hyundaican.create_clu11(self.packer, self.frame, CS.clu11, Buttons.RES_ACCEL, self.CP)] * 25)
           if (self.frame - self.last_button_frame) * DT_CTRL >= 0.15:
             self.last_button_frame = self.frame
-      elif CS.customCS.acc_active: #custom
+      elif CS.out.cruiseState.available: #custom
         self.customCC.create_button_messages( self.packer, can_sends, CC, CS, self.frame )
 
     if self.frame % 2 == 0 and self.CP.openpilotLongitudinalControl:

@@ -138,6 +138,7 @@ void Device::update(const UIState &s) {
 void Device::setAwake(bool on) {
   if (on != awake) {
     awake = on;
+    cmd_awake = on;
     Hardware::set_display_power(awake);
     LOGD("setting display power %d", awake);
     emit displayPowerChanged(awake);
@@ -192,6 +193,7 @@ void Device::updateBrightness(const UIState &s) {
     touched_old = s.scene.custom.touched;
     idle_ticks = 0;
     awake = true; // 즉시 깨움
+    cmd_awake = true;
   } else {
     ++idle_ticks;
   }
@@ -209,7 +211,7 @@ void Device::updateBrightness(const UIState &s) {
     dim_window_ticks = std::max<int64_t>(1, dim_window_ticks);
 
     if (idle_ticks >= timeout_ticks) {
-      awake = false; // 화면 끔
+      cmd_awake = false; // 화면 끔
     } else if (idle_ticks >= (timeout_ticks - dim_window_ticks)) {
       // 30% → 10% 선형 디밍
       const int64_t tnum = idle_ticks - (timeout_ticks - dim_window_ticks);
@@ -225,7 +227,7 @@ void Device::updateBrightness(const UIState &s) {
   const int filtered = (int)std::lround(filtered_f);
 
   // 2) 켜짐/꺼짐 목표값
-  int target = awake ? filtered : 5;
+  int target = cmd_awake ? filtered : 1;
   pui->scene.custom.target = target;
   // 3) Deadband로 소진동 제거 (±1% 이내는 무시)
   if (last_brightness >= 0) {
@@ -235,17 +237,17 @@ void Device::updateBrightness(const UIState &s) {
   }
 
   // 4) 상태 전환시 페이드 시퀀스 재시작 (중간값에서 이어가기)
-  if (prev_awake != awake) {
+  if (prev_awake != cmd_awake) {
     fade_active = true;
     // last_brightness가 유효하면 그 값에서 시작, 아니면 논리적 시작점
-    const int start_from = (last_brightness >= 0) ? last_brightness : (awake ? 0 : filtered);
+    const int start_from = (last_brightness >= 0) ? last_brightness : (cmd_awake ? 0 : filtered);
     fade_from  = std::clamp(start_from, 0, 100);
     fade_to    = std::clamp(target, 0, 100);
     fade_start = std::chrono::steady_clock::now();
     // 필요시 서로 다른 시간 적용 가능
-    fade_duration_ms = awake ? 300 : 5000;
+    fade_duration_ms = cmd_awake ? 1000 : 5000;
   }
-  prev_awake = awake;
+  prev_awake = cmd_awake;
 
   int to_apply = target;
   if (fade_active) {
