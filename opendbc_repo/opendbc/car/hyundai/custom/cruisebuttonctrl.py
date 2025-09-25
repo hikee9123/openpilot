@@ -170,6 +170,8 @@ class CruiseButtonCtrl:
     """
     if CS.customCS.autoEngage == 0:
       return None
+    if CS.customCS.cruiseGap != CS.customCS.gapSet:
+      return None
     if CS.customCS.clu_Vanz <= self.MIN_SET_SPEED_KPH:
       return None
 
@@ -298,7 +300,7 @@ class CruiseButtonCtrl:
 
 
     # ACC 꺼짐
-    if not self._is_acc_on(CS) and (CS.customCS.cruiseGap == CS.customCS.gapSet):
+    if not self._is_acc_on(CS):
       # 가속페달로 ACC 활성화 시도
       btn = self._try_enable_acc(CS)
       if btn is not None:
