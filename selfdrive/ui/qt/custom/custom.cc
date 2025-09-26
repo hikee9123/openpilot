@@ -508,14 +508,14 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
 
     { "ParamCurveSpeedLimit",
       tr("Curve speed adjust"),
-      tr("Adjust maximum speed based on road curvature. "),
-      kIcon, 30, 120, 10 },
+      tr("Adjust maximum speed based on road curvature."),
+      kIcon, 30, 100, 5 },
 
 
     { "ParamAutoEngage",
       tr("Auto engage"),
-      tr("Automatically engages when conditions are met. 0=Manual, 1=Auto"),
-      kIcon, 30, 100, 10 },
+      tr("Automatically engages when conditions are met.  30:off"),
+      kIcon, 30, 100, 5 },
 
     { "ParamAutoLaneChange",
       tr("Auto lane change"),
@@ -530,7 +530,7 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
     { "ParamAutoScreenOff",
       tr("Screen Timeout"),
       tr("Set how long the screen stays on before turning off automatically (in 10-second steps). 0 = None."),
-      kIcon, 0, 120, 5 },
+      kIcon, 0, 120, 1 },
 
     { "ParamPowerOff",
       tr("Power off time"),

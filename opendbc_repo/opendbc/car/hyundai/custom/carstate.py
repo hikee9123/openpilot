@@ -170,8 +170,10 @@ class CarStateCustom:
     if cruise_buttons == Buttons.CANCEL:
       self._cencel_button = True
     elif cruise_buttons == Buttons.RES_ACCEL:
+      self._cencel_button = False
       self.control_mode +=   1
     elif cruise_buttons == Buttons.SET_DECEL:
+      self._cencel_button = False
       self.control_mode -=  1
 
     if self.control_mode < 0 or self.control_mode > 5:
@@ -271,7 +273,7 @@ class CarStateCustom:
 
     # 로그 (원 포맷 유지)
     trace1.printf1('MD={:.0f},controlsAllowed={:.0f}'.format(self.control_mode, self.controlsAllowed))
-    trace1.printf2('SA={:7.1f} , {:.0f} , {:.0f}'.format(self.steeringAngle, int(self.mainMode_ACC), int(self.clu_Main)))
+    trace1.printf2('SA={:7.1f} , {:.0f} , {}'.format(self.steeringAngle, int(self.mainMode_ACC), int(self._cencel_button)))
     trace1.printf3('SW={:.0f},{:.0f},{:.0f} T={:.0f},{:.0f}'.format(
       self._vl(cp, "CLU11", "CF_Clu_CruiseSwState", 0),
       self._vl(cp, "CLU11", "CF_Clu_CruiseSwMain", 0),
