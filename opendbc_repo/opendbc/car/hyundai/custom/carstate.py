@@ -167,9 +167,7 @@ class CarStateCustom:
 
 
     self.cruise_buttons_old = cruise_buttons
-    if cruise_buttons == Buttons.CANCEL:
-      self._cencel_button = True
-    elif cruise_buttons == Buttons.RES_ACCEL:
+    if cruise_buttons == Buttons.RES_ACCEL:
       self._cencel_button = False
       self.control_mode +=   1
     elif cruise_buttons == Buttons.SET_DECEL:
@@ -266,6 +264,8 @@ class CarStateCustom:
     cruise_buttons = self.CS.prev_cruise_buttons
     if cruise_buttons in (Buttons.CANCEL, Buttons.RES_ACCEL, Buttons.SET_DECEL):
       carSCustom.touched += 1
+      if cruise_buttons == Buttons.CANCEL:
+        self._cencel_button = True
     elif self.acc_active and self.CS.out.gasPressed:
       carSCustom.touched += 1
 
@@ -333,13 +333,9 @@ class CarStateCustom:
       return float(self.cruise_set_speed_kph)
     self.prev_cruise_btn = cruise_buttons
 
-
-
     set_speed_kph = self.cruise_set_speed_kph
 
-    if cruise_buttons == Buttons.CANCEL:
-      self._cencel_button = True
-    elif cruise_buttons == Buttons.RES_ACCEL:
+    if cruise_buttons == Buttons.RES_ACCEL:
       set_speed_kph = self.VSetDis + 1
     elif cruise_buttons == Buttons.SET_DECEL:
       # 가속 페달 중이거나 방금 ACC가 꺼져 있었다면 현재 속도로 세팅
