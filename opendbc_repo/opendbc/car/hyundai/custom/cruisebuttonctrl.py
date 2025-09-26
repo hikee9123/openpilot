@@ -172,10 +172,8 @@ class CruiseButtonCtrl:
       return None
     elif CS.customCS._cencel_button:
       return None
-
     elif CS.customCS.cruiseGap != CS.customCS.gapSet:
       return None
-
     elif CS.customCS.clu_Vanz <= CS.customCS.autoEngage: # self.MIN_SET_SPEED_KPH:
       return None
 
