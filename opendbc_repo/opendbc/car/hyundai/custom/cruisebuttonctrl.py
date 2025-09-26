@@ -170,7 +170,7 @@ class CruiseButtonCtrl:
     """
     if CS.customCS.autoEngage <= 30:
       return None
-    elif self._cencel_button:
+    elif CS._cencel_button:
       return None
 
     elif CS.customCS.cruiseGap != CS.customCS.gapSet:
