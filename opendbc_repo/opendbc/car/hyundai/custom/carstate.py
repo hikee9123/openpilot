@@ -51,6 +51,7 @@ class CarStateCustom:
     self.lead_distance = 0.0
     self.gapSet = 0
     self._gas_pressed_prev = False
+    self._cencel_button = False
 
     # 차량/주행 상태
     self.clu_Vanz = 0.0
@@ -164,8 +165,11 @@ class CarStateCustom:
     if cruise_buttons == self.cruise_buttons_old:
       return
 
+
     self.cruise_buttons_old = cruise_buttons
-    if cruise_buttons == Buttons.RES_ACCEL:
+    if cruise_buttons == Buttons.CANCEL:
+      self._cencel_button = True
+    elif cruise_buttons == Buttons.RES_ACCEL:
       self.control_mode +=   1
     elif cruise_buttons == Buttons.SET_DECEL:
       self.control_mode -=  1
@@ -212,6 +216,7 @@ class CarStateCustom:
 
     # 이전에 enable 표시를 켰다면 유지
     if self.oldCruiseStateEnabled:
+      self._cencel_button = False
       ret.cruiseState.enabled = True
 
   # ----------------------------
@@ -330,7 +335,9 @@ class CarStateCustom:
 
     set_speed_kph = self.cruise_set_speed_kph
 
-    if cruise_buttons == Buttons.RES_ACCEL:
+    if cruise_buttons == Buttons.CANCEL:
+      self._cencel_button = True
+    elif cruise_buttons == Buttons.RES_ACCEL:
       set_speed_kph = self.VSetDis + 1
     elif cruise_buttons == Buttons.SET_DECEL:
       # 가속 페달 중이거나 방금 ACC가 꺼져 있었다면 현재 속도로 세팅

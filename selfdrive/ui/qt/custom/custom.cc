@@ -515,7 +515,7 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
     { "ParamAutoEngage",
       tr("Auto engage"),
       tr("Automatically engages when conditions are met. 0=Manual, 1=Auto"),
-      kIcon, 0, 1, 1 },
+      kIcon, 30, 100, 10 },
 
     { "ParamAutoLaneChange",
       tr("Auto lane change"),
