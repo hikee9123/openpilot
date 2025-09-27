@@ -245,7 +245,7 @@ void Device::updateBrightness(const UIState &s) {
     fade_to    = std::clamp(target, 0, 100);
     fade_start = std::chrono::steady_clock::now();
     // 필요시 서로 다른 시간 적용 가능
-    fade_duration_ms = cmd_awake ? 1000 : 5000;
+    fade_duration_ms = cmd_awake ? 1000 : 10000;
   }
   prev_awake = cmd_awake;
 

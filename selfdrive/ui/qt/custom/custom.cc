@@ -513,7 +513,7 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
     { "ParamAutoEngage",
       tr("Auto Cruise Engage Speed"),
       tr("Enables cruise automatically once the vehicle reaches the set speed."
-         "0: Off · otherwise: engage at that speed (km/h)..  30:off"),
+         "30: Off · otherwise: engage at that speed (km/h)."),
       kIcon, 30, 100, 5 },
 
     { "ParamAutoLaneChange",
