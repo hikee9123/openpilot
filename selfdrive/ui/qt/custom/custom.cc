@@ -303,7 +303,6 @@ void CustomPanel::OnTimer()
     m_time++;
 
     int PowerOff = m_jsonobj["ParamPowerOff"].toInt();
-    printf( "timer %d  endtime =%d\n", m_time, PowerOff);
     if( PowerOff && (m_time > PowerOff) && (scene.custom.m_powerflag) )
     {
          scene.custom.m_powerflag = 0;
