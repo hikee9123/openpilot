@@ -272,8 +272,8 @@ class CarStateCustom:
     ret.carSCustom = carSCustom
 
     # 로그 (원 포맷 유지)
-    trace1.printf1('MD={:.0f},controlsAllowed={:.0f}'.format(self.control_mode, self.controlsAllowed))
-    trace1.printf2('SA={:7.1f} , {:.0f} , {}'.format(self.steeringAngle, int(self.mainMode_ACC), int(self._cencel_button)))
+    trace1.printf1('MD={:.0f},CA={:.0f}, CB={}'.format(self.control_mode, self.controlsAllowed, self._cencel_button))
+    trace1.printf2('SA={:7.1f} , {:.0f}'.format(self.steeringAngle, int(self.mainMode_ACC) ))
     trace1.printf3('SW={:.0f},{:.0f},{:.0f} T={:.0f},{:.0f}'.format(
       self._vl(cp, "CLU11", "CF_Clu_CruiseSwState", 0),
       self._vl(cp, "CLU11", "CF_Clu_CruiseSwMain", 0),
@@ -433,7 +433,7 @@ class CarStateCustom:
     LANE_PROB_TH      = 0.50   # 차선 인식 확률 임계값
     LANE_HOLD_TICKS   = 50     # 차선 가시 타이머 초기값
     WAIT_SYNC_TICKS   = 200    # 좌/우 깜빡이 동시 입력 시 대기
-    WAIT_MIN_TICKS    = self.autoLaneChange     # def:50 최소 대기 보장 (pre 단계에서 과한 토크 방지)
+
 
 
     # ===== 차선 가시성 계산 =====
@@ -474,8 +474,8 @@ class CarStateCustom:
         ret.leftBlinker = False
         ret.rightBlinker = False
       # 최소 대기 보장
-      elif self.lanechange_wait < WAIT_MIN_TICKS:
-        self.lanechange_wait = WAIT_MIN_TICKS
+      elif self.lanechange_wait < self.autoLaneChange:
+        self.lanechange_wait = self.autoLaneChange
       return
 
     if self.laneChangeState == LaneChangeState.preLaneChange:

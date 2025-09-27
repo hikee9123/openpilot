@@ -511,15 +511,16 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
       tr("Adjust maximum speed based on road curvature."),
       kIcon, 30, 100, 5 },
 
-
     { "ParamAutoEngage",
-      tr("Auto engage"),
-      tr("Automatically engages when conditions are met.  30:off"),
+      tr("Auto Cruise Engage Speed"),
+      tr("Enables cruise automatically once the vehicle reaches the set speed."
+         "0: Off · otherwise: engage at that speed (km/h)..  30:off"),
       kIcon, 30, 100, 5 },
 
     { "ParamAutoLaneChange",
-      tr("Auto lane change"),
-      tr("Automatically changes lanes when conditions are met. 0=Manual, 1=Auto"),
+      tr("Auto Lane Change Delay"),
+      tr("After the turn signal is activated, waits the set time before starting an automatic lane change.\n"
+         "0: Manual  ·value in seconds."),
       kIcon, 0, 100, 10 },
 
     { "ParamBrightness",
