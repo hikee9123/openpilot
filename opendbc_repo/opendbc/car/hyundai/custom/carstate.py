@@ -216,7 +216,6 @@ class CarStateCustom:
 
     # 이전에 enable 표시를 켰다면 유지
     if self.oldCruiseStateEnabled:
-      self._cencel_button = False
       ret.cruiseState.enabled = True
 
   # ----------------------------
