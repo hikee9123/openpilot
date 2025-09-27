@@ -221,7 +221,7 @@ class CarStateCustom:
       ui_comm = self.sm['uICustom'].community
       cm = int(getattr(ui_comm, 'cruiseMode', self.cruise_set_mode))
       cg = int(getattr(ui_comm, 'cruiseGap', self.cruiseGap))
-      csl = int(getattr(ui_comm, 'curveSpeedLimit', self.curveSpeedLimit))
+      csl = float(getattr(ui_comm, 'curveSpeedLimit', self.curveSpeedLimit))
       if self.cruise_set_mode != cm: self.cruise_set_mode = cm
       if self.cruiseGap != cg:       self.cruiseGap = cg
       if getattr(self, 'curveSpeedLimit', None) != csl: self.curveSpeedLimit = csl
@@ -286,7 +286,7 @@ class CarStateCustom:
 
   def _cruise_control_mode_toggle(self):
     """RES/SET 버튼으로 메뉴 모드 토글(기존 로직 유지)"""
-    cruise_buttons = self.CS.prev_cruise_buttons
+    cruise_buttons = getattr(self.CS, "prev_cruise_buttons", 0)
     if cruise_buttons == self.cruise_buttons_old:
       return
 
@@ -335,7 +335,7 @@ class CarStateCustom:
       self._cencel_button = False
       self.cruise_set_speed_kph = self.VSetDis
 
-    _gas_now = self.CS.out.gasPressed
+    _gas_now = bool(getattr(self.CS.out, "gasPressed", False))
     if not self.acc_active:
       self._gas_pressed_prev = _gas_now
       return float(self.cruise_set_speed_kph)
@@ -538,12 +538,12 @@ class CarStateCustom:
       self._vl(cp, "TPMS11", "PRESSURE_RR", 0.0),
     )
 
-    cruise_buttons = self.CS.prev_cruise_buttons
+    cruise_buttons = getattr(self.CS, "prev_cruise_buttons", 0)
     if cruise_buttons in (Buttons.CANCEL, Buttons.RES_ACCEL, Buttons.SET_DECEL):
       carSCustom.touched += 1
       if cruise_buttons == Buttons.CANCEL:
         self._cencel_button = True
-    elif self.acc_active and self.CS.out.gasPressed:
+    elif self.acc_active and bool(getattr(self.CS.out, "gasPressed", False)):
       carSCustom.touched += 1
 
     ret.carSCustom = carSCustom
