@@ -4,7 +4,7 @@ import time
 import pickle
 import subprocess
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 
 import numpy as np
 
@@ -39,52 +39,71 @@ from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 from openpilot.selfdrive.modeld.models.commonmodel_pyx import DrivingModelFrame, CLContext
 from openpilot.selfdrive.modeld.runners.tinygrad_helpers import qcom_tensor_from_opencl_address
 
-
 PROCESS_NAME = "selfdrive.modeld.modeld"
 SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
 
-# 기본 모델 디렉터리 (기존과 동일한 상대 경로)
-MODELS_DIR = Path(__file__).parent / 'models'
+# 기준 경로 고정: selfdrive/modeld/models/supercombos
+PROCESS_ROOT = Path(__file__).parent
+SUPERCOMBOS_DIR = PROCESS_ROOT / "models" / "supercombos"
 
 LAT_SMOOTH_SECONDS = 0.1
 LONG_SMOOTH_SECONDS = 0.3
 MIN_LAT_CONTROL_SPEED = 0.3
 
+VISION_ONNX = "driving_vision.onnx"
+POLICY_ONNX = "driving_policy.onnx"
+VISION_META = "driving_vision_metadata.pkl"
+POLICY_META = "driving_policy_metadata.pkl"
 
 # =========================
-# 모델 경로/메타 처리
+# supercombos 선택 로직 (ActiveModelName만)
 # =========================
-def _choose_model_dir(cli_dir: Optional[str]) -> Path:
+def _list_available_bundles() -> List[str]:
+  out: List[str] = []
+  if SUPERCOMBOS_DIR.exists():
+    for d in sorted(p for p in SUPERCOMBOS_DIR.iterdir() if p.is_dir()):
+      if (d / VISION_ONNX).exists() and (d / POLICY_ONNX).exists():
+        out.append(d.name)
+  return out
+
+def _auto_default_bundle_dir() -> Path:
+  c1 = SUPERCOMBOS_DIR / "1.big_driving"
+  if (c1 / VISION_ONNX).exists() and (c1 / POLICY_ONNX).exists():
+    return c1
+  c2 = SUPERCOMBOS_DIR / "default"
+  if (c2 / VISION_ONNX).exists() and (c2 / POLICY_ONNX).exists():
+    return c2
+  bundles = _list_available_bundles()
+  if bundles:
+    return SUPERCOMBOS_DIR / bundles[0]
+  # supercombos가 비어있다면 그대로 반환(후속 단계에서 에러)
+  return SUPERCOMBOS_DIR
+
+def _choose_model_dir_from_params_only() -> Path:
   """
-  모델 디렉터리 선택 우선순위:
-  CLI(--model-dir) > Params('ActiveModelDir') > ENV(MODEL_DIR) > 기본(models/)
+  오직 Params('ActiveModelName')만 사용하여 supercombos/<이름> 선택.
+  미설정 시 자동 기본 번들로 폴백.
   """
-  if cli_dir:
-    return Path(cli_dir)
   try:
-    p = Params().get("ActiveModelDir")
-    if p:
-      return Path(p.decode() if isinstance(p, (bytes, bytearray)) else p)
+    pname = Params().get("ActiveModelName")
+    if pname:
+      pname = pname.decode() if isinstance(pname, (bytes, bytearray)) else pname
+      bundle = SUPERCOMBOS_DIR / pname
+      return bundle
   except Exception:
     pass
-  env_dir = os.getenv("MODEL_DIR")
-  return Path(env_dir) if env_dir else MODELS_DIR
+  return _auto_default_bundle_dir()
 
-
+# =========================
+# 모델 메타 처리
+# =========================
 def _stale(meta: Path, onnx: Path) -> bool:
-  """메타가 없거나, ONNX가 더 최신이면 True."""
   return (not meta.exists()) or (onnx.stat().st_mtime > meta.stat().st_mtime)
 
-
 def _ensure_metadata_generated(onnx_path: Path, meta_path: Path) -> None:
-  """
-  메타데이터(pkl)가 없거나 낡았으면 get_model_metadata.py로 생성(또는 재생성).
-  실패 시 런타임 오류로 원인 출력.
-  """
   script = Path(__file__).parent / 'get_model_metadata.py'
   if not script.exists():
     raise FileNotFoundError(f"메타데이터 생성 스크립트를 찾을 수 없습니다: {script}")
-
   cmd = ["python3", str(script), str(onnx_path)]
   res = subprocess.run(cmd, cwd=Path(__file__).parent, capture_output=True, text=True)
   if res.returncode != 0:
@@ -94,21 +113,14 @@ def _ensure_metadata_generated(onnx_path: Path, meta_path: Path) -> None:
   if not meta_path.exists():
     raise RuntimeError(f"메타 생성 후에도 파일이 없습니다: {meta_path}")
 
-
 def _resolve_onnx_only_paths(model_dir: Path) -> Dict[str, Path]:
-  """
-  디렉터리에 ONNX만 있어도 동작.
-  - 필수: driving_vision.onnx, driving_policy.onnx
-  - 메타 없으면 자동 생성: driving_vision_metadata.pkl, driving_policy_metadata.pkl
-  """
-  vis_onnx = model_dir / 'driving_vision.onnx'
-  pol_onnx = model_dir / 'driving_policy.onnx'
+  vis_onnx = model_dir / VISION_ONNX
+  pol_onnx = model_dir / POLICY_ONNX
   if not vis_onnx.exists() or not pol_onnx.exists():
-    raise FileNotFoundError(f"[{model_dir}] ONNX 누락: driving_vision.onnx, driving_policy.onnx 필요")
+    raise FileNotFoundError(f"[{model_dir}] ONNX 누락: {VISION_ONNX}, {POLICY_ONNX} 필요")
 
-  vis_meta = model_dir / 'driving_vision_metadata.pkl'
-  pol_meta = model_dir / 'driving_policy_metadata.pkl'
-
+  vis_meta = model_dir / VISION_META
+  pol_meta = model_dir / POLICY_META
   if _stale(vis_meta, vis_onnx):
     _ensure_metadata_generated(vis_onnx, vis_meta)
   if _stale(pol_meta, pol_onnx):
@@ -120,7 +132,6 @@ def _resolve_onnx_only_paths(model_dir: Path) -> Dict[str, Path]:
     'vision_meta': vis_meta,
     'policy_meta': pol_meta,
   }
-
 
 # =========================
 # 제어/도메인 로직
@@ -135,7 +146,6 @@ def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.
     action_t=long_action_t
   )
   desired_accel = smooth_value(desired_accel, prev_action.desiredAcceleration, LONG_SMOOTH_SECONDS)
-
   desired_curvature = get_curvature_from_plan(
     plan[:, Plan.T_FROM_CURRENT_EULER][:, 2],
     plan[:, Plan.ORIENTATION_RATE][:, 2],
@@ -147,23 +157,19 @@ def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.
     desired_curvature = smooth_value(desired_curvature, prev_action.desiredCurvature, LAT_SMOOTH_SECONDS)
   else:
     desired_curvature = prev_action.desiredCurvature
-
   return log.ModelDataV2.Action(
     desiredCurvature=float(desired_curvature),
     desiredAcceleration=float(desired_accel),
     shouldStop=bool(should_stop),
   )
 
-
 class FrameMeta:
   frame_id: int = 0
   timestamp_sof: int = 0
   timestamp_eof: int = 0
-
   def __init__(self, vipc=None):
     if vipc is not None:
       self.frame_id, self.timestamp_sof, self.timestamp_eof = vipc.frame_id, vipc.timestamp_sof, vipc.timestamp_eof
-
 
 class InputQueues:
   def __init__(self, model_fps, env_fps, n_frames_input):
@@ -172,7 +178,6 @@ class InputQueues:
     self.model_fps = model_fps
     self.env_fps = env_fps
     self.n_frames_input = n_frames_input
-
     self.dtypes: dict[str, np.dtype] = {}
     self.shapes: dict[str, tuple] = {}
     self.q: dict[str, np.ndarray] = {}
@@ -224,13 +229,10 @@ class InputQueues:
           out[k] = self.q[k][:, idxs]
       return out
 
-
 class ModelState:
   frames: dict[str, DrivingModelFrame]
   prev_desire: np.ndarray
-
   def __init__(self, context: CLContext, paths: dict):
-    # ---- 메타 로드 ----
     with open(paths['vision_meta'], 'rb') as f:
       vision_metadata = pickle.load(f)
       self.vision_input_shapes = vision_metadata['input_shapes']
@@ -244,14 +246,11 @@ class ModelState:
       self.policy_output_slices = policy_metadata['output_slices']
       policy_output_size = policy_metadata['output_shapes']['outputs'][1]
 
-    # ---- ONNX 로드 ----
     self.vision_run, vision_specs = load_onnx_model(fetch(str(paths['vision_onnx'])))
     self.policy_run, policy_specs = load_onnx_model(fetch(str(paths['policy_onnx'])))
-    # (단일 입력 가정) 첫 입력 이름/스펙 사용 — 다중 입력이면 매핑 확장 필요
     self.vision_in_name, self.vision_in_spec = list(vision_specs.items())[0]
     self.policy_in_name, self.policy_in_spec = list(policy_specs.items())[0]
 
-    # ---- 프레임/버퍼 준비 ----
     self.frames = {name: DrivingModelFrame(context, ModelConstants.MODEL_RUN_FREQ // ModelConstants.MODEL_CONTEXT_FREQ)
                    for name in self.vision_input_names}
     self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
@@ -265,7 +264,6 @@ class ModelState:
     self.vision_output = np.zeros(vision_output_size, dtype=np.float32)
     self.policy_output = np.zeros(policy_output_size, dtype=np.float32)
     self.parser = Parser()
-
     self.vision_inputs: dict[str, Tensor] = {}
 
   def _prep_vision_inputs(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray]) -> dict[str, Tensor]:
@@ -284,13 +282,9 @@ class ModelState:
     return out
 
   def _adapt_to_spec(self, t: Tensor, expect_dtype) -> Tensor:
-    """
-    ONNX 입력 스펙에 맞춰 간단 변환.
-    - float32 기대 시: 0..1 스케일. (필요 시 mean/std 주석 해제)
-    """
     if expect_dtype == dtypes.float32:
       t = (t.cast(dtypes.float32) / 255.0)
-      # 아래가 필요한 모델이면 주석 해제:
+      # 필요 시 mean/std 적용 가능:
       # mean = Tensor([0.485, 0.456, 0.406]).reshape(1,-1,1,1)
       # std  = Tensor([0.229, 0.224, 0.225]).reshape(1,-1,1,1)
       # t = (t - mean) / std
@@ -301,17 +295,14 @@ class ModelState:
 
   def run(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
           inputs: dict[str, np.ndarray], prepare_only: bool) -> dict[str, np.ndarray] | None:
-    # Desire pulse (rising edge만 유지)
     inputs['desire_pulse'][0] = 0
     new_desire = np.where(inputs['desire_pulse'] - self.prev_desire > .99, inputs['desire_pulse'], 0)
     self.prev_desire[:] = inputs['desire_pulse']
 
-    # Vision 입력 준비
     vin_map = self._prep_vision_inputs(bufs, transforms)
     if prepare_only:
       return None
 
-    # Vision ONNX 실행 (단일 입력 가정: 첫 키 매핑)
     first_key = self.vision_input_names[0]
     vi = self._adapt_to_spec(vin_map[first_key], self.vision_in_spec.dtype)
     v_out = self.vision_run(**{self.vision_in_name: vi})
@@ -319,13 +310,11 @@ class ModelState:
     self.vision_output[:] = v_np
     vision_outputs_dict = self.parser.parse_vision_outputs(self.slice_outputs(self.vision_output, self.vision_output_slices))
 
-    # Policy 입력 큐 업데이트
     self.full_input_queues.enqueue({'features_buffer': vision_outputs_dict['hidden_state'], 'desire_pulse': new_desire})
     for k in ['desire_pulse', 'features_buffer']:
       self.numpy_inputs[k][:] = self.full_input_queues.get(k)[k]
     self.numpy_inputs['traffic_convention'][:] = inputs['traffic_convention']
 
-    # Policy ONNX 실행 (일반적으로 단일 입력 이름)
     p_src_name = self.policy_in_name
     p_in = Tensor(self.numpy_inputs[p_src_name], device='NPY').realize()
     p_out = self.policy_run(**{p_src_name: p_in})
@@ -338,20 +327,17 @@ class ModelState:
       combined_outputs_dict['raw_pred'] = np.concatenate([self.vision_output.copy(), self.policy_output.copy()])
     return combined_outputs_dict
 
-
-def main(demo: bool = False, model_dir_cli: Optional[str] = None):
+def main(demo: bool = False):
   cloudlog.warning("modeld init")
-
   if not USBGPU:
-    # USB GPU는 코어 점유로 실시간 설정 제외
     config_realtime_process(7, 54)
 
   st = time.monotonic()
   cloudlog.warning("setting up CL context")
   cl_context = CLContext()
 
-  # ---- 모델 로드 (ONNX만) ----
-  bundle_dir = _choose_model_dir(model_dir_cli)
+  # ActiveModelName만 사용해 supercombos/<이름> 선택
+  bundle_dir = _choose_model_dir_from_params_only()
   paths = _resolve_onnx_only_paths(bundle_dir)
   cloudlog.warning(f"CL context ready; loading ONNX models from: {bundle_dir}")
   model = ModelState(cl_context, paths)
@@ -381,16 +367,13 @@ def main(demo: bool = False, model_dir_cli: Optional[str] = None):
   if use_extra_client:
     cloudlog.warning(f"connected extra cam with buffer size: {vipc_client_extra.buffer_len} ({vipc_client_extra.width} x {vipc_client_extra.height})")
 
-  # messaging
   pm = PubMaster(["modelV2", "drivingModelData", "cameraOdometry"])
   sm = SubMaster(["deviceState", "carState", "roadCameraState", "liveCalibration", "driverMonitoringState", "carControl", "liveDelay"])
 
   publish_state = PublishState()
   params = Params()
 
-  # setup filter to track dropped frames
   frame_dropped_filter = FirstOrderFilter(0., 10., 1. / ModelConstants.MODEL_RUN_FREQ)
-  frame_id = 0
   last_vipc_frame_id = 0
   run_count = 0
 
@@ -412,7 +395,6 @@ def main(demo: bool = False, model_dir_cli: Optional[str] = None):
   DH = DesireHelper()
 
   while True:
-    # Keep receiving frames until we are at least 1 frame ahead of previous extra frame
     while meta_main.timestamp_sof < meta_extra.timestamp_sof + 25000000:
       buf_main = vipc_client_main.recv()
       meta_main = FrameMeta(vipc_client_main)
@@ -424,44 +406,35 @@ def main(demo: bool = False, model_dir_cli: Optional[str] = None):
       continue
 
     if use_extra_client:
-      # Keep receiving extra frames until frame id matches main camera
       while True:
         buf_extra = vipc_client_extra.recv()
         meta_extra = FrameMeta(vipc_client_extra)
         if buf_extra is None or meta_main.timestamp_sof < meta_extra.timestamp_sof + 25000000:
           break
-
       if buf_extra is None:
         cloudlog.debug("vipc_client_extra no frame")
         continue
-
       if abs(meta_main.timestamp_sof - meta_extra.timestamp_sof) > 10000000:
         cloudlog.error(
           f"frames out of sync! main: {meta_main.frame_id} ({meta_main.timestamp_sof / 1e9:.5f}), "
           f"extra: {meta_extra.frame_id} ({meta_extra.timestamp_sof / 1e9:.5f})"
         )
     else:
-      # Use single camera
       buf_extra = buf_main
       meta_extra = meta_main
 
     sm.update(0)
     desire = DH.desire
     is_rhd = sm["driverMonitoringState"].isRHD
-    frame_id = sm["roadCameraState"].frameId
     v_ego = max(sm["carState"].vEgo, 0.)
     lat_delay = sm["liveDelay"].lateralDelay + LAT_SMOOTH_SECONDS
     if sm.updated["liveCalibration"] and sm.seen['roadCameraState'] and sm.seen['deviceState']:
       device_from_calib_euler = np.array(sm["liveCalibration"].rpyCalib, dtype=np.float32)
       dc = DEVICE_CAMERAS[(str(sm['deviceState'].deviceType), str(sm['roadCameraState'].sensor))]
       model_transform_main = get_warp_matrix(
-        device_from_calib_euler,
-        dc.ecam.intrinsics if main_wide_camera else dc.fcam.intrinsics,
-        False
+        device_from_calib_euler, dc.ecam.intrinsics if main_wide_camera else dc.fcam.intrinsics, False
       ).astype(np.float32)
-      model_transform_extra = get_warp_matrix(
-        device_from_calib_euler, dc.ecam.intrinsics, True
-      ).astype(np.float32)
+      model_transform_extra = get_warp_matrix(device_from_calib_euler, dc.ecam.intrinsics, True).astype(np.float32)
       live_calib_seen = True
 
     traffic_convention = np.zeros(2)
@@ -471,10 +444,9 @@ def main(demo: bool = False, model_dir_cli: Optional[str] = None):
     if 0 <= desire < ModelConstants.DESIRE_LEN:
       vec_desire[desire] = 1
 
-    # tracked dropped frames
     vipc_dropped_frames = max(0, meta_main.frame_id - last_vipc_frame_id - 1)
     frames_dropped = frame_dropped_filter.update(min(vipc_dropped_frames, 10))
-    if run_count < 10:  # let frame drops warm up
+    if run_count < 10:
       frame_dropped_filter.x = 0.
       frames_dropped = 0.
     run_count += 1
@@ -486,10 +458,7 @@ def main(demo: bool = False, model_dir_cli: Optional[str] = None):
 
     bufs = {name: buf_extra if 'big' in name else buf_main for name in model.vision_input_names}
     transforms = {name: model_transform_extra if 'big' in name else model_transform_main for name in model.vision_input_names}
-    inputs: dict[str, np.ndarray] = {
-      'desire_pulse': vec_desire,
-      'traffic_convention': traffic_convention,
-    }
+    inputs: dict[str, np.ndarray] = {'desire_pulse': vec_desire, 'traffic_convention': traffic_convention}
 
     mt1 = time.perf_counter()
     model_output = model.run(bufs, transforms, inputs, prepare_only)
@@ -505,7 +474,7 @@ def main(demo: bool = False, model_dir_cli: Optional[str] = None):
       prev_action = action
       fill_model_msg(
         drivingdata_send, modelv2_send, model_output, action,
-        publish_state, meta_main.frame_id, meta_extra.frame_id, frame_id,
+        PublishState(), meta_main.frame_id, meta_extra.frame_id, sm["roadCameraState"].frameId,
         frame_drop_ratio, meta_main.timestamp_eof, model_execution_time, live_calib_seen
       )
 
@@ -526,16 +495,13 @@ def main(demo: bool = False, model_dir_cli: Optional[str] = None):
 
     last_vipc_frame_id = meta_main.frame_id
 
-
 if __name__ == "__main__":
   try:
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--demo', action='store_true', help='A boolean for demo mode.')
-    parser.add_argument('--model-dir', type=str, default=None,
-                        help='Directory containing ONNX files (driving_vision.onnx, driving_policy.onnx). '
-                             'Metadata (*.pkl) will be auto-generated if missing.')
+    # 경로/이름 관련 인자는 더 이상 받지 않음(ActiveModelName만 사용)
     args = parser.parse_args()
-    main(demo=args.demo, model_dir_cli=args.model_dir)
+    main(demo=args.demo)
   except KeyboardInterrupt:
     cloudlog.warning("got SIGINT")

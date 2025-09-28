@@ -714,27 +714,22 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(paren
 
 
 
-  QString selected_model = QString::fromStdString(Params().get("ActiveModelDir"));
+  QString selected_model = QString::fromStdString(Params().get("ActiveModelName"));
   auto changeModel = new ButtonControl(selected_model.length() ? selected_model : tr("Select your model"),
                     selected_model.length() ? tr("CHANGE") : tr("SELECT"), "");
 
   QObject::connect( changeModel, &ButtonControl::clicked, [=]() {
     QStringList items = {
-      "8.Notre Dame Model,supercombo_ND",
-      "7.North Dakota Model,supercombo_DM",
-      "6.WD40 model,supercombo_WD40",
-      "5.Duck_Amigo model,supercombo_DA",
-      "4.Recertified_Herbalist,supercombo_RH",
-      "3.Los_Angeles model,supercombo_LA",
-      "2.Certified_Herbalist2,supercombo_CH2",
-      "1.Certified_Herbalist1,supercombo_CH1",
+      "3.Firehose",
+      "2.Steam_Powered",
+      "1.default",
       };
 
     QString selection = MultiOptionDialog::getSelection(tr("Select a model"), items, selected_model, this);
     if ( !selection.isEmpty() )
     {
       //  int selectedIndex = items.indexOf(selection);
-      Params().put("ActiveModelDir", selection.toStdString());
+      Params().put("ActiveModelName", selection.toStdString());
     }
   });
   addItem(changeModel);
