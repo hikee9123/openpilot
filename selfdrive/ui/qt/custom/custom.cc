@@ -714,7 +714,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(paren
 
 
 
-  QString selected_model = QString::fromStdString(Params().get("SelectedModel"));
+  QString selected_model = QString::fromStdString(Params().get("ActiveModelDir"));
   auto changeModel = new ButtonControl(selected_model.length() ? selected_model : tr("Select your model"),
                     selected_model.length() ? tr("CHANGE") : tr("SELECT"), "");
 
@@ -734,10 +734,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(paren
     if ( !selection.isEmpty() )
     {
       //  int selectedIndex = items.indexOf(selection);
-      Params().put("SelectedModel", selection.toStdString());
-      //  printf("sected model  %d  %s", selectedIndex, selection.toStdString());
-     // qApp->exit(18);
-    //  watchdog_kick(0);
+      Params().put("ActiveModelDir", selection.toStdString());
     }
   });
   addItem(changeModel);
