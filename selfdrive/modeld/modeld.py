@@ -18,7 +18,8 @@ if USBGPU:
 from tinygrad.tensor import Tensor
 from tinygrad.dtype import dtypes
 from tinygrad.helpers import fetch
-from examples.benchmark_onnx import load_onnx_model
+
+
 
 import cereal.messaging as messaging
 from cereal import car, log
@@ -54,6 +55,33 @@ VISION_ONNX = "driving_vision.onnx"
 POLICY_ONNX = "driving_policy.onnx"
 VISION_META = "driving_vision_metadata.pkl"
 POLICY_META = "driving_policy_metadata.pkl"
+
+
+# --- 모듈 전역: 한 번만 해석해서 캐시 ---
+def _resolve_load_onnx_model():
+  try:
+    from examples.benchmark_onnx import load_onnx_model
+    return load_onnx_model
+  except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+    candidates = [
+      Path(__file__).resolve().parents[2] / "tinygrad_repo",
+      Path(__file__).resolve().parents[1] / "tinygrad_repo",
+      Path.cwd() / "tinygrad_repo",
+    ]
+    for base in candidates:
+      if (base / "examples" / "benchmark_onnx.py").exists():
+        sys.path.insert(0, str(base))
+        from examples.benchmark_onnx import load_onnx_model
+        return load_onnx_model
+    raise ModuleNotFoundError(
+      "Cannot import examples.benchmark_onnx.load_onnx_model. "
+      "tinygrad_repo 경로를 PYTHONPATH에 추가하거나 _resolve_load_onnx_model()의 candidates를 수정하세요."
+    )
+
+load_onnx_model = _resolve_load_onnx_model()  # 전역 캐시
+
 
 # =========================
 # supercombos 선택 로직 (ActiveModelName만)
