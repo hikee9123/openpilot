@@ -19,8 +19,6 @@ from tinygrad.tensor import Tensor
 from tinygrad.dtype import dtypes
 from tinygrad.helpers import fetch
 
-
-
 import cereal.messaging as messaging
 from cereal import car, log
 from cereal.messaging import PubMaster, SubMaster
@@ -56,11 +54,19 @@ POLICY_ONNX = "driving_policy.onnx"
 VISION_META = "driving_vision_metadata.pkl"
 POLICY_META = "driving_policy_metadata.pkl"
 
+# ---------- 콘솔/클라우드 동시 로그 ----------
+def p(msg: str):
+  print(f"[modeld] {msg}", flush=True)
+  try:
+    cloudlog.warning(msg)
+  except Exception:
+    pass
 
 # --- 모듈 전역: 한 번만 해석해서 캐시 ---
 def _resolve_load_onnx_model():
   try:
     from examples.benchmark_onnx import load_onnx_model
+    p("found tinygrad examples on PYTHONPATH")
     return load_onnx_model
   except ModuleNotFoundError:
     import sys
@@ -74,6 +80,7 @@ def _resolve_load_onnx_model():
       if (base / "examples" / "benchmark_onnx.py").exists():
         sys.path.insert(0, str(base))
         from examples.benchmark_onnx import load_onnx_model
+        p(f"added tinygrad_repo to sys.path: {base}")
         return load_onnx_model
     raise ModuleNotFoundError(
       "Cannot import examples.benchmark_onnx.load_onnx_model. "
@@ -81,7 +88,6 @@ def _resolve_load_onnx_model():
     )
 
 load_onnx_model = _resolve_load_onnx_model()  # 전역 캐시
-
 
 # =========================
 # supercombos 선택 로직 (ActiveModelName만)
@@ -104,23 +110,21 @@ def _auto_default_bundle_dir() -> Path:
   bundles = _list_available_bundles()
   if bundles:
     return SUPERCOMBOS_DIR / bundles[0]
-  # supercombos가 비어있다면 그대로 반환(후속 단계에서 에러)
   return SUPERCOMBOS_DIR
 
 def _choose_model_dir_from_params_only() -> Path:
-  """
-  오직 Params('ActiveModelName')만 사용하여 supercombos/<이름> 선택.
-  미설정 시 자동 기본 번들로 폴백.
-  """
   try:
     pname = Params().get("ActiveModelName")
     if pname:
       pname = pname.decode() if isinstance(pname, (bytes, bytearray)) else pname
       bundle = SUPERCOMBOS_DIR / pname
+      p(f"ActiveModelName='{pname}' → bundle dir: {bundle}")
       return bundle
-  except Exception:
-    pass
-  return _auto_default_bundle_dir()
+  except Exception as e:
+    p(f"Params ActiveModelName read failed: {e}")
+  dflt = _auto_default_bundle_dir()
+  p(f"ActiveModelName not set → fallback bundle dir: {dflt}")
+  return dflt
 
 # =========================
 # 모델 메타 처리
@@ -132,16 +136,21 @@ def _ensure_metadata_generated(onnx_path: Path, meta_path: Path) -> None:
   script = Path(__file__).parent / 'get_model_metadata.py'
   if not script.exists():
     raise FileNotFoundError(f"메타데이터 생성 스크립트를 찾을 수 없습니다: {script}")
+  p(f"generating metadata for {onnx_path.name} …")
   cmd = ["python3", str(script), str(onnx_path)]
   res = subprocess.run(cmd, cwd=Path(__file__).parent, capture_output=True, text=True)
   if res.returncode != 0:
+    p(f"[ERROR] metadata generation failed for {onnx_path.name}")
+    p(f"stdout:\n{res.stdout}\nstderr:\n{res.stderr}")
     raise RuntimeError(
       f"메타데이터 생성 실패\ncmd: {' '.join(cmd)}\nstdout:\n{res.stdout}\nstderr:\n{res.stderr}"
     )
   if not meta_path.exists():
     raise RuntimeError(f"메타 생성 후에도 파일이 없습니다: {meta_path}")
+  p(f"metadata ready: {meta_path}")
 
 def _resolve_onnx_only_paths(model_dir: Path) -> Dict[str, Path]:
+  p(f"validating bundle: {model_dir}")
   vis_onnx = model_dir / VISION_ONNX
   pol_onnx = model_dir / POLICY_ONNX
   if not vis_onnx.exists() or not pol_onnx.exists():
@@ -151,8 +160,12 @@ def _resolve_onnx_only_paths(model_dir: Path) -> Dict[str, Path]:
   pol_meta = model_dir / POLICY_META
   if _stale(vis_meta, vis_onnx):
     _ensure_metadata_generated(vis_onnx, vis_meta)
+  else:
+    p(f"metadata up-to-date: {vis_meta}")
   if _stale(pol_meta, pol_onnx):
     _ensure_metadata_generated(pol_onnx, pol_meta)
+  else:
+    p(f"metadata up-to-date: {pol_meta}")
 
   return {
     'vision_onnx': vis_onnx,
@@ -226,6 +239,7 @@ class InputQueues:
 
   def reset(self) -> None:
     self.q = {k: np.zeros(self.shapes[k], dtype=self.dtypes[k]) for k in self.dtypes.keys()}
+    p(f"InputQueues initialized: { {k:self.shapes[k] for k in self.shapes} }")
 
   def enqueue(self, inputs: dict[str, np.ndarray]) -> None:
     for k in inputs.keys():
@@ -261,23 +275,35 @@ class ModelState:
   frames: dict[str, DrivingModelFrame]
   prev_desire: np.ndarray
   def __init__(self, context: CLContext, paths: dict):
+    p("loading metadata …")
     with open(paths['vision_meta'], 'rb') as f:
       vision_metadata = pickle.load(f)
       self.vision_input_shapes = vision_metadata['input_shapes']
       self.vision_input_names = list(self.vision_input_shapes.keys())
       self.vision_output_slices = vision_metadata['output_slices']
       vision_output_size = vision_metadata['output_shapes']['outputs'][1]
-
     with open(paths['policy_meta'], 'rb') as f:
       policy_metadata = pickle.load(f)
       self.policy_input_shapes = policy_metadata['input_shapes']
       self.policy_output_slices = policy_metadata['output_slices']
       policy_output_size = policy_metadata['output_shapes']['outputs'][1]
+    p(f"vision inputs: {self.vision_input_names}")
 
-    self.vision_run, vision_specs = load_onnx_model(fetch(str(paths['vision_onnx'])))
-    self.policy_run, policy_specs = load_onnx_model(fetch(str(paths['policy_onnx'])))
+    # ONNX 로드
+    try:
+      p(f"loading ONNX (vision): {paths['vision_onnx']}")
+      self.vision_run, vision_specs = load_onnx_model(fetch(str(paths['vision_onnx'])))
+      p(f"vision input specs: {list(vision_specs.keys())}")
+      p(f"loading ONNX (policy): {paths['policy_onnx']}")
+      self.policy_run, policy_specs = load_onnx_model(fetch(str(paths['policy_onnx'])))
+      p(f"policy input specs: {list(policy_specs.keys())}")
+    except Exception as e:
+      p(f"[ERROR] ONNX load failed: {e}")
+      raise
+
     self.vision_in_name, self.vision_in_spec = list(vision_specs.items())[0]
     self.policy_in_name, self.policy_in_spec = list(policy_specs.items())[0]
+    p(f"selected inputs → vision: {self.vision_in_name}, policy: {self.policy_in_name}")
 
     self.frames = {name: DrivingModelFrame(context, ModelConstants.MODEL_RUN_FREQ // ModelConstants.MODEL_CONTEXT_FREQ)
                    for name in self.vision_input_names}
@@ -293,6 +319,7 @@ class ModelState:
     self.policy_output = np.zeros(policy_output_size, dtype=np.float32)
     self.parser = Parser()
     self.vision_inputs: dict[str, Tensor] = {}
+    p("ModelState ready")
 
   def _prep_vision_inputs(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray]) -> dict[str, Tensor]:
     imgs_cl = {name: self.frames[name].prepare(bufs[name], transforms[name].flatten()) for name in self.vision_input_names}
@@ -312,10 +339,6 @@ class ModelState:
   def _adapt_to_spec(self, t: Tensor, expect_dtype) -> Tensor:
     if expect_dtype == dtypes.float32:
       t = (t.cast(dtypes.float32) / 255.0)
-      # 필요 시 mean/std 적용 가능:
-      # mean = Tensor([0.485, 0.456, 0.406]).reshape(1,-1,1,1)
-      # std  = Tensor([0.229, 0.224, 0.225]).reshape(1,-1,1,1)
-      # t = (t - mean) / std
     return t
 
   def slice_outputs(self, model_outputs: np.ndarray, output_slices: dict[str, slice]) -> dict[str, np.ndarray]:
@@ -333,22 +356,29 @@ class ModelState:
 
     first_key = self.vision_input_names[0]
     vi = self._adapt_to_spec(vin_map[first_key], self.vision_in_spec.dtype)
+
+    # Vision 추론
+    t0 = time.perf_counter()
     v_out = self.vision_run(**{self.vision_in_name: vi})
     v_np = v_out.contiguous().realize().uop.base.buffer.numpy()
     self.vision_output[:] = v_np
     vision_outputs_dict = self.parser.parse_vision_outputs(self.slice_outputs(self.vision_output, self.vision_output_slices))
+    t1 = time.perf_counter()
 
+    # Policy 추론
     self.full_input_queues.enqueue({'features_buffer': vision_outputs_dict['hidden_state'], 'desire_pulse': new_desire})
     for k in ['desire_pulse', 'features_buffer']:
       self.numpy_inputs[k][:] = self.full_input_queues.get(k)[k]
-    self.numpy_inputs['traffic_convention'][:] = inputs['traffic_convention']
-
-    p_src_name = self.policy_in_name
-    p_in = Tensor(self.numpy_inputs[p_src_name], device='NPY').realize()
-    p_out = self.policy_run(**{p_src_name: p_in})
+    # traffic_convention은 루프에서 채움
+    p_in_name = self.policy_in_name
+    p_in = Tensor(self.numpy_inputs[p_in_name], device='NPY').realize()
+    p_out = self.policy_run(**{p_in_name: p_in})
     p_np = p_out.contiguous().realize().uop.base.buffer.numpy()
     self.policy_output[:] = p_np
     policy_outputs_dict = self.parser.parse_policy_outputs(self.slice_outputs(self.policy_output, self.policy_output_slices))
+    t2 = time.perf_counter()
+
+    p(f"inference: vision={ (t1-t0)*1000:.1f}ms, policy={ (t2-t1)*1000:.1f}ms")
 
     combined_outputs_dict = {**vision_outputs_dict, **policy_outputs_dict}
     if SEND_RAW_PRED:
@@ -356,22 +386,22 @@ class ModelState:
     return combined_outputs_dict
 
 def main(demo: bool = False):
-  cloudlog.warning("modeld init")
+  p(f"init… DEV={os.environ.get('DEV')} USBGPU={USBGPU} TICI={TICI}")
   if not USBGPU:
     config_realtime_process(7, 54)
 
   st = time.monotonic()
-  cloudlog.warning("setting up CL context")
+  p("creating CLContext …")
   cl_context = CLContext()
 
-  # ActiveModelName만 사용해 supercombos/<이름> 선택
   bundle_dir = _choose_model_dir_from_params_only()
   paths = _resolve_onnx_only_paths(bundle_dir)
-  cloudlog.warning(f"CL context ready; loading ONNX models from: {bundle_dir}")
+  p(f"loading models from: {bundle_dir}")
   model = ModelState(cl_context, paths)
-  cloudlog.warning(f"models loaded in {time.monotonic() - st:.1f}s, modeld starting")
+  p(f"models ready in {time.monotonic() - st:.2f}s, starting main loop")
 
   # visionipc clients
+  p("waiting for camerad streams …")
   while True:
     available_streams = VisionIpcClient.available_streams("camerad", block=False)
     if available_streams:
@@ -380,27 +410,26 @@ def main(demo: bool = False):
       main_wide_camera = VisionStreamType.VISION_STREAM_ROAD not in available_streams
       break
     time.sleep(.1)
+  p(f"available streams: {available_streams}")
 
   vipc_client_main_stream = VisionStreamType.VISION_STREAM_WIDE_ROAD if main_wide_camera else VisionStreamType.VISION_STREAM_ROAD
   vipc_client_main = VisionIpcClient("camerad", vipc_client_main_stream, True, cl_context)
   vipc_client_extra = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_WIDE_ROAD, False, cl_context)
-  cloudlog.warning(f"vision stream set up, main_wide_camera: {main_wide_camera}, use_extra_client: {use_extra_client}")
+  p(f"connecting vision streams… main={vipc_client_main_stream} extra={use_extra_client}")
 
   while not vipc_client_main.connect(False):
     time.sleep(0.1)
   while use_extra_client and not vipc_client_extra.connect(False):
     time.sleep(0.1)
 
-  cloudlog.warning(f"connected main cam with buffer size: {vipc_client_main.buffer_len} ({vipc_client_main.width} x {vipc_client_main.height})")
+  p(f"main cam connected: buffers={vipc_client_main.buffer_len} size=({vipc_client_main.width}x{vipc_client_main.height})")
   if use_extra_client:
-    cloudlog.warning(f"connected extra cam with buffer size: {vipc_client_extra.buffer_len} ({vipc_client_extra.width} x {vipc_client_extra.height})")
+    p(f"extra cam connected: buffers={vipc_client_extra.buffer_len} size=({vipc_client_extra.width}x{vipc_client_extra.height})")
 
   pm = PubMaster(["modelV2", "drivingModelData", "cameraOdometry"])
   sm = SubMaster(["deviceState", "carState", "roadCameraState", "liveCalibration", "driverMonitoringState", "carControl", "liveDelay"])
 
-  publish_state = PublishState()
   params = Params()
-
   frame_dropped_filter = FirstOrderFilter(0., 10., 1. / ModelConstants.MODEL_RUN_FREQ)
   last_vipc_frame_id = 0
   run_count = 0
@@ -415,22 +444,24 @@ def main(demo: bool = False):
   if demo:
     CP = get_demo_car_params()
   else:
+    p("waiting CarParams …")
     CP = messaging.log_from_bytes(params.get("CarParams", block=True), car.CarParams)
-  cloudlog.info("modeld got CarParams: %s", CP.brand)
+  p(f"CarParams brand: {CP.brand}")
 
   long_delay = CP.longitudinalActuatorDelay + LONG_SMOOTH_SECONDS
   prev_action = log.ModelDataV2.Action()
   DH = DesireHelper()
 
+  loop_i = 0
   while True:
+    # sync main/extra
     while meta_main.timestamp_sof < meta_extra.timestamp_sof + 25000000:
       buf_main = vipc_client_main.recv()
       meta_main = FrameMeta(vipc_client_main)
       if buf_main is None:
         break
-
     if buf_main is None:
-      cloudlog.debug("vipc_client_main no frame")
+      p("vipc_main: no frame")
       continue
 
     if use_extra_client:
@@ -440,13 +471,11 @@ def main(demo: bool = False):
         if buf_extra is None or meta_main.timestamp_sof < meta_extra.timestamp_sof + 25000000:
           break
       if buf_extra is None:
-        cloudlog.debug("vipc_client_extra no frame")
+        p("vipc_extra: no frame")
         continue
       if abs(meta_main.timestamp_sof - meta_extra.timestamp_sof) > 10000000:
-        cloudlog.error(
-          f"frames out of sync! main: {meta_main.frame_id} ({meta_main.timestamp_sof / 1e9:.5f}), "
-          f"extra: {meta_extra.frame_id} ({meta_extra.timestamp_sof / 1e9:.5f})"
-        )
+        p(f"[WARN] frames out of sync main={meta_main.frame_id} extra={meta_extra.frame_id}")
+
     else:
       buf_extra = buf_main
       meta_extra = meta_main
@@ -481,17 +510,17 @@ def main(demo: bool = False):
 
     frame_drop_ratio = frames_dropped / (1 + frames_dropped)
     prepare_only = vipc_dropped_frames > 0
-    if prepare_only:
-      cloudlog.error(f"skipping model eval. Dropped {vipc_dropped_frames} frames")
+    if prepare_only and vipc_dropped_frames:
+      p(f"[DROP] dropped={vipc_dropped_frames} (ratio~{frame_drop_ratio:.2f}), skip eval")
 
     bufs = {name: buf_extra if 'big' in name else buf_main for name in model.vision_input_names}
     transforms = {name: model_transform_extra if 'big' in name else model_transform_main for name in model.vision_input_names}
     inputs: dict[str, np.ndarray] = {'desire_pulse': vec_desire, 'traffic_convention': traffic_convention}
 
-    mt1 = time.perf_counter()
+    t0 = time.perf_counter()
     model_output = model.run(bufs, transforms, inputs, prepare_only)
-    mt2 = time.perf_counter()
-    model_execution_time = mt2 - mt1
+    t1 = time.perf_counter()
+    model_execution_time = t1 - t0
 
     if model_output is not None:
       modelv2_send = messaging.new_message('modelV2')
@@ -516,20 +545,30 @@ def main(demo: bool = False):
       drivingdata_send.drivingModelData.meta.laneChangeState = DH.lane_change_state
       drivingdata_send.drivingModelData.meta.laneChangeDirection = DH.lane_change_direction
 
-      fill_pose_msg(posenet_send, model_output, meta_main.frame_id, vipc_dropped_frames, meta_main.timestamp_eof, live_calib_seen)
       pm.send('modelV2', modelv2_send)
       pm.send('drivingModelData', drivingdata_send)
       pm.send('cameraOdometry', posenet_send)
 
+      if loop_i % 30 == 0:  # 너무 시끄럽지 않게 주기적으로 핵심 상태만 출력
+        p(f"pub ok: frame={meta_main.frame_id} v_ego={v_ego:.2f} "
+          f"exec={model_execution_time*1000:.1f}ms lane_change_prob={lane_change_prob:.3f}")
+    else:
+      if loop_i % 30 == 0:
+        p("prepared-only step (no inference)")
+
     last_vipc_frame_id = meta_main.frame_id
+    loop_i += 1
 
 if __name__ == "__main__":
   try:
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--demo', action='store_true', help='A boolean for demo mode.')
-    # 경로/이름 관련 인자는 더 이상 받지 않음(ActiveModelName만 사용)
     args = parser.parse_args()
     main(demo=args.demo)
   except KeyboardInterrupt:
-    cloudlog.warning("got SIGINT")
+    p("got SIGINT")
+  except Exception as e:
+    # 최상위 예외 가드: 어디서 죽었는지 마지막 메시지 출력
+    p(f"[FATAL] {e}")
+    raise
