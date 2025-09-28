@@ -134,6 +134,7 @@ class CarController(CarControllerBase):
 
     # Button messages
     if not self.CP.openpilotLongitudinalControl:
+      can_sends.append( hyundaican.create_mdps12( self.packer, self.frame, CS.customCS.mdps12 ) ) #custom  # 100 Hz send mdps12 to LKAS to prevent LKAS error
       if CC.cruiseControl.cancel:
         can_sends.append(hyundaican.create_clu11(self.packer, self.frame, CS.clu11, Buttons.CANCEL, self.CP))
         self.customCC.NC.reset()  #custom 혹은 self.customCC 내부에 reset 노출

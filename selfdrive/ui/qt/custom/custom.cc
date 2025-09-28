@@ -303,7 +303,6 @@ void CustomPanel::OnTimer()
     m_time++;
 
     int PowerOff = m_jsonobj["ParamPowerOff"].toInt();
-    printf( "timer %d  endtime =%d\n", m_time, PowerOff);
     if( PowerOff && (m_time > PowerOff) && (scene.custom.m_powerflag) )
     {
          scene.custom.m_powerflag = 0;
@@ -508,18 +507,19 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
 
     { "ParamCurveSpeedLimit",
       tr("Curve speed adjust"),
-      tr("Adjust maximum speed based on road curvature. "),
-      kIcon, 30, 120, 10 },
-
+      tr("Adjust maximum speed based on road curvature."),
+      kIcon, 30, 100, 5 },
 
     { "ParamAutoEngage",
-      tr("Auto engage"),
-      tr("Automatically engages when conditions are met. 0=Manual, 1=Auto"),
-      kIcon, 0, 1, 1 },
+      tr("Auto Cruise Engage Speed"),
+      tr("Enables cruise automatically once the vehicle reaches the set speed."
+         "30: Off · otherwise: engage at that speed (km/h)."),
+      kIcon, 30, 100, 5 },
 
     { "ParamAutoLaneChange",
-      tr("Auto lane change"),
-      tr("Automatically changes lanes when conditions are met. 0=Manual, 1=Auto"),
+      tr("Auto Lane Change Delay"),
+      tr("After the turn signal is activated, waits the set time before starting an automatic lane change.\n"
+         "0: Manual  ·value in seconds."),
       kIcon, 0, 100, 10 },
 
     { "ParamBrightness",
@@ -530,7 +530,7 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
     { "ParamAutoScreenOff",
       tr("Screen Timeout"),
       tr("Set how long the screen stays on before turning off automatically (in 10-second steps). 0 = None."),
-      kIcon, 0, 120, 5 },
+      kIcon, 0, 120, 1 },
 
     { "ParamPowerOff",
       tr("Power off time"),
@@ -839,86 +839,93 @@ UITab::UITab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(parent), m_
     {
       "ShowDebugMessage",
       "Show Debug Message",
-      "",
+      "Display debug popups/log overlays for troubleshooting.",
+      "../assets/offroad/icon_shell.png",
+    },
+    {
+      "DisableUpdates",
+      "Disable OTA Updates",
+      "Prevents downloading and installing software updates.",
       "../assets/offroad/icon_shell.png",
     },
     {
       "ShowCarTracking",
-      "Show Car Tracking",
-      "",
+      "how Vehicle Tracking",
+      "Display detected vehicles and paths on the HUD.",
       "../assets/offroad/icon_shell.png",
     },
     {
       "tpms",
       "Show tpms",
-      "",
+      "Show tire pressure monitoring values on the HUD.",
       "../assets/offroad/icon_shell.png",
     },
     {
       "ParamDebug",
       "Show debug trace message",
-      "",
+      "Enable verbose internal trace messages for diagnostics.",
       "../assets/offroad/icon_shell.png",
     },
+    // ───────── Kegman (HUD Overlay) ─────────
     {
       "kegman",
-      "Show kegman",
-      "You can choose 4 max from the menu below",
+      "HUD Overlay (Kegman)",
+      "Select up to 4 items below to show on the HUD.",
       "../assets/offroad/icon_shell.png",
     },
     {
       "kegmanCPU",
-      " - CPU temperature",
-      "1. Up to 4 menus can be displayed.",
+      "CPU temperature",
+      "1. Shows CPU temperature (°C). Counts toward the 4-item HUD limit.",
       "",
       //"../assets/offroad/icon_shell.png",
     },
     {
       "kegmanLag",
-      " - Lag(ms) CPU status",
-      "2. Up to 4 menus can be displayed.",
+      "UI Lag",
+      "2. Shows UI frame latency (ms). Counts toward the 4-item HUD limit",
       "",
       //"../assets/offroad/icon_shell.png",
     },
     {
       "kegmanBattery",
-      " - battery voltage",
-      "3. Up to 4 menus can be displayed.",
+      "Battery Voltage",
+      "3. Shows system/battery voltage (V). Counts toward the 4-item HUD limit.",
       "",
       //"../assets/offroad/icon_shell.png",
     },
     {
       "kegmanGPU",
-      " - GPS accuracy",
-      "4. Up to 4 menus can be displayed.",
+      "GPS Accuracy",
+      "4. Shows GPS horizontal accuracy (m). Counts toward the 4-item HUD limit.",
       "",
       //"../assets/offroad/icon_shell.png",
     },
     {
       "kegmanAngle",
-      " - steering angle",
-      "5. Up to 4 menus can be displayed.",
+      "Steering Angle",
+      "5. Shows steering angle (°). Counts toward the 4-item HUD limit.",
       "",
      // "../assets/offroad/icon_shell.png",
     },
     {
       "kegmanEngine",
-      " - engine status",
-      "6. Up to 4 menus can be displayed.",
+      "Engine Status",
+      "6. Shows engine state (e.g., RPM/ON-OFF). Counts toward the 4-item HUD limit.",
       "",
       //"../assets/offroad/icon_shell.png",
     },
     {
       "kegmanDistance",
-      " - radar relative distance",
-      "7. Up to 4 menus can be displayed.",
+      "Relative Distance",
+      "7. Shows radar relative distance (m). Counts toward the 4-item HUD limit.",
       "",
      // "../assets/offroad/icon_shell.png",
     },
     {
       "kegmanSpeed",
-      " - radar relative speed",
-      "8. Up to 4 menus can be displayed.",
+      "Relative Speed",
+      "8. Shows radar relative speed (m/s). Counts toward the 4-item HUD limit.",
       "",
       //"../assets/offroad/icon_shell.png",
     },

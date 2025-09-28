@@ -168,11 +168,13 @@ class CruiseButtonCtrl:
     ACC가 꺼진 상태에서 가속 페달 입력으로 ACC를 켜는 동작을 처리.
     차량마다 ACC on 버튼은 다르지만, 일반적으로 RES_ACCEL을 사용.
     """
-    if CS.customCS.autoEngage == 0:
+    if CS.customCS.autoEngage <= 30:
       return None
-    if CS.customCS.cruiseGap != CS.customCS.gapSet:
+    elif CS.customCS._cencel_button:
       return None
-    if CS.customCS.clu_Vanz <= self.MIN_SET_SPEED_KPH:
+    elif CS.customCS.cruiseGap != CS.customCS.gapSet:
+      return None
+    elif CS.customCS.clu_Vanz <= CS.customCS.autoEngage: # self.MIN_SET_SPEED_KPH:
       return None
 
     acc_on = self._is_acc_on(CS)
