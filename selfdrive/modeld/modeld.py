@@ -1,19 +1,27 @@
 #!/usr/bin/env python3
 import os
+import time
+import pickle
+import subprocess
+from pathlib import Path
+from typing import Optional, Dict
+
+import numpy as np
+
 from openpilot.system.hardware import TICI
 os.environ['DEV'] = 'QCOM' if TICI else 'LLVM'
 USBGPU = "USBGPU" in os.environ
 if USBGPU:
   os.environ['DEV'] = 'AMD'
   os.environ['AMD_IFACE'] = 'USB'
+
 from tinygrad.tensor import Tensor
 from tinygrad.dtype import dtypes
-import time
-import pickle
-import numpy as np
+from tinygrad.helpers import fetch
+from examples.benchmark_onnx import load_onnx_model
+
 import cereal.messaging as messaging
 from cereal import car, log
-from pathlib import Path
 from cereal.messaging import PubMaster, SubMaster
 from msgq.visionipc import VisionIpcClient, VisionStreamType, VisionBuf
 from opendbc.car.car_helpers import get_demo_car_params
@@ -35,38 +43,117 @@ from openpilot.selfdrive.modeld.runners.tinygrad_helpers import qcom_tensor_from
 PROCESS_NAME = "selfdrive.modeld.modeld"
 SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
 
-VISION_PKL_PATH = Path(__file__).parent / 'models/driving_vision_tinygrad.pkl'
-POLICY_PKL_PATH = Path(__file__).parent / 'models/driving_policy_tinygrad.pkl'
-VISION_METADATA_PATH = Path(__file__).parent / 'models/driving_vision_metadata.pkl'
-POLICY_METADATA_PATH = Path(__file__).parent / 'models/driving_policy_metadata.pkl'
+# 기본 모델 디렉터리 (기존과 동일한 상대 경로)
+MODELS_DIR = Path(__file__).parent / 'models'
 
 LAT_SMOOTH_SECONDS = 0.1
 LONG_SMOOTH_SECONDS = 0.3
 MIN_LAT_CONTROL_SPEED = 0.3
 
 
+# =========================
+# 모델 경로/메타 처리
+# =========================
+def _choose_model_dir(cli_dir: Optional[str]) -> Path:
+  """
+  모델 디렉터리 선택 우선순위:
+  CLI(--model-dir) > Params('ActiveModelDir') > ENV(MODEL_DIR) > 기본(models/)
+  """
+  if cli_dir:
+    return Path(cli_dir)
+  try:
+    p = Params().get("ActiveModelDir")
+    if p:
+      return Path(p.decode() if isinstance(p, (bytes, bytearray)) else p)
+  except Exception:
+    pass
+  env_dir = os.getenv("MODEL_DIR")
+  return Path(env_dir) if env_dir else MODELS_DIR
+
+
+def _stale(meta: Path, onnx: Path) -> bool:
+  """메타가 없거나, ONNX가 더 최신이면 True."""
+  return (not meta.exists()) or (onnx.stat().st_mtime > meta.stat().st_mtime)
+
+
+def _ensure_metadata_generated(onnx_path: Path, meta_path: Path) -> None:
+  """
+  메타데이터(pkl)가 없거나 낡았으면 get_model_metadata.py로 생성(또는 재생성).
+  실패 시 런타임 오류로 원인 출력.
+  """
+  script = Path(__file__).parent / 'get_model_metadata.py'
+  if not script.exists():
+    raise FileNotFoundError(f"메타데이터 생성 스크립트를 찾을 수 없습니다: {script}")
+
+  cmd = ["python3", str(script), str(onnx_path)]
+  res = subprocess.run(cmd, cwd=Path(__file__).parent, capture_output=True, text=True)
+  if res.returncode != 0:
+    raise RuntimeError(
+      f"메타데이터 생성 실패\ncmd: {' '.join(cmd)}\nstdout:\n{res.stdout}\nstderr:\n{res.stderr}"
+    )
+  if not meta_path.exists():
+    raise RuntimeError(f"메타 생성 후에도 파일이 없습니다: {meta_path}")
+
+
+def _resolve_onnx_only_paths(model_dir: Path) -> Dict[str, Path]:
+  """
+  디렉터리에 ONNX만 있어도 동작.
+  - 필수: driving_vision.onnx, driving_policy.onnx
+  - 메타 없으면 자동 생성: driving_vision_metadata.pkl, driving_policy_metadata.pkl
+  """
+  vis_onnx = model_dir / 'driving_vision.onnx'
+  pol_onnx = model_dir / 'driving_policy.onnx'
+  if not vis_onnx.exists() or not pol_onnx.exists():
+    raise FileNotFoundError(f"[{model_dir}] ONNX 누락: driving_vision.onnx, driving_policy.onnx 필요")
+
+  vis_meta = model_dir / 'driving_vision_metadata.pkl'
+  pol_meta = model_dir / 'driving_policy_metadata.pkl'
+
+  if _stale(vis_meta, vis_onnx):
+    _ensure_metadata_generated(vis_onnx, vis_meta)
+  if _stale(pol_meta, pol_onnx):
+    _ensure_metadata_generated(pol_onnx, pol_meta)
+
+  return {
+    'vision_onnx': vis_onnx,
+    'policy_onnx': pol_onnx,
+    'vision_meta': vis_meta,
+    'policy_meta': pol_meta,
+  }
+
+
+# =========================
+# 제어/도메인 로직
+# =========================
 def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.ModelDataV2.Action,
                           lat_action_t: float, long_action_t: float, v_ego: float) -> log.ModelDataV2.Action:
-    plan = model_output['plan'][0]
-    desired_accel, should_stop = get_accel_from_plan(plan[:,Plan.VELOCITY][:,0],
-                                                     plan[:,Plan.ACCELERATION][:,0],
-                                                     ModelConstants.T_IDXS,
-                                                     action_t=long_action_t)
-    desired_accel = smooth_value(desired_accel, prev_action.desiredAcceleration, LONG_SMOOTH_SECONDS)
+  plan = model_output['plan'][0]
+  desired_accel, should_stop = get_accel_from_plan(
+    plan[:, Plan.VELOCITY][:, 0],
+    plan[:, Plan.ACCELERATION][:, 0],
+    ModelConstants.T_IDXS,
+    action_t=long_action_t
+  )
+  desired_accel = smooth_value(desired_accel, prev_action.desiredAcceleration, LONG_SMOOTH_SECONDS)
 
-    desired_curvature = get_curvature_from_plan(plan[:,Plan.T_FROM_CURRENT_EULER][:,2],
-                                                plan[:,Plan.ORIENTATION_RATE][:,2],
-                                                ModelConstants.T_IDXS,
-                                                v_ego,
-                                                lat_action_t)
-    if v_ego > MIN_LAT_CONTROL_SPEED:
-      desired_curvature = smooth_value(desired_curvature, prev_action.desiredCurvature, LAT_SMOOTH_SECONDS)
-    else:
-      desired_curvature = prev_action.desiredCurvature
+  desired_curvature = get_curvature_from_plan(
+    plan[:, Plan.T_FROM_CURRENT_EULER][:, 2],
+    plan[:, Plan.ORIENTATION_RATE][:, 2],
+    ModelConstants.T_IDXS,
+    v_ego,
+    lat_action_t
+  )
+  if v_ego > MIN_LAT_CONTROL_SPEED:
+    desired_curvature = smooth_value(desired_curvature, prev_action.desiredCurvature, LAT_SMOOTH_SECONDS)
+  else:
+    desired_curvature = prev_action.desiredCurvature
 
-    return log.ModelDataV2.Action(desiredCurvature=float(desired_curvature),
-                                  desiredAcceleration=float(desired_accel),
-                                  shouldStop=bool(should_stop))
+  return log.ModelDataV2.Action(
+    desiredCurvature=float(desired_curvature),
+    desiredAcceleration=float(desired_accel),
+    shouldStop=bool(should_stop),
+  )
+
 
 class FrameMeta:
   frame_id: int = 0
@@ -77,17 +164,18 @@ class FrameMeta:
     if vipc is not None:
       self.frame_id, self.timestamp_sof, self.timestamp_eof = vipc.frame_id, vipc.timestamp_sof, vipc.timestamp_eof
 
+
 class InputQueues:
-  def __init__ (self, model_fps, env_fps, n_frames_input):
+  def __init__(self, model_fps, env_fps, n_frames_input):
     assert env_fps % model_fps == 0
     assert env_fps >= model_fps
     self.model_fps = model_fps
     self.env_fps = env_fps
     self.n_frames_input = n_frames_input
 
-    self.dtypes = {}
-    self.shapes = {}
-    self.q = {}
+    self.dtypes: dict[str, np.dtype] = {}
+    self.shapes: dict[str, tuple] = {}
+    self.q: dict[str, np.ndarray] = {}
 
   def update_dtypes_and_shapes(self, input_dtypes, input_shapes) -> None:
     self.dtypes.update(input_dtypes)
@@ -106,7 +194,7 @@ class InputQueues:
   def reset(self) -> None:
     self.q = {k: np.zeros(self.shapes[k], dtype=self.dtypes[k]) for k in self.dtypes.keys()}
 
-  def enqueue(self, inputs:dict[str, np.ndarray]) -> None:
+  def enqueue(self, inputs: dict[str, np.ndarray]) -> None:
     for k in inputs.keys():
       if inputs[k].dtype != self.dtypes[k]:
         raise ValueError(f'supplied input <{k}({inputs[k].dtype})> has wrong dtype, expected {self.dtypes[k]}')
@@ -114,8 +202,8 @@ class InputQueues:
       input_shape[1] = -1
       single_input = inputs[k].reshape(tuple(input_shape))
       sz = single_input.shape[1]
-      self.q[k][:,:-sz] = self.q[k][:,sz:]
-      self.q[k][:,-sz:] = single_input
+      self.q[k][:, :-sz] = self.q[k][:, sz:]
+      self.q[k][:, -sz:] = single_input
 
   def get(self, *names) -> dict[str, np.ndarray]:
     if self.env_fps == self.model_fps:
@@ -126,122 +214,155 @@ class InputQueues:
         shape = self.shapes[k]
         if 'img' in k:
           n_channels = shape[1] // (self.env_fps // self.model_fps + (self.n_frames_input - 1))
-          out[k] = np.concatenate([self.q[k][:, s:s+n_channels] for s in np.linspace(0, shape[1] - n_channels, self.n_frames_input, dtype=int)], axis=1)
+          out[k] = np.concatenate(
+            [self.q[k][:, s:s + n_channels] for s in np.linspace(0, shape[1] - n_channels, self.n_frames_input, dtype=int)],
+            axis=1)
         elif 'pulse' in k:
-          # any pulse within interval counts
           out[k] = self.q[k].reshape((shape[0], shape[1] * self.model_fps // self.env_fps, self.env_fps // self.model_fps, -1)).max(axis=2)
         else:
           idxs = np.arange(-1, -shape[1], -self.env_fps // self.model_fps)[::-1]
           out[k] = self.q[k][:, idxs]
       return out
 
+
 class ModelState:
   frames: dict[str, DrivingModelFrame]
-  inputs: dict[str, np.ndarray]
-  output: np.ndarray
-  prev_desire: np.ndarray  # for tracking the rising edge of the pulse
+  prev_desire: np.ndarray
 
-  def __init__(self, context: CLContext):
-    with open(VISION_METADATA_PATH, 'rb') as f:
+  def __init__(self, context: CLContext, paths: dict):
+    # ---- 메타 로드 ----
+    with open(paths['vision_meta'], 'rb') as f:
       vision_metadata = pickle.load(f)
-      self.vision_input_shapes =  vision_metadata['input_shapes']
+      self.vision_input_shapes = vision_metadata['input_shapes']
       self.vision_input_names = list(self.vision_input_shapes.keys())
       self.vision_output_slices = vision_metadata['output_slices']
       vision_output_size = vision_metadata['output_shapes']['outputs'][1]
 
-    with open(POLICY_METADATA_PATH, 'rb') as f:
+    with open(paths['policy_meta'], 'rb') as f:
       policy_metadata = pickle.load(f)
-      self.policy_input_shapes =  policy_metadata['input_shapes']
+      self.policy_input_shapes = policy_metadata['input_shapes']
       self.policy_output_slices = policy_metadata['output_slices']
       policy_output_size = policy_metadata['output_shapes']['outputs'][1]
 
-    self.frames = {name: DrivingModelFrame(context, ModelConstants.MODEL_RUN_FREQ//ModelConstants.MODEL_CONTEXT_FREQ) for name in self.vision_input_names}
+    # ---- ONNX 로드 ----
+    self.vision_run, vision_specs = load_onnx_model(fetch(str(paths['vision_onnx'])))
+    self.policy_run, policy_specs = load_onnx_model(fetch(str(paths['policy_onnx'])))
+    # (단일 입력 가정) 첫 입력 이름/스펙 사용 — 다중 입력이면 매핑 확장 필요
+    self.vision_in_name, self.vision_in_spec = list(vision_specs.items())[0]
+    self.policy_in_name, self.policy_in_spec = list(policy_specs.items())[0]
+
+    # ---- 프레임/버퍼 준비 ----
+    self.frames = {name: DrivingModelFrame(context, ModelConstants.MODEL_RUN_FREQ // ModelConstants.MODEL_CONTEXT_FREQ)
+                   for name in self.vision_input_names}
     self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
 
-    # policy inputs
     self.numpy_inputs = {k: np.zeros(self.policy_input_shapes[k], dtype=np.float32) for k in self.policy_input_shapes}
     self.full_input_queues = InputQueues(ModelConstants.MODEL_CONTEXT_FREQ, ModelConstants.MODEL_RUN_FREQ, ModelConstants.N_FRAMES)
     for k in ['desire_pulse', 'features_buffer']:
       self.full_input_queues.update_dtypes_and_shapes({k: self.numpy_inputs[k].dtype}, {k: self.numpy_inputs[k].shape})
     self.full_input_queues.reset()
 
-    # img buffers are managed in openCL transform code
-    self.vision_inputs: dict[str, Tensor] = {}
     self.vision_output = np.zeros(vision_output_size, dtype=np.float32)
-    self.policy_inputs = {k: Tensor(v, device='NPY').realize() for k,v in self.numpy_inputs.items()}
     self.policy_output = np.zeros(policy_output_size, dtype=np.float32)
     self.parser = Parser()
 
-    with open(VISION_PKL_PATH, "rb") as f:
-      self.vision_run = pickle.load(f)
+    self.vision_inputs: dict[str, Tensor] = {}
 
-    with open(POLICY_PKL_PATH, "rb") as f:
-      self.policy_run = pickle.load(f)
+  def _prep_vision_inputs(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray]) -> dict[str, Tensor]:
+    imgs_cl = {name: self.frames[name].prepare(bufs[name], transforms[name].flatten()) for name in self.vision_input_names}
+    out: dict[str, Tensor] = {}
+    if TICI and not USBGPU:
+      for key in imgs_cl:
+        if key not in self.vision_inputs:
+          self.vision_inputs[key] = qcom_tensor_from_opencl_address(
+            imgs_cl[key].mem_address, self.vision_input_shapes[key], dtype=dtypes.uint8)
+        out[key] = self.vision_inputs[key]
+    else:
+      for key in imgs_cl:
+        frame_input = self.frames[key].buffer_from_cl(imgs_cl[key]).reshape(self.vision_input_shapes[key])
+        out[key] = Tensor(frame_input, dtype=dtypes.uint8).realize()
+    return out
+
+  def _adapt_to_spec(self, t: Tensor, expect_dtype) -> Tensor:
+    """
+    ONNX 입력 스펙에 맞춰 간단 변환.
+    - float32 기대 시: 0..1 스케일. (필요 시 mean/std 주석 해제)
+    """
+    if expect_dtype == dtypes.float32:
+      t = (t.cast(dtypes.float32) / 255.0)
+      # 아래가 필요한 모델이면 주석 해제:
+      # mean = Tensor([0.485, 0.456, 0.406]).reshape(1,-1,1,1)
+      # std  = Tensor([0.229, 0.224, 0.225]).reshape(1,-1,1,1)
+      # t = (t - mean) / std
+    return t
 
   def slice_outputs(self, model_outputs: np.ndarray, output_slices: dict[str, slice]) -> dict[str, np.ndarray]:
-    parsed_model_outputs = {k: model_outputs[np.newaxis, v] for k,v in output_slices.items()}
-    return parsed_model_outputs
+    return {k: model_outputs[np.newaxis, v] for k, v in output_slices.items()}
 
   def run(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
-                inputs: dict[str, np.ndarray], prepare_only: bool) -> dict[str, np.ndarray] | None:
-    # Model decides when action is completed, so desire input is just a pulse triggered on rising edge
+          inputs: dict[str, np.ndarray], prepare_only: bool) -> dict[str, np.ndarray] | None:
+    # Desire pulse (rising edge만 유지)
     inputs['desire_pulse'][0] = 0
     new_desire = np.where(inputs['desire_pulse'] - self.prev_desire > .99, inputs['desire_pulse'], 0)
     self.prev_desire[:] = inputs['desire_pulse']
 
-    imgs_cl = {name: self.frames[name].prepare(bufs[name], transforms[name].flatten()) for name in self.vision_input_names}
-
-    if TICI and not USBGPU:
-      # The imgs tensors are backed by opencl memory, only need init once
-      for key in imgs_cl:
-        if key not in self.vision_inputs:
-          self.vision_inputs[key] = qcom_tensor_from_opencl_address(imgs_cl[key].mem_address, self.vision_input_shapes[key], dtype=dtypes.uint8)
-    else:
-      for key in imgs_cl:
-        frame_input = self.frames[key].buffer_from_cl(imgs_cl[key]).reshape(self.vision_input_shapes[key])
-        self.vision_inputs[key] = Tensor(frame_input, dtype=dtypes.uint8).realize()
-
+    # Vision 입력 준비
+    vin_map = self._prep_vision_inputs(bufs, transforms)
     if prepare_only:
       return None
 
-    self.vision_output = self.vision_run(**self.vision_inputs).contiguous().realize().uop.base.buffer.numpy()
+    # Vision ONNX 실행 (단일 입력 가정: 첫 키 매핑)
+    first_key = self.vision_input_names[0]
+    vi = self._adapt_to_spec(vin_map[first_key], self.vision_in_spec.dtype)
+    v_out = self.vision_run(**{self.vision_in_name: vi})
+    v_np = v_out.contiguous().realize().uop.base.buffer.numpy()
+    self.vision_output[:] = v_np
     vision_outputs_dict = self.parser.parse_vision_outputs(self.slice_outputs(self.vision_output, self.vision_output_slices))
 
+    # Policy 입력 큐 업데이트
     self.full_input_queues.enqueue({'features_buffer': vision_outputs_dict['hidden_state'], 'desire_pulse': new_desire})
     for k in ['desire_pulse', 'features_buffer']:
       self.numpy_inputs[k][:] = self.full_input_queues.get(k)[k]
     self.numpy_inputs['traffic_convention'][:] = inputs['traffic_convention']
 
-    self.policy_output = self.policy_run(**self.policy_inputs).contiguous().realize().uop.base.buffer.numpy()
+    # Policy ONNX 실행 (일반적으로 단일 입력 이름)
+    p_src_name = self.policy_in_name
+    p_in = Tensor(self.numpy_inputs[p_src_name], device='NPY').realize()
+    p_out = self.policy_run(**{p_src_name: p_in})
+    p_np = p_out.contiguous().realize().uop.base.buffer.numpy()
+    self.policy_output[:] = p_np
     policy_outputs_dict = self.parser.parse_policy_outputs(self.slice_outputs(self.policy_output, self.policy_output_slices))
 
     combined_outputs_dict = {**vision_outputs_dict, **policy_outputs_dict}
     if SEND_RAW_PRED:
       combined_outputs_dict['raw_pred'] = np.concatenate([self.vision_output.copy(), self.policy_output.copy()])
-
     return combined_outputs_dict
 
 
-def main(demo=False):
+def main(demo: bool = False, model_dir_cli: Optional[str] = None):
   cloudlog.warning("modeld init")
 
   if not USBGPU:
-    # USB GPU currently saturates a core so can't do this yet,
-    # also need to move the aux USB interrupts for good timings
+    # USB GPU는 코어 점유로 실시간 설정 제외
     config_realtime_process(7, 54)
 
   st = time.monotonic()
   cloudlog.warning("setting up CL context")
   cl_context = CLContext()
-  cloudlog.warning("CL context ready; loading model")
-  model = ModelState(cl_context)
+
+  # ---- 모델 로드 (ONNX만) ----
+  bundle_dir = _choose_model_dir(model_dir_cli)
+  paths = _resolve_onnx_only_paths(bundle_dir)
+  cloudlog.warning(f"CL context ready; loading ONNX models from: {bundle_dir}")
+  model = ModelState(cl_context, paths)
   cloudlog.warning(f"models loaded in {time.monotonic() - st:.1f}s, modeld starting")
 
   # visionipc clients
   while True:
     available_streams = VisionIpcClient.available_streams("camerad", block=False)
     if available_streams:
-      use_extra_client = VisionStreamType.VISION_STREAM_WIDE_ROAD in available_streams and VisionStreamType.VISION_STREAM_ROAD in available_streams
+      use_extra_client = (VisionStreamType.VISION_STREAM_WIDE_ROAD in available_streams) and \
+                         (VisionStreamType.VISION_STREAM_ROAD in available_streams)
       main_wide_camera = VisionStreamType.VISION_STREAM_ROAD not in available_streams
       break
     time.sleep(.1)
@@ -280,18 +401,14 @@ def main(demo=False):
   meta_main = FrameMeta()
   meta_extra = FrameMeta()
 
-
   if demo:
     CP = get_demo_car_params()
   else:
     CP = messaging.log_from_bytes(params.get("CarParams", block=True), car.CarParams)
   cloudlog.info("modeld got CarParams: %s", CP.brand)
 
-  # TODO this needs more thought, use .2s extra for now to estimate other delays
-  # TODO Move smooth seconds to action function
   long_delay = CP.longitudinalActuatorDelay + LONG_SMOOTH_SECONDS
   prev_action = log.ModelDataV2.Action()
-
   DH = DesireHelper()
 
   while True:
@@ -319,9 +436,10 @@ def main(demo=False):
         continue
 
       if abs(meta_main.timestamp_sof - meta_extra.timestamp_sof) > 10000000:
-        cloudlog.error(f"frames out of sync! main: {meta_main.frame_id} ({meta_main.timestamp_sof / 1e9:.5f}),\
-                         extra: {meta_extra.frame_id} ({meta_extra.timestamp_sof / 1e9:.5f})")
-
+        cloudlog.error(
+          f"frames out of sync! main: {meta_main.frame_id} ({meta_main.timestamp_sof / 1e9:.5f}), "
+          f"extra: {meta_extra.frame_id} ({meta_extra.timestamp_sof / 1e9:.5f})"
+        )
     else:
       # Use single camera
       buf_extra = buf_main
@@ -336,24 +454,30 @@ def main(demo=False):
     if sm.updated["liveCalibration"] and sm.seen['roadCameraState'] and sm.seen['deviceState']:
       device_from_calib_euler = np.array(sm["liveCalibration"].rpyCalib, dtype=np.float32)
       dc = DEVICE_CAMERAS[(str(sm['deviceState'].deviceType), str(sm['roadCameraState'].sensor))]
-      model_transform_main = get_warp_matrix(device_from_calib_euler, dc.ecam.intrinsics if main_wide_camera else dc.fcam.intrinsics, False).astype(np.float32)
-      model_transform_extra = get_warp_matrix(device_from_calib_euler, dc.ecam.intrinsics, True).astype(np.float32)
+      model_transform_main = get_warp_matrix(
+        device_from_calib_euler,
+        dc.ecam.intrinsics if main_wide_camera else dc.fcam.intrinsics,
+        False
+      ).astype(np.float32)
+      model_transform_extra = get_warp_matrix(
+        device_from_calib_euler, dc.ecam.intrinsics, True
+      ).astype(np.float32)
       live_calib_seen = True
 
     traffic_convention = np.zeros(2)
     traffic_convention[int(is_rhd)] = 1
 
     vec_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
-    if desire >= 0 and desire < ModelConstants.DESIRE_LEN:
+    if 0 <= desire < ModelConstants.DESIRE_LEN:
       vec_desire[desire] = 1
 
     # tracked dropped frames
     vipc_dropped_frames = max(0, meta_main.frame_id - last_vipc_frame_id - 1)
     frames_dropped = frame_dropped_filter.update(min(vipc_dropped_frames, 10))
-    if run_count < 10: # let frame drops warm up
+    if run_count < 10:  # let frame drops warm up
       frame_dropped_filter.x = 0.
       frames_dropped = 0.
-    run_count = run_count + 1
+    run_count += 1
 
     frame_drop_ratio = frames_dropped / (1 + frames_dropped)
     prepare_only = vipc_dropped_frames > 0
@@ -362,7 +486,7 @@ def main(demo=False):
 
     bufs = {name: buf_extra if 'big' in name else buf_main for name in model.vision_input_names}
     transforms = {name: model_transform_extra if 'big' in name else model_transform_main for name in model.vision_input_names}
-    inputs:dict[str, np.ndarray] = {
+    inputs: dict[str, np.ndarray] = {
       'desire_pulse': vec_desire,
       'traffic_convention': traffic_convention,
     }
@@ -379,9 +503,11 @@ def main(demo=False):
 
       action = get_action_from_model(model_output, prev_action, lat_delay + DT_MDL, long_delay + DT_MDL, v_ego)
       prev_action = action
-      fill_model_msg(drivingdata_send, modelv2_send, model_output, action,
-                     publish_state, meta_main.frame_id, meta_extra.frame_id, frame_id,
-                     frame_drop_ratio, meta_main.timestamp_eof, model_execution_time, live_calib_seen)
+      fill_model_msg(
+        drivingdata_send, modelv2_send, model_output, action,
+        publish_state, meta_main.frame_id, meta_extra.frame_id, frame_id,
+        frame_drop_ratio, meta_main.timestamp_eof, model_execution_time, live_calib_seen
+      )
 
       desire_state = modelv2_send.modelV2.meta.desireState
       l_lane_change_prob = desire_state[log.Desire.laneChangeLeft]
@@ -397,6 +523,7 @@ def main(demo=False):
       pm.send('modelV2', modelv2_send)
       pm.send('drivingModelData', drivingdata_send)
       pm.send('cameraOdometry', posenet_send)
+
     last_vipc_frame_id = meta_main.frame_id
 
 
@@ -405,7 +532,10 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--demo', action='store_true', help='A boolean for demo mode.')
+    parser.add_argument('--model-dir', type=str, default=None,
+                        help='Directory containing ONNX files (driving_vision.onnx, driving_policy.onnx). '
+                             'Metadata (*.pkl) will be auto-generated if missing.')
     args = parser.parse_args()
-    main(demo=args.demo)
+    main(demo=args.demo, model_dir_cli=args.model_dir)
   except KeyboardInterrupt:
     cloudlog.warning("got SIGINT")
