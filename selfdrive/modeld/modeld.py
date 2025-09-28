@@ -114,7 +114,7 @@ def _auto_default_bundle_dir() -> Path:
 
 def _choose_model_dir_from_params_only() -> Path:
   try:
-    pname = Params().get("ActiveModelName")
+    pname = "3.Firehose" # Params().get("ActiveModelName")
     if pname:
       pname = pname.decode() if isinstance(pname, (bytes, bytearray)) else pname
       bundle = SUPERCOMBOS_DIR / pname
