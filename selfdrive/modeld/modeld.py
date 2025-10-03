@@ -114,7 +114,7 @@ def _ensure_pkl_and_metadata(onnx_path: Path, pkl_path: Path, meta_path: Path) -
 
     # PYTHONPATH에 tinygrad_repo 추가
     env = os.environ.copy()
-    env["PYTHONPATH"] = env.get("PYTHONPATH", "") + os.pathsep + str(compile3.parents[3])
+    env["PYTHONPATH"] = env.get("PYTHONPATH", "") + os.pathsep + str(compile3.parents[2])
 
     cmd = f'{flags} python3 "{compile3}" "{onnx_path}" "{pkl_path}"'
     res = subprocess.run(cmd, shell=True, cwd=Path(__file__).parent, capture_output=True, text=True, env=env)
@@ -145,7 +145,7 @@ def _resolve_onnx_only_paths(model_dir: Path) -> Dict[str, Path]:
 
   if _stale(vis_pkl, vis_onnx):
     _ensure_pkl_and_metadata(vis_onnx, vis_pkl, vis_meta)
-  if _stale(pol_pkl, vis_onnx):
+  if _stale(pol_pkl, pol_onnx):
     _ensure_pkl_and_metadata(pol_onnx, pol_pkl, pol_meta)
 
   return {
