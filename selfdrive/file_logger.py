@@ -5,7 +5,7 @@ from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 from pathlib import Path
 import sys
 from typing import Literal
-
+from openpilot.system.hardware import HARDWARE
 
 
 def setup_logger(
@@ -75,7 +75,11 @@ _LOGGER = None
 def get_logger( _name: str = "selfdrive.modeld.modeld" ):
   global _LOGGER
   if _LOGGER is None:
-    _LOGGER = setup_logger(name=_name, log_dir="/data/log", rotation="time")
+    if HARDWARE.get_device_type() == 'pc':
+       _LOGGER = setup_logger(name=_name, log_dir="/home/bhcho/log", rotation="time")
+    else:
+       _LOGGER = setup_logger(name=_name, log_dir="/data/log", rotation="time")
+
   return _LOGGER
 
 # 데모 실행

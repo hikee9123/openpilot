@@ -78,6 +78,7 @@ def _ensure_metadata_generated(onnx_path: Path, meta_path: Path) -> None:
     raise RuntimeError(
       _message
     )
+  logger.info( f"metadata_generated  {res} = subprocess.run( = {cmd}" )
   if not meta_path.exists():
     _message = f"메타 생성 후에도 파일이 없습니다: {meta_path}"
     logger.info( _message )
@@ -112,18 +113,16 @@ def _ensure_pkl_and_metadata(onnx_path: Path, pkl_path: Path, meta_path: Path) -
 
     # 환경 플래그 (기본 CPU/LLVM; 필요시 DEV=QCOM/AMD 등으로 조정)
     flags = os.environ.get("TG_FLAGS", "DEV=LLVM IMAGE=0")
-
     # PYTHONPATH에 tinygrad_repo 추가
     env = os.environ.copy()
     env["PYTHONPATH"] = env.get("PYTHONPATH", "") + os.pathsep + str(compile3.parents[2])
-
     cmd = f'{flags} python3 "{compile3}" "{onnx_path}" "{pkl_path}"'
     res = subprocess.run(cmd, shell=True, cwd=Path(__file__).parent, capture_output=True, text=True, env=env)
     if res.returncode != 0:
       raise RuntimeError(
         f"tinygrad pkl 생성 실패\ncmd: {cmd}\nstdout:\n{res.stdout}\nstderr:\n{res.stderr}"
       )
-
+    logger.info( f"pkl_and_metadata  {res} = subprocess.run({cmd})" )
 
 def _stale(meta: Path, onnx: Path) -> bool:
   return (not meta.exists()) or (onnx.stat().st_mtime > meta.stat().st_mtime)
@@ -360,17 +359,22 @@ def main(demo=False):
 
 
   logger.info("modeld start")
+  bundle_dir = _choose_model_dir_from_params_only()
+  if bundle_dir is None:
+    bundle_dir = DEFAULT_DIR
+  logger.info(f"modeld bundle_dir : {bundle_dir}")
+  paths = _resolve_onnx_only_paths(bundle_dir)
+  logger.info(f"modeld paths : {paths}")
+
+
+
   st = time.monotonic()
   cloudlog.warning("setting up CL context")
   cl_context = CLContext()
   cloudlog.warning("CL context ready; loading model")
 
-  bundle_dir = _choose_model_dir_from_params_only()
-  if bundle_dir is None:
-    bundle_dir = DEFAULT_DIR
 
-  logger.info(f"modeld path : {bundle_dir}")
-  paths = _resolve_onnx_only_paths(bundle_dir)
+
   model = ModelState(cl_context, paths)
   cloudlog.warning(f"models loaded in {time.monotonic() - st:.1f}s, modeld starting")
 
