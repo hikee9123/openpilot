@@ -52,6 +52,7 @@ MIN_LAT_CONTROL_SPEED = 0.3
 
 
 SUPERCOMBOS_DIR = Path(__file__).parent / "models/supercombos"
+DEFAULT_DIR = Path(__file__).parent / "models"
 
 VISION_ONNX = "driving_vision.onnx"
 POLICY_ONNX = "driving_policy.onnx"
@@ -365,6 +366,10 @@ def main(demo=False):
   cloudlog.warning("CL context ready; loading model")
 
   bundle_dir = _choose_model_dir_from_params_only()
+  if bundle_dir is None:
+    bundle_dir = DEFAULT_DIR
+
+  logger.info(f"modeld path : {bundle_dir}")
   paths = _resolve_onnx_only_paths(bundle_dir)
   model = ModelState(cl_context, paths)
   cloudlog.warning(f"models loaded in {time.monotonic() - st:.1f}s, modeld starting")
