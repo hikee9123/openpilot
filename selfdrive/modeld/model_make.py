@@ -76,7 +76,7 @@ def _ensure_metadata_generated(onnx_path: Path, meta_path: Path) -> None:
     cloudlog.error(f"[modeld] {msg}")
     raise RuntimeError(msg)
 
-  cloudlog.info(f"meta OK: {meta_path}")
+  cloudlog.warning(f"meta OK: {meta_path}")
 
 
 def _ensure_pkl_and_metadata(onnx_path: Path, pkl_path: Path, meta_path: Path) -> None:
@@ -123,7 +123,7 @@ def _ensure_pkl_and_metadata(onnx_path: Path, pkl_path: Path, meta_path: Path) -
       cloudlog.error(f"[modeld] {err}")
       raise RuntimeError(err)
 
-    cloudlog.info(f"pkl OK: {pkl_path}")
+    cloudlog.warning(f"pkl OK: {pkl_path}")
 
 
 
@@ -139,7 +139,7 @@ def _resolve_onnx_only_paths(model_dir: Path) -> Dict[str, Path]:
     if not vis_onnx.exists() or not pol_onnx.exists():
       raise FileNotFoundError(f"[{model_dir}] Missing ONNX files: {VISION_ONNX}, {POLICY_ONNX} are required")
 
-    cloudlog.info(f"[modeld] ONNX found: vision={vis_onnx}, policy={pol_onnx}")
+    cloudlog.warning(f"[modeld] ONNX found: vision={vis_onnx}, policy={pol_onnx}")
 
     vis_meta = model_dir / VISION_META
     pol_meta = model_dir / POLICY_META
@@ -194,7 +194,7 @@ def _choose_model_dir_from_params_only() -> Optional[Path]:
 
 
 def choose_model_from_params() -> Dict[str, Path]:
-  cloudlog.info("choose_model_from_params")
+  cloudlog.warning("choose_model_from_params")
   bundle_dir = _choose_model_dir_from_params_only()
   if bundle_dir is not None and bundle_dir.exists():
     cloudlog.warning(f"[modeld] bundle_dir = {bundle_dir}")
@@ -208,7 +208,7 @@ def choose_model_from_params() -> Dict[str, Path]:
 
 def main(demo=False):
   paths = choose_model_from_params()
-  cloudlog.info(f"modeld paths : {paths}")
+  cloudlog.warning(f"modeld paths : {paths}")
 
 
 if __name__ == "__main__":
