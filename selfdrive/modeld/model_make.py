@@ -54,6 +54,9 @@ def _stale(meta: Path, onnx: Path) -> bool:
 
 
 def _ensure_metadata_generated(onnx_path: Path, meta_path: Path) -> None:
+  if meta_path.exists():
+    return
+
   script = Path(__file__).parent / 'get_model_metadata.py'
   if not script.exists():
     msg = f"Metadata script not found: {script}"
@@ -84,9 +87,13 @@ def _ensure_pkl_and_metadata(onnx_path: Path, pkl_path: Path, meta_path: Path) -
   - 메타데이터(pkl)가 없거나 ONNX보다 오래되었으면 생성 (get_model_metadata.py)
   - tinygrad 실행 pkl이 없거나 ONNX보다 오래되었으면 tinygrad_repo의 compile3.py로 생성
   """
-  # 1) 메타 보장 (이미 있으나 여기서도 방어적으로)
-  if _stale(meta_path, onnx_path):
+  if pkl_path.exists():
+    return
+
+  # 1) 메타 보장
+  if not meta_path.exists():
     _ensure_metadata_generated(onnx_path, meta_path)
+
 
   # 2) tinygrad pkl 보장
   if (not pkl_path.exists()) or (onnx_path.stat().st_mtime > pkl_path.stat().st_mtime):
