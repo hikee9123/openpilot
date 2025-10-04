@@ -2,10 +2,7 @@
 set -euo pipefail
 
 
-WORKDIR="/data/openpilot/selfdrive/modeld"
 PY=python3
-
-
 
 echo "[model_make] ===== START $(date) ====="
 cd "${WORKDIR}"
