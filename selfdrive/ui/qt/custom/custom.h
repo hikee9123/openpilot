@@ -11,6 +11,8 @@
 #include <QWidget>
 #include <QTimer>
 
+class QProcess;
+
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -337,6 +339,9 @@ public:
 
 private:
   std::map<std::string, CValueControl*> m_valueCtrl;
+  QString currentModel;
+  ButtonControl *changeModelButton = nullptr;
+  QProcess *modelProcess = nullptr;
 
 
 protected:
