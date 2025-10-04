@@ -492,9 +492,12 @@ class CarStateCustom:
   # ----------------------------
   def _update_vehicle_general_states(self, ret, cp, cp_cam) -> None:
     self.brakePos   = float(self._vl(cp, "E_EMS11", "Brake_Pedal_Pos", 0.0))
+    ret.engineRpmDEPRECATED = float(self._vl(cp, "E_EMS11", "N", 0.0)) # opkr
     self.is_highway = bool(self._vl(cp_cam, "LFAHDA_MFC", "HDA_Icon_State", 0))
     self.clu_Vanz   = float(self._vl(cp, "CLU11", "CF_Clu_Vanz", 0.0))  # kph
     self.clu_Main   = int(self._vl(cp, "CLU11", "CF_Clu_CruiseSwMain", 0))
+
+
 
   # ----------------------------
   # Debug / telemetry
