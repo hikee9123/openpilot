@@ -37,8 +37,8 @@ POLICY_PKL  = "driving_policy_tinygrad.pkl"
 
 def _comma_default_paths() -> Dict[str, Path]:
   """comma 기본 PATH를 그대로 사용 (상수 4개 + models/*.onnx)"""
-  vis_onnx = Path(__file__).parent / 'models' / VISION_ONNX
-  pol_onnx = Path(__file__).parent / 'models' / POLICY_ONNX
+  vis_onnx = MODELS_DIR / VISION_ONNX
+  pol_onnx = MODELS_DIR / POLICY_ONNX
   return {
     'vision_onnx': vis_onnx,
     'policy_onnx': pol_onnx,
