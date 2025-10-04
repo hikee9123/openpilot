@@ -764,10 +764,10 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(paren
         | QFileDevice::ExeOwner | QFileDevice::ExeGroup | QFileDevice::ExeOther);
     }
 
-    std::string exec_modelmake = "/data/openpilot/selfdrive/ui/qt/custom/script/model_make.sh";
+    std::string exec_cmd = "/data/openpilot/selfdrive/ui/qt/custom/script/model_make.sh";
     if (Hardware::PC()) {
     {
-      exec_modelmake = scriptPath.toStdString();
+      exec_cmd = scriptPath.toStdString();
     }
     int rc = std::system(exec_cmd.c_str());
     qInfo() << "model_make.sh exit code =" << rc;
