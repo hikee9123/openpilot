@@ -140,8 +140,6 @@ def _resolve_onnx_only_paths(model_dir: Path) -> Dict[str, Path]:
     if not vis_onnx.exists() or not pol_onnx.exists():
       raise FileNotFoundError(f"[{model_dir}] Missing ONNX files: {VISION_ONNX}, {POLICY_ONNX} are required")
 
-    cloudlog.warning(f"[8.modeld] ONNX found: vision={vis_onnx}, policy={pol_onnx}")
-
     vis_meta = model_dir / VISION_META
     pol_meta = model_dir / POLICY_META
     vis_pkl  = model_dir / VISION_PKL
@@ -185,7 +183,7 @@ def _choose_model_dir_from_params_only() -> Optional[Path]:
       pname = pname.decode() if isinstance(pname, (bytes, bytearray)) else pname
       bundle = SUPERCOMBOS_DIR / pname
       if bundle.exists():
-        cloudlog.warning(f"[6.modeld] ActiveModelName='{pname}' -> {bundle}")
+        cloudlog.warning(f"[6.modeld] ActiveModelName='{pname}'")
         return bundle
       cloudlog.error(f"[5.modeld] supercombos/{pname} not found.")
   except Exception as e:
@@ -198,7 +196,6 @@ def choose_model_from_params() -> Dict[str, Path]:
   cloudlog.warning("choose_model_from_params")
   bundle_dir = _choose_model_dir_from_params_only()
   if bundle_dir is not None and bundle_dir.exists():
-    cloudlog.warning(f"[1.modeld] bundle_dir = {bundle_dir}")
     return _resolve_onnx_only_paths(bundle_dir)
 
   cloudlog.warning("[2.modeld] fallback to comma default PATH constants")
