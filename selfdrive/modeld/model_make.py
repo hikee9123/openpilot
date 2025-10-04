@@ -13,6 +13,7 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.common.params import Params
 from typing import Optional, Dict
 
+
 MODELS_DIR = Path(__file__).parent / "models"
 
 VISION_PKL_PATH = MODELS_DIR / "driving_vision_tinygrad.pkl"
