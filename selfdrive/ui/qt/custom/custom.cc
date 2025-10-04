@@ -769,7 +769,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(paren
     {
       exec_modelmake = scriptPath.toStdString();
     }
-    int rc = std::system(exec_modelmake);
+    int rc = std::system(exec_cmd.c_str());
     qInfo() << "model_make.sh exit code =" << rc;
 
     currentModel = selection;
