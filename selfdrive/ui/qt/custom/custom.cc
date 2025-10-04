@@ -5,7 +5,7 @@
 #include <string>
 #include <tuple>
 #include <vector>
-
+#include <cstdlib>
 
 #include <QTabWidget>
 #include <QObject>
@@ -764,12 +764,13 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(paren
         | QFileDevice::ExeOwner | QFileDevice::ExeGroup | QFileDevice::ExeOther);
     }
 
-    char* exec_modelmake = "/data/openpilot/selfdrive/ui/qt/custom/script/model_make.sh";
+    std::string exec_modelmake = "/data/openpilot/selfdrive/ui/qt/custom/script/model_make.sh";
     if (Hardware::PC()) {
     {
       exec_modelmake = scriptPath.toStdString();
     }
-    std::system(exec_modelmake);
+    int rc = std::system(exec_modelmake);
+    qInfo() << "model_make.sh exit code =" << rc;
 
     currentModel = selection;
     changeModelButton->setTitle(selection);
