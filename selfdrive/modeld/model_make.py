@@ -54,23 +54,23 @@ def _ensure_metadata_generated(onnx_path: Path, meta_path: Path) -> None:
   script = Path(__file__).parent / 'get_model_metadata.py'
   if not script.exists():
     msg = f"Metadata script not found: {script}"
-    cloudlog.error(f"[modeld] {msg}")
+    cloudlog.error(f"[14.modeld] {msg}")
     raise FileNotFoundError(msg)
 
-  cloudlog.warning(f"[modeld] Generating metadata for {onnx_path.name}")
+  cloudlog.warning(f"[13.modeld] Generating metadata for {onnx_path.name}")
 
 
   cmd = ["python3", str(script), str(onnx_path)]
   res = subprocess.run(cmd, cwd=Path(__file__).parent, capture_output=True, text=True)
   if res.returncode != 0:
     msg = f"Metadata generation failed\ncmd: {' '.join(cmd)}\nstdout:\n{res.stdout}\nstderr:\n{res.stderr}"
-    cloudlog.error(f"[modeld] {msg}")
+    cloudlog.error(f"[12.modeld] {msg}")
     raise RuntimeError(msg)
 
 
   if not meta_path.exists():
     msg = f"Metadata file not created: {meta_path}"
-    cloudlog.error(f"[modeld] {msg}")
+    cloudlog.error(f"[11.modeld] {msg}")
     raise RuntimeError(msg)
 
   cloudlog.warning(f"meta OK: {meta_path}")
@@ -116,12 +116,12 @@ def _ensure_pkl_and_metadata(onnx_path: Path, pkl_path: Path, meta_path: Path) -
     res = subprocess.run(cmd, shell=True, cwd=Path(__file__).parent, capture_output=True, text=True, env=env)
     if res.returncode != 0:
       err = f"tinygrad pkl build failed\ncmd: {cmd}\nstdout:\n{res.stdout}\nstderr:\n{res.stderr}"
-      cloudlog.error(f"[modeld] {err}")
+      cloudlog.error(f"[10.modeld] {err}")
       raise RuntimeError(err)
 
     if not pkl_path.exists():
       err = f"pkl not created: {pkl_path}"
-      cloudlog.error(f"[modeld] {err}")
+      cloudlog.error(f"[9.modeld] {err}")
       raise RuntimeError(err)
 
     cloudlog.warning(f"pkl OK: {pkl_path}")
@@ -140,7 +140,7 @@ def _resolve_onnx_only_paths(model_dir: Path) -> Dict[str, Path]:
     if not vis_onnx.exists() or not pol_onnx.exists():
       raise FileNotFoundError(f"[{model_dir}] Missing ONNX files: {VISION_ONNX}, {POLICY_ONNX} are required")
 
-    cloudlog.warning(f"[modeld] ONNX found: vision={vis_onnx}, policy={pol_onnx}")
+    cloudlog.warning(f"[8.modeld] ONNX found: vision={vis_onnx}, policy={pol_onnx}")
 
     vis_meta = model_dir / VISION_META
     pol_meta = model_dir / POLICY_META
@@ -170,7 +170,7 @@ def _resolve_onnx_only_paths(model_dir: Path) -> Dict[str, Path]:
 
   except Exception as e:
     # 어떤 오류든 comma 기본 PATH로 폴백
-    cloudlog.error(f"[modeld] _resolve_onnx_only_paths failed for {model_dir}: {e}. Falling back to comma default PATH.")
+    cloudlog.error(f"[7.modeld] _resolve_onnx_only_paths failed for {model_dir}: {e}. Falling back to comma default PATH.")
     paths = _comma_default_paths()
     return paths
 
@@ -185,11 +185,11 @@ def _choose_model_dir_from_params_only() -> Optional[Path]:
       pname = pname.decode() if isinstance(pname, (bytes, bytearray)) else pname
       bundle = SUPERCOMBOS_DIR / pname
       if bundle.exists():
-        cloudlog.warning(f"[modeld] ActiveModelName='{pname}' -> {bundle}")
+        cloudlog.warning(f"[6.modeld] ActiveModelName='{pname}' -> {bundle}")
         return bundle
-      cloudlog.error(f"[modeld] supercombos/{pname} not found.")
+      cloudlog.error(f"[5.modeld] supercombos/{pname} not found.")
   except Exception as e:
-    cloudlog.error(f"[modeld] reading ActiveModelName failed: {e}")
+    cloudlog.error(f"[4.modeld] reading ActiveModelName failed: {e}")
   return None
 
 
@@ -198,10 +198,10 @@ def choose_model_from_params() -> Dict[str, Path]:
   cloudlog.warning("choose_model_from_params")
   bundle_dir = _choose_model_dir_from_params_only()
   if bundle_dir is not None and bundle_dir.exists():
-    cloudlog.warning(f"[modeld] bundle_dir = {bundle_dir}")
+    cloudlog.warning(f"[1.modeld] bundle_dir = {bundle_dir}")
     return _resolve_onnx_only_paths(bundle_dir)
 
-  cloudlog.warning("[modeld] fallback to comma default PATH constants")
+  cloudlog.warning("[2.modeld] fallback to comma default PATH constants")
   return _comma_default_paths()
 
 
@@ -209,7 +209,7 @@ def choose_model_from_params() -> Dict[str, Path]:
 
 def main(demo=False):
   paths = choose_model_from_params()
-  cloudlog.warning(f"modeld paths : {paths}")
+  cloudlog.warning(f"[3.modeld] OK : {paths}")
 
 
 if __name__ == "__main__":
