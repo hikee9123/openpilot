@@ -710,77 +710,101 @@ void GitTab::hideEvent(QHideEvent *event)
 //
 //
 
-ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(parent) , m_jsonobj(jsonobj)
-{
+
+ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
+    : ListWidget(parent), m_jsonobj(jsonobj) {
   m_pCustom = parent;
 
-
-
+  // 현재 선택된 모델명 읽기
   QString selected_model = QString::fromStdString(Params().get("ActiveModelName"));
   currentModel = selected_model;
-  changeModelButton = new ButtonControl(selected_model.length() ? selected_model : tr("Select your model"),
-                    selected_model.length() ? tr("CHANGE") : tr("SELECT"), "");
 
+  // 버튼 생성
+  changeModelButton = new ButtonControl(
+      selected_model.length() ? selected_model : tr("Select your model"),
+      selected_model.length() ? tr("CHANGE") : tr("SELECT"),
+      "");
+
+  // 클릭 핸들러
   QObject::connect(changeModelButton, &ButtonControl::clicked, this, [this]() {
+    // 모델 목록
     QStringList items = {
-      "3.Firehose",
-      "2.Steam_Powered",
-      "1.default",
+        "3.Firehose",
+        "2.Steam_Powered",
+        "1.default",
     };
 
-    QString selection = MultiOptionDialog::getSelection(tr("Select a model"), items, currentModel, this);
+    // 선택 다이얼로그
+    QString selection =
+        MultiOptionDialog::getSelection(tr("Select a model"), items, currentModel, this);
     if (selection.isEmpty() || selection == currentModel) {
       return;
     }
 
+    // 선택 저장
     Params params;
     params.put("ActiveModelName", selection.toStdString());
 
-
+    // UI 잠금/진행 표시
     changeModelButton->setEnabled(false);
     changeModelButton->setTitle(tr("Compiling..."));
     changeModelButton->setText(tr("WAIT"));
     changeModelButton->setDescription(selection);
 
-
-    // --- QProcess 설정 블록 시작 ---
+    // 혹시 남아있을 QProcess 정리
     if (modelProcess != nullptr) {
       modelProcess->disconnect(this);
       modelProcess->deleteLater();
       modelProcess = nullptr;
     }
 
+    // /data/openpilot 로 예상 (openpilot 기본 실행 루트)
+    const QString workingDirectory = QDir::cleanPath(QDir::currentPath());  // e.g. "/data/openpilot"
+    const QString scriptPath = QDir::cleanPath(
+        QDir::currentPath() + QLatin1String("/selfdrive/ui/qt/custom/script/model_make.sh"));
 
-    // openpilot 루트(현재 경로가 /data/openpilot 라는 가정이 일반적)
-    const QString workingDirectory = QDir::cleanPath(QDir::currentPath()); // "/data/openpilot"
-    const QString scriptPath       = QDir::cleanPath(
-      QDir::currentPath() + QLatin1String("/selfdrive/ui/qt/custom/script/model_make.sh")
-    );
-
-    // 실행 권한 부여
-    QFileInfo fi(scriptPath);
-    if (!fi.isExecutable()) {
-      QFile::setPermissions(scriptPath, fi.permissions()
-        | QFileDevice::ExeOwner | QFileDevice::ExeGroup | QFileDevice::ExeOther);
+    // 실행 권한 보장
+    {
+      QFileInfo fi(scriptPath);
+      if (!fi.isExecutable()) {
+        QFile::setPermissions(scriptPath, fi.permissions() |
+                                             QFileDevice::ExeOwner |
+                                             QFileDevice::ExeGroup |
+                                             QFileDevice::ExeOther);
+      }
     }
 
+    // 실행 명령 구성
     std::string exec_cmd = "/data/openpilot/selfdrive/ui/qt/custom/script/model_make.sh";
     if (Hardware::PC()) {
-    {
-      exec_cmd = scriptPath.toStdString();
+     // Linux/Mac
+      exec_cmd = std::string("cd ") + workingDirectory.toStdString() + " && " +
+                 scriptPath.toStdString();
     }
-    int rc = std::system(exec_cmd.c_str());
+
+    // 동기 실행
+    const int rc = std::system(exec_cmd.c_str());
     qInfo() << "model_make.sh exit code =" << rc;
 
-    currentModel = selection;
-    changeModelButton->setTitle(selection);
-    changeModelButton->setText(tr("CHANGE"));
-    changeModelButton->setDescription(QString());
+    // 결과 반영
+    if (rc == 0) {
+      currentModel = selection;
+      changeModelButton->setTitle(selection);
+      changeModelButton->setText(tr("CHANGE"));
+      changeModelButton->setDescription(QString());
+    } else {
+      // 실패 시 이전 모델명으로 롤백
+      Params().put("ActiveModelName", currentModel.toStdString());
+      changeModelButton->setTitle(tr("Failed"));
+      changeModelButton->setText(tr("RETRY"));
+      changeModelButton->setDescription(selection);
+    }
+
     changeModelButton->setEnabled(true);
-
-
   });
+
   addItem(changeModelButton);
+
 
 
   setStyleSheet(R"(
