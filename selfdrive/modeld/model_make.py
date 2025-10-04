@@ -13,15 +13,16 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.common.params import Params
 from typing import Optional, Dict
 
-from openpilot.selfdrive.modeld.modeld import (
-  VISION_PKL_PATH,
-  POLICY_PKL_PATH,
-  VISION_METADATA_PATH,
-  POLICY_METADATA_PATH,
-)
+MODELS_DIR = Path(__file__).parent / "models"
 
-SUPERCOMBOS_DIR = Path(__file__).parent / "models/supercombos"
+VISION_PKL_PATH = MODELS_DIR / "driving_vision_tinygrad.pkl"
+POLICY_PKL_PATH = MODELS_DIR / "driving_policy_tinygrad.pkl"
+VISION_METADATA_PATH = MODELS_DIR / "driving_vision_metadata.pkl"
+POLICY_METADATA_PATH = MODELS_DIR / "driving_policy_metadata.pkl"
 
+
+
+SUPERCOMBOS_DIR = MODELS_DIR / "supercombos"
 
 VISION_ONNX = "driving_vision.onnx"
 POLICY_ONNX = "driving_policy.onnx"

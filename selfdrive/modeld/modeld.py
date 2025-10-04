@@ -34,15 +34,10 @@ from openpilot.selfdrive.modeld.models.commonmodel_pyx import DrivingModelFrame,
 from openpilot.selfdrive.modeld.runners.tinygrad_helpers import qcom_tensor_from_opencl_address
 
 
-from openpilot.selfdrive.modeld.model_make import choose_model_from_params
 
 PROCESS_NAME = "selfdrive.modeld.modeld"
 SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
 
-VISION_PKL_PATH = Path(__file__).parent / 'models/driving_vision_tinygrad.pkl'
-POLICY_PKL_PATH = Path(__file__).parent / 'models/driving_policy_tinygrad.pkl'
-VISION_METADATA_PATH = Path(__file__).parent / 'models/driving_vision_metadata.pkl'
-POLICY_METADATA_PATH = Path(__file__).parent / 'models/driving_policy_metadata.pkl'
 
 LAT_SMOOTH_SECONDS = 0.1
 LONG_SMOOTH_SECONDS = 0.3
@@ -241,6 +236,7 @@ def main(demo=False):
   cl_context = CLContext()
   cloudlog.warning("CL context ready; loading model")
 
+  from openpilot.selfdrive.modeld.model_make import choose_model_from_params
   paths = choose_model_from_params()
   cloudlog.warning( f"choose_model_from_params:{paths}")
 
