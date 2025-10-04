@@ -777,7 +777,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(paren
       } else {
         Params params;
         params.put("ActiveModelName", currentModel.toStdString());
-        changeModelButton->setTitle(tr("실패했습니다"));
+        changeModelButton->setTitle(tr("Failed"));
         changeModelButton->setText(tr("RETRY"));
         changeModelButton->setDescription(selection);
       }
