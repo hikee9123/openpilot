@@ -33,10 +33,8 @@ from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 from openpilot.selfdrive.modeld.models.commonmodel_pyx import DrivingModelFrame, CLContext
 from openpilot.selfdrive.modeld.runners.tinygrad_helpers import qcom_tensor_from_opencl_address
 
-from openpilot.selfdrive.file_logger import get_logger
-from typing import Optional, Dict, List
 
-
+from openpilot.selfdrive.modeld.model_make import choose_model_from_params
 
 PROCESS_NAME = "selfdrive.modeld.modeld"
 SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
@@ -50,124 +48,6 @@ LAT_SMOOTH_SECONDS = 0.1
 LONG_SMOOTH_SECONDS = 0.3
 MIN_LAT_CONTROL_SPEED = 0.3
 
-
-SUPERCOMBOS_DIR = Path(__file__).parent / "models/supercombos"
-DEFAULT_DIR = Path(__file__).parent / "models"
-
-VISION_ONNX = "driving_vision.onnx"
-POLICY_ONNX = "driving_policy.onnx"
-VISION_META = "driving_vision_metadata.pkl"
-POLICY_META = "driving_policy_metadata.pkl"
-VISION_PKL  = "driving_vision_tinygrad.pkl"
-POLICY_PKL  = "driving_policy_tinygrad.pkl"
-
-
-logger = get_logger( PROCESS_NAME )
-
-def _ensure_metadata_generated(onnx_path: Path, meta_path: Path) -> None:
-  script = Path(__file__).parent / 'get_model_metadata.py'
-  if not script.exists():
-    _message = f"메타데이터 생성 스크립트를 찾을 수 없습니다: {script}"
-    logger.info( _message )
-    raise FileNotFoundError( _message )
-  cmd = ["python3", str(script), str(onnx_path)]
-  res = subprocess.run(cmd, cwd=Path(__file__).parent, capture_output=True, text=True)
-  if res.returncode != 0:
-    _message = f"메타데이터 생성 실패\ncmd: {' '.join(cmd)}\nstdout:\n{res.stdout}\nstderr:\n{res.stderr}"
-    logger.info( _message )
-    raise RuntimeError(
-      _message
-    )
-  logger.info( f"metadata_generated  {res} = subprocess.run( = {cmd}" )
-  if not meta_path.exists():
-    _message = f"메타 생성 후에도 파일이 없습니다: {meta_path}"
-    logger.info( _message )
-    raise RuntimeError( _message )
-
-
-def _ensure_pkl_and_metadata(onnx_path: Path, pkl_path: Path, meta_path: Path) -> None:
-  """
-  - 메타데이터(pkl)가 없거나 ONNX보다 오래되었으면 생성 (get_model_metadata.py)
-  - tinygrad 실행 pkl이 없거나 ONNX보다 오래되었으면 tinygrad_repo의 compile3.py로 생성
-  """
-  # 1) 메타 보장 (이미 있으나 여기서도 방어적으로)
-  if _stale(meta_path, onnx_path):
-    _ensure_metadata_generated(onnx_path, meta_path)
-
-  # 2) tinygrad pkl 보장
-  if (not pkl_path.exists()) or (onnx_path.stat().st_mtime > pkl_path.stat().st_mtime):
-    # tinygrad_repo 위치 추정
-    base_candidates = [
-      Path(__file__).resolve().parents[2] / "tinygrad_repo",
-      Path(__file__).resolve().parents[1] / "tinygrad_repo",
-      Path.cwd() / "tinygrad_repo",
-    ]
-    compile3 = None
-    for base in base_candidates:
-      cand = base / "examples" / "openpilot" / "compile3.py"
-      if cand.exists():
-        compile3 = cand
-        break
-    if compile3 is None:
-      raise FileNotFoundError("tinygrad_repo/examples/openpilot/compile3.py 를 찾을 수 없습니다.")
-
-    # 환경 플래그 (기본 CPU/LLVM; 필요시 DEV=QCOM/AMD 등으로 조정)
-    flags = os.environ.get("TG_FLAGS", "DEV=LLVM IMAGE=0")
-    # PYTHONPATH에 tinygrad_repo 추가
-    env = os.environ.copy()
-    env["PYTHONPATH"] = env.get("PYTHONPATH", "") + os.pathsep + str(compile3.parents[2])
-    cmd = f'{flags} python3 "{compile3}" "{onnx_path}" "{pkl_path}"'
-    res = subprocess.run(cmd, shell=True, cwd=Path(__file__).parent, capture_output=True, text=True, env=env)
-    if res.returncode != 0:
-      raise RuntimeError(
-        f"tinygrad pkl 생성 실패\ncmd: {cmd}\nstdout:\n{res.stdout}\nstderr:\n{res.stderr}"
-      )
-    logger.info( f"pkl_and_metadata  {res} = subprocess.run({cmd})" )
-
-def _stale(meta: Path, onnx: Path) -> bool:
-  return (not meta.exists()) or (onnx.stat().st_mtime > meta.stat().st_mtime)
-
-def _resolve_onnx_only_paths(model_dir: Path) -> Dict[str, Path]:
-  vis_onnx = model_dir / VISION_ONNX
-  pol_onnx = model_dir / POLICY_ONNX
-  if not vis_onnx.exists() or not pol_onnx.exists():
-    raise FileNotFoundError(f"[{model_dir}] ONNX 누락: {VISION_ONNX}, {POLICY_ONNX} 필요")
-
-  vis_meta = model_dir / VISION_META
-  pol_meta = model_dir / POLICY_META
-  vis_pkl  = model_dir / VISION_PKL
-  pol_pkl  = model_dir / POLICY_PKL
-
-  if _stale(vis_meta, vis_onnx):
-    _ensure_metadata_generated(vis_onnx, vis_meta)
-  if _stale(pol_meta, pol_onnx):
-    _ensure_metadata_generated(pol_onnx, pol_meta)
-
-  if _stale(vis_pkl, vis_onnx):
-    _ensure_pkl_and_metadata(vis_onnx, vis_pkl, vis_meta)
-  if _stale(pol_pkl, pol_onnx):
-    _ensure_pkl_and_metadata(pol_onnx, pol_pkl, pol_meta)
-
-  return {
-    'vision_onnx': vis_onnx,
-    'policy_onnx': pol_onnx,
-    'vision_meta': vis_meta,
-    'policy_meta': pol_meta,
-    "vision_pkl":  vis_pkl,
-    "policy_pkl":  pol_pkl,
-  }
-
-def _choose_model_dir_from_params_only() -> Path:
-  """
-  오직 Params('ActiveModelName')만 사용하여 supercombos/<이름> 선택.
-  미설정 시 자동 기본 번들로 폴백.
-  """
-
-  pname = Params().get("ActiveModelName")
-  if pname:
-    pname = pname.decode() if isinstance(pname, (bytes, bytearray)) else pname
-    bundle = SUPERCOMBOS_DIR / pname
-    return bundle
 
 
 def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.ModelDataV2.Action,
@@ -267,14 +147,14 @@ class ModelState:
   prev_desire: np.ndarray  # for tracking the rising edge of the pulse
 
   def __init__(self, context: CLContext, paths: dict):
-    with open(paths['vision_meta'], 'rb') as f:  #VISION_METADATA_PATH
+    with open(paths['vision_meta'], 'rb') as f:
       vision_metadata = pickle.load(f)
       self.vision_input_shapes =  vision_metadata['input_shapes']
       self.vision_input_names = list(self.vision_input_shapes.keys())
       self.vision_output_slices = vision_metadata['output_slices']
       vision_output_size = vision_metadata['output_shapes']['outputs'][1]
 
-    with open(paths['policy_meta'], 'rb') as f:  #POLICY_METADATA_PATH
+    with open(paths['policy_meta'], 'rb') as f:
       policy_metadata = pickle.load(f)
       self.policy_input_shapes =  policy_metadata['input_shapes']
       self.policy_output_slices = policy_metadata['output_slices']
@@ -297,10 +177,10 @@ class ModelState:
     self.policy_output = np.zeros(policy_output_size, dtype=np.float32)
     self.parser = Parser()
 
-    with open(paths['vision_pkl'], "rb") as f:  #VISION_PKL_PATH
+    with open(paths['vision_pkl'], "rb") as f:
       self.vision_run = pickle.load(f)
 
-    with open(paths['policy_pkl'], "rb") as f:    #POLICY_PKL_PATH
+    with open(paths['policy_pkl'], "rb") as f:
       self.policy_run = pickle.load(f)
 
   def slice_outputs(self, model_outputs: np.ndarray, output_slices: dict[str, slice]) -> dict[str, np.ndarray]:
@@ -348,8 +228,6 @@ class ModelState:
 
 
 def main(demo=False):
-  logger = get_logger()
-
   cloudlog.warning("modeld init")
 
   if not USBGPU:
@@ -358,22 +236,13 @@ def main(demo=False):
     config_realtime_process(7, 54)
 
 
-  logger.info("modeld start")
-  bundle_dir = _choose_model_dir_from_params_only()
-  if bundle_dir is None:
-    bundle_dir = DEFAULT_DIR
-  logger.info(f"modeld bundle_dir : {bundle_dir}")
-  paths = _resolve_onnx_only_paths(bundle_dir)
-  logger.info(f"modeld paths : {paths}")
-
-
-
   st = time.monotonic()
   cloudlog.warning("setting up CL context")
   cl_context = CLContext()
   cloudlog.warning("CL context ready; loading model")
 
-
+  paths = choose_model_from_params()
+  cloudlog.warning( f"choose_model_from_params:{paths}")
 
   model = ModelState(cl_context, paths)
   cloudlog.warning(f"models loaded in {time.monotonic() - st:.1f}s, modeld starting")
