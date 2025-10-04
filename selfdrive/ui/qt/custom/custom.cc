@@ -736,11 +736,17 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(paren
     Params params;
     params.put("ActiveModelName", selection.toStdString());
 
+    //const char* exec_modelmake = "/data/openpilot/selfdrive/ui/qt/custom/script/model_make.sh";
+    //std::system(panda_flashing);
+
     changeModelButton->setEnabled(false);
     changeModelButton->setTitle(tr("Compiling..."));
     changeModelButton->setText(tr("WAIT"));
     changeModelButton->setDescription(selection);
 
+
+
+    // --- QProcess 설정 블록 시작 ---
     if (modelProcess != nullptr) {
       modelProcess->disconnect(this);
       modelProcess->deleteLater();
@@ -749,54 +755,65 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(paren
 
     modelProcess = new QProcess(this);
 
-    QString workingDirectory = QDir::cleanPath(QDir::currentPath() + QLatin1String("/selfdrive/modeld"));
-    QString scriptPath = QDir::toNativeSeparators(QStringLiteral("selfdrive\\modeld\\model_make.py"));
+    // openpilot 루트(현재 경로가 /data/openpilot 라는 가정이 일반적)
+    const QString workingDirectory = QDir::cleanPath(QDir::currentPath()); // "/data/openpilot"
+    const QString scriptPath       = QDir::cleanPath(
+      QDir::currentPath() + QLatin1String("/selfdrive/ui/qt/custom/script/model_make.sh")
+    );
 
-    modelProcess->setProgram(QStringLiteral("python.exe"));
-    modelProcess->setArguments({scriptPath, selection});
-    modelProcess->setWorkingDirectory(QDir::toNativeSeparators(workingDirectory));
+    // 실행 권한 부여
+    QFileInfo fi(scriptPath);
+    if (!fi.isExecutable()) {
+      QFile::setPermissions(scriptPath, fi.permissions()
+        | QFileDevice::ExeOwner | QFileDevice::ExeGroup | QFileDevice::ExeOther);
+    }
+
+    // 기본: shebang이 있으면 직접 실행
+    modelProcess->setProgram(scriptPath);
+    modelProcess->setArguments({});                // 인자 없음
+    modelProcess->setWorkingDirectory(workingDirectory);
+
+    // 차선책: shebang이 없는 경우 bash로 실행하고 싶다면 아래 3줄을 위 3줄 대신 사용
+    // modelProcess->setProgram("/bin/bash");
+    // modelProcess->setArguments({scriptPath});
+    // modelProcess->setWorkingDirectory(workingDirectory);
 
     QObject::connect(modelProcess, &QProcess::readyReadStandardOutput, this, [this]() {
-      QString output = QString::fromLocal8Bit(modelProcess->readAllStandardOutput());
+      const QString output = QString::fromLocal8Bit(modelProcess->readAllStandardOutput());
       qInfo() << "Model build stdout:" << output;
     });
-
     QObject::connect(modelProcess, &QProcess::readyReadStandardError, this, [this]() {
-      QString output = QString::fromLocal8Bit(modelProcess->readAllStandardError());
+      const QString output = QString::fromLocal8Bit(modelProcess->readAllStandardError());
       qWarning() << "Model build stderr:" << output;
     });
 
-    QObject::connect(modelProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
-                     [this, selection](int exitCode, QProcess::ExitStatus exitStatus) {
-      bool success = (exitStatus == QProcess::NormalExit && exitCode == 0);
-      if (success) {
-        currentModel = selection;
-        changeModelButton->setTitle(selection);
-        changeModelButton->setText(tr("CHANGE"));
-        changeModelButton->setDescription(QString());
-      } else {
-        Params params;
-        params.put("ActiveModelName", currentModel.toStdString());
-        changeModelButton->setTitle(tr("Failed"));
-        changeModelButton->setText(tr("RETRY"));
-        changeModelButton->setDescription(selection);
+    QObject::connect(
+      modelProcess,
+      QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+      this,
+      [this, selection](int exitCode, QProcess::ExitStatus exitStatus) {
+        const bool success = (exitStatus == QProcess::NormalExit && exitCode == 0);
+        if (success) {
+          currentModel = selection;
+          changeModelButton->setTitle(selection);
+          changeModelButton->setText(tr("CHANGE"));
+          changeModelButton->setDescription(QString());
+        } else {
+          Params().put("ActiveModelName", currentModel.toStdString());  // 롤백
+          changeModelButton->setTitle(tr("Failed"));
+          changeModelButton->setText(tr("RETRY"));
+          changeModelButton->setDescription(selection);
+        }
+        changeModelButton->setEnabled(true);
+        if (modelProcess) { modelProcess->deleteLater(); modelProcess = nullptr; }
       }
-
-      changeModelButton->setEnabled(true);
-
-      if (modelProcess != nullptr) {
-        modelProcess->deleteLater();
-        modelProcess = nullptr;
-      }
-    });
+    );
 
     modelProcess->start();
+    // ---  QProcess 블록 끝 ---
+
   });
   addItem(changeModelButton);
-
-
-
-
 
 
   setStyleSheet(R"(
