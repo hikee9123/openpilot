@@ -736,14 +736,11 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(paren
     Params params;
     params.put("ActiveModelName", selection.toStdString());
 
-    //const char* exec_modelmake = "/data/openpilot/selfdrive/ui/qt/custom/script/model_make.sh";
-    //std::system(panda_flashing);
 
     changeModelButton->setEnabled(false);
     changeModelButton->setTitle(tr("Compiling..."));
     changeModelButton->setText(tr("WAIT"));
     changeModelButton->setDescription(selection);
-
 
 
     // --- QProcess 설정 블록 시작 ---
@@ -753,7 +750,6 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(paren
       modelProcess = nullptr;
     }
 
-    modelProcess = new QProcess(this);
 
     // openpilot 루트(현재 경로가 /data/openpilot 라는 가정이 일반적)
     const QString workingDirectory = QDir::cleanPath(QDir::currentPath()); // "/data/openpilot"
@@ -767,6 +763,18 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(paren
       QFile::setPermissions(scriptPath, fi.permissions()
         | QFileDevice::ExeOwner | QFileDevice::ExeGroup | QFileDevice::ExeOther);
     }
+
+    const char* exec_modelmake = "/data/openpilot/selfdrive/ui/qt/custom/script/model_make.sh";
+    std::system(exec_modelmake);
+
+    currentModel = selection;
+    changeModelButton->setTitle(selection);
+    changeModelButton->setText(tr("CHANGE"));
+    changeModelButton->setDescription(QString());
+    changeModelButton->setEnabled(true);
+
+    /*
+    modelProcess = new QProcess(this);
 
     // 기본: shebang이 있으면 직접 실행
     modelProcess->setProgram(scriptPath);
@@ -810,6 +818,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(paren
     );
 
     modelProcess->start();
+    */
     // ---  QProcess 블록 끝 ---
 
   });
