@@ -193,20 +193,37 @@ def _choose_model_dir_from_params_only() -> Optional[Path]:
 
 
 def choose_model_from_params() -> Dict[str, Path]:
-  cloudlog.warning("choose_model_from_params")
+  cloudlog.warning("check_model_from_params")
   bundle_dir = _choose_model_dir_from_params_only()
   if bundle_dir is not None and bundle_dir.exists():
-    return _resolve_onnx_only_paths(bundle_dir)
+    vis_meta = bundle_dir / VISION_META
+    pol_meta = bundle_dir / POLICY_META
+    vis_pkl  = bundle_dir / VISION_PKL
+    pol_pkl  = bundle_dir / POLICY_PKL
+    required_ok = all(p.exists() for p in (vis_meta, pol_meta, vis_pkl, pol_pkl))
+    if not required_ok:
+        cloudlog.warning(f"[1.modeld] check_model_from_params: missing in {bundle_dir}, fallback to comma defaults")
+        return _comma_default_paths()
 
-  cloudlog.warning("[2.modeld] fallback to comma default PATH constants")
+
+  return _resolve_onnx_only_paths(bundle_dir)
+
+
+
+def compile_model_from_params() -> Dict[str, Path]:
+  cloudlog.warning("check_model_from_params")
+  bundle_dir = _choose_model_dir_from_params_only()
+  if bundle_dir is not None and bundle_dir.exists():
+    paths = _resolve_onnx_only_paths(bundle_dir)
+    cloudlog.warning(f"[3.modeld] OK : {paths}")
+    return
+
+  cloudlog.warning(f"[2.modeld] Comma default path : {paths}")
   return _comma_default_paths()
 
 
-
-
 def main(demo=False):
-  paths = choose_model_from_params()
-  cloudlog.warning(f"[3.modeld] OK : {paths}")
+   compile_model_from_params()
 
 
 if __name__ == "__main__":
