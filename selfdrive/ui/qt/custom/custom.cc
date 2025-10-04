@@ -11,6 +11,8 @@
 #include <QObject>
 #include <QJsonArray>
 #include <QProcess>
+#include <QDir>
+#include <QDebug>
 
 #include "common/watchdog.h"
 #include "common/params.h"
@@ -715,24 +717,82 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(paren
 
 
   QString selected_model = QString::fromStdString(Params().get("ActiveModelName"));
-  auto changeModel = new ButtonControl(selected_model.length() ? selected_model : tr("Select your model"),
+  currentModel = selected_model;
+  changeModelButton = new ButtonControl(selected_model.length() ? selected_model : tr("Select your model"),
                     selected_model.length() ? tr("CHANGE") : tr("SELECT"), "");
 
-  QObject::connect( changeModel, &ButtonControl::clicked, [=]() {
+  QObject::connect(changeModelButton, &ButtonControl::clicked, this, [this]() {
     QStringList items = {
       "3.Firehose",
       "2.Steam_Powered",
       "1.default",
-      };
+    };
 
-    QString selection = MultiOptionDialog::getSelection(tr("Select a model"), items, selected_model, this);
-    if ( !selection.isEmpty() )
-    {
-      //  int selectedIndex = items.indexOf(selection);
-      Params().put("ActiveModelName", selection.toStdString());
+    QString selection = MultiOptionDialog::getSelection(tr("Select a model"), items, currentModel, this);
+    if (selection.isEmpty() || selection == currentModel) {
+      return;
     }
+
+    Params params;
+    params.put("ActiveModelName", selection.toStdString());
+
+    changeModelButton->setEnabled(false);
+    changeModelButton->setTitle(tr("컴파일 중..."));
+    changeModelButton->setText(tr("WAIT"));
+    changeModelButton->setDescription(selection);
+
+    if (modelProcess != nullptr) {
+      modelProcess->disconnect(this);
+      modelProcess->deleteLater();
+      modelProcess = nullptr;
+    }
+
+    modelProcess = new QProcess(this);
+
+    QString workingDirectory = QDir::cleanPath(QDir::currentPath() + QLatin1String("/selfdrive/modeld"));
+    QString scriptPath = QDir::toNativeSeparators(QStringLiteral("selfdrive\\modeld\\model_make.py"));
+
+    modelProcess->setProgram(QStringLiteral("python.exe"));
+    modelProcess->setArguments({scriptPath, selection});
+    modelProcess->setWorkingDirectory(QDir::toNativeSeparators(workingDirectory));
+
+    QObject::connect(modelProcess, &QProcess::readyReadStandardOutput, this, [this]() {
+      QString output = QString::fromLocal8Bit(modelProcess->readAllStandardOutput());
+      qInfo() << "Model build stdout:" << output;
+    });
+
+    QObject::connect(modelProcess, &QProcess::readyReadStandardError, this, [this]() {
+      QString output = QString::fromLocal8Bit(modelProcess->readAllStandardError());
+      qWarning() << "Model build stderr:" << output;
+    });
+
+    QObject::connect(modelProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+                     [this, selection](int exitCode, QProcess::ExitStatus exitStatus) {
+      bool success = (exitStatus == QProcess::NormalExit && exitCode == 0);
+      if (success) {
+        currentModel = selection;
+        changeModelButton->setTitle(selection);
+        changeModelButton->setText(tr("CHANGE"));
+        changeModelButton->setDescription(QString());
+      } else {
+        Params params;
+        params.put("ActiveModelName", currentModel.toStdString());
+        changeModelButton->setTitle(tr("실패했습니다"));
+        changeModelButton->setText(tr("RETRY"));
+        changeModelButton->setDescription(selection);
+      }
+
+      changeModelButton->setEnabled(true);
+
+      if (modelProcess != nullptr) {
+        modelProcess->deleteLater();
+        modelProcess = nullptr;
+      }
+    });
+
+    modelProcess->start();
   });
-  addItem(changeModel);
+  addItem(changeModelButton);
 
 
 
