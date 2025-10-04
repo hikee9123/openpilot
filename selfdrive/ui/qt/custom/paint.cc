@@ -544,6 +544,7 @@ void OnPaint::ui_main_debug(QPainter &p)
 
   if( m_param.debug.getIdx1() )
   {
+    SubMaster &sm2 = *(m_sm);
     auto lp = sm2["liveParameters"].getLiveParameters();
 
     float fSR = lp.getSteerRatio();
