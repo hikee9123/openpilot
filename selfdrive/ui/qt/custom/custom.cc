@@ -737,7 +737,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(paren
     params.put("ActiveModelName", selection.toStdString());
 
     changeModelButton->setEnabled(false);
-    changeModelButton->setTitle(tr("컴파일 중..."));
+    changeModelButton->setTitle(tr("Compiling..."));
     changeModelButton->setText(tr("WAIT"));
     changeModelButton->setDescription(selection);
 
