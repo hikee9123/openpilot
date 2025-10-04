@@ -11,11 +11,9 @@ import subprocess
 from pathlib import Path
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.params import Params
-from openpilot.selfdrive.file_logger import get_logger
 from typing import Optional, Dict
 
 from openpilot.selfdrive.modeld.modeld import (
-  PROCESS_NAME,
   VISION_PKL_PATH,
   POLICY_PKL_PATH,
   VISION_METADATA_PATH,
@@ -33,7 +31,7 @@ VISION_PKL  = "driving_vision_tinygrad.pkl"
 POLICY_PKL  = "driving_policy_tinygrad.pkl"
 
 
-logger = get_logger( PROCESS_NAME )
+
 
 def _comma_default_paths() -> Dict[str, Path]:
   """comma 기본 PATH를 그대로 사용 (상수 4개 + models/*.onnx)"""
@@ -58,28 +56,25 @@ def _ensure_metadata_generated(onnx_path: Path, meta_path: Path) -> None:
   if not script.exists():
     msg = f"Metadata script not found: {script}"
     cloudlog.error(f"[modeld] {msg}")
-    logger.info(msg)
     raise FileNotFoundError(msg)
 
   cloudlog.warning(f"[modeld] Generating metadata for {onnx_path.name}")
-  logger.info(f"gen meta: onnx={onnx_path}, out={meta_path}")
+
 
   cmd = ["python3", str(script), str(onnx_path)]
   res = subprocess.run(cmd, cwd=Path(__file__).parent, capture_output=True, text=True)
   if res.returncode != 0:
     msg = f"Metadata generation failed\ncmd: {' '.join(cmd)}\nstdout:\n{res.stdout}\nstderr:\n{res.stderr}"
     cloudlog.error(f"[modeld] {msg}")
-    logger.info(msg)
     raise RuntimeError(msg)
 
 
   if not meta_path.exists():
     msg = f"Metadata file not created: {meta_path}"
     cloudlog.error(f"[modeld] {msg}")
-    logger.info(msg)
     raise RuntimeError(msg)
 
-  logger.info(f"meta OK: {meta_path}")
+  cloudlog.info(f"meta OK: {meta_path}")
 
 
 def _ensure_pkl_and_metadata(onnx_path: Path, pkl_path: Path, meta_path: Path) -> None:
@@ -119,16 +114,14 @@ def _ensure_pkl_and_metadata(onnx_path: Path, pkl_path: Path, meta_path: Path) -
     if res.returncode != 0:
       err = f"tinygrad pkl build failed\ncmd: {cmd}\nstdout:\n{res.stdout}\nstderr:\n{res.stderr}"
       cloudlog.error(f"[modeld] {err}")
-      logger.info(err)
       raise RuntimeError(err)
 
     if not pkl_path.exists():
       err = f"pkl not created: {pkl_path}"
       cloudlog.error(f"[modeld] {err}")
-      logger.info(err)
       raise RuntimeError(err)
 
-    logger.info(f"pkl OK: {pkl_path}")
+    cloudlog.info(f"pkl OK: {pkl_path}")
 
 
 
@@ -144,7 +137,7 @@ def _resolve_onnx_only_paths(model_dir: Path) -> Dict[str, Path]:
     if not vis_onnx.exists() or not pol_onnx.exists():
       raise FileNotFoundError(f"[{model_dir}] Missing ONNX files: {VISION_ONNX}, {POLICY_ONNX} are required")
 
-    logger.info(f"[modeld] ONNX found: vision={vis_onnx}, policy={pol_onnx}")
+    cloudlog.info(f"[modeld] ONNX found: vision={vis_onnx}, policy={pol_onnx}")
 
     vis_meta = model_dir / VISION_META
     pol_meta = model_dir / POLICY_META
@@ -175,8 +168,6 @@ def _resolve_onnx_only_paths(model_dir: Path) -> Dict[str, Path]:
   except Exception as e:
     # 어떤 오류든 comma 기본 PATH로 폴백
     cloudlog.error(f"[modeld] _resolve_onnx_only_paths failed for {model_dir}: {e}. Falling back to comma default PATH.")
-    logger.info(f"_resolve_onnx_only_paths fallback -> comma default: err={e}")
-
     paths = _comma_default_paths()
     return paths
 
@@ -192,27 +183,22 @@ def _choose_model_dir_from_params_only() -> Optional[Path]:
       bundle = SUPERCOMBOS_DIR / pname
       if bundle.exists():
         cloudlog.warning(f"[modeld] ActiveModelName='{pname}' -> {bundle}")
-        logger.info(f"ActiveModelName='{pname}' -> {bundle}")
         return bundle
       cloudlog.error(f"[modeld] supercombos/{pname} not found.")
-      logger.info(f"supercombos/{pname} not found.")
   except Exception as e:
     cloudlog.error(f"[modeld] reading ActiveModelName failed: {e}")
-    logger.info(f"reading ActiveModelName failed: {e}")
   return None
 
 
 
 def choose_model_from_params() -> Dict[str, Path]:
-  logger.info("choose_model_from_params")
+  cloudlog.info("choose_model_from_params")
   bundle_dir = _choose_model_dir_from_params_only()
   if bundle_dir is not None and bundle_dir.exists():
     cloudlog.warning(f"[modeld] bundle_dir = {bundle_dir}")
-    logger.info(f"bundle_dir = {bundle_dir}")
     return _resolve_onnx_only_paths(bundle_dir)
 
   cloudlog.warning("[modeld] fallback to comma default PATH constants")
-  logger.info("fallback to comma default PATH constants")
   return _comma_default_paths()
 
 
@@ -220,7 +206,7 @@ def choose_model_from_params() -> Dict[str, Path]:
 
 def main(demo=False):
   paths = choose_model_from_params()
-  logger.info(f"modeld paths : {paths}")
+  cloudlog.info(f"modeld paths : {paths}")
 
 
 if __name__ == "__main__":
