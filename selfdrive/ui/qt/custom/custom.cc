@@ -764,7 +764,11 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(paren
         | QFileDevice::ExeOwner | QFileDevice::ExeGroup | QFileDevice::ExeOther);
     }
 
-    const char* exec_modelmake = "/data/openpilot/selfdrive/ui/qt/custom/script/model_make.sh";
+    char* exec_modelmake = "/data/openpilot/selfdrive/ui/qt/custom/script/model_make.sh";
+    if (Hardware::PC()) {
+    {
+      exec_modelmake = scriptPath.toStdString();
+    }
     std::system(exec_modelmake);
 
     currentModel = selection;
@@ -773,53 +777,6 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(paren
     changeModelButton->setDescription(QString());
     changeModelButton->setEnabled(true);
 
-    /*
-    modelProcess = new QProcess(this);
-
-    // 기본: shebang이 있으면 직접 실행
-    modelProcess->setProgram(scriptPath);
-    modelProcess->setArguments({});                // 인자 없음
-    modelProcess->setWorkingDirectory(workingDirectory);
-
-    // 차선책: shebang이 없는 경우 bash로 실행하고 싶다면 아래 3줄을 위 3줄 대신 사용
-    // modelProcess->setProgram("/bin/bash");
-    // modelProcess->setArguments({scriptPath});
-    // modelProcess->setWorkingDirectory(workingDirectory);
-
-    QObject::connect(modelProcess, &QProcess::readyReadStandardOutput, this, [this]() {
-      const QString output = QString::fromLocal8Bit(modelProcess->readAllStandardOutput());
-      qInfo() << "Model build stdout:" << output;
-    });
-    QObject::connect(modelProcess, &QProcess::readyReadStandardError, this, [this]() {
-      const QString output = QString::fromLocal8Bit(modelProcess->readAllStandardError());
-      qWarning() << "Model build stderr:" << output;
-    });
-
-    QObject::connect(
-      modelProcess,
-      QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-      this,
-      [this, selection](int exitCode, QProcess::ExitStatus exitStatus) {
-        const bool success = (exitStatus == QProcess::NormalExit && exitCode == 0);
-        if (success) {
-          currentModel = selection;
-          changeModelButton->setTitle(selection);
-          changeModelButton->setText(tr("CHANGE"));
-          changeModelButton->setDescription(QString());
-        } else {
-          Params().put("ActiveModelName", currentModel.toStdString());  // 롤백
-          changeModelButton->setTitle(tr("Failed"));
-          changeModelButton->setText(tr("RETRY"));
-          changeModelButton->setDescription(selection);
-        }
-        changeModelButton->setEnabled(true);
-        if (modelProcess) { modelProcess->deleteLater(); modelProcess = nullptr; }
-      }
-    );
-
-    modelProcess->start();
-    */
-    // ---  QProcess 블록 끝 ---
 
   });
   addItem(changeModelButton);
