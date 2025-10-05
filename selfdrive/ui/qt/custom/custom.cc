@@ -732,7 +732,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
     QStringList items = {
         "3.Firehose",
         "2.Steam_Powered",
-        "1.default",
+        "1.default",  // comma 기본 모델.
     };
 
     // 선택 다이얼로그
@@ -744,6 +744,14 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
     Params params;
     params.put("ActiveModelName", selection.toStdString());
 
+    if (selection == "1.default") {
+    // comma 기본 모델 선택
+      currentModel = selection;
+      changeModelButton->setTitle(selection);
+      changeModelButton->setText(tr("CHANGE"));
+      changeModelButton->setDescription(QString());
+      return;
+    }
     // UI 잠금/진행 표시
     changeModelButton->setEnabled(false);
     changeModelButton->setTitle(tr("Compiling..."));
