@@ -560,7 +560,7 @@ void OnPaint::ui_main_debug(QPainter &p)
     text.sprintf("ignition=%d", scene->ignition  );               p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
     text.sprintf("idle_ticks=%d", scene->custom.idle_ticks  );    p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
     text.sprintf("target=%d", scene->custom.target  );            p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
-    text.sprintf("target=%d", scene->custom.target  );            p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
+
 
     text.sprintf("SR=%.3f", fSR  );            p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
     text.sprintf("SF=%.3f", fSF  );            p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
