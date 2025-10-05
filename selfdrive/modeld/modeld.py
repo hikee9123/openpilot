@@ -12,8 +12,6 @@ import time
 import pickle
 import numpy as np
 import cereal.messaging as messaging
-import subprocess
-
 from cereal import car, log
 from pathlib import Path
 from cereal.messaging import PubMaster, SubMaster
@@ -34,7 +32,6 @@ from openpilot.selfdrive.modeld.models.commonmodel_pyx import DrivingModelFrame,
 from openpilot.selfdrive.modeld.runners.tinygrad_helpers import qcom_tensor_from_opencl_address
 
 
-
 PROCESS_NAME = "selfdrive.modeld.modeld"
 SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
 
@@ -42,7 +39,6 @@ SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
 LAT_SMOOTH_SECONDS = 0.1
 LONG_SMOOTH_SECONDS = 0.3
 MIN_LAT_CONTROL_SPEED = 0.3
-
 
 
 def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.ModelDataV2.Action,
@@ -229,7 +225,6 @@ def main(demo=False):
     # USB GPU currently saturates a core so can't do this yet,
     # also need to move the aux USB interrupts for good timings
     config_realtime_process(7, 54)
-
 
   st = time.monotonic()
   cloudlog.warning("setting up CL context")
