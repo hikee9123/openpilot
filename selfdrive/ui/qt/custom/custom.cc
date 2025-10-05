@@ -746,7 +746,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
             changeModelButton->setTitle(selection);
             changeModelButton->setText(tr("CHANGE"));
             changeModelButton->setDescription(QString());
-            qWarning() << "comma default PATH";
+            qWarning() << "Comma default PATH";
             return;
           }
 
@@ -787,19 +787,19 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
           // 로그 파이프 연결(원하면 별도 텍스트 위젯로 표시 가능)
           connect(proc, &QProcess::readyReadStandardOutput, this, [this, proc]() {
             const auto out = QString::fromUtf8(proc->readAllStandardOutput());
-            qInfo() << "[model_make.sh][stdout]" << out.trimmed();
+            qWarning() << "[custom.cc][out]" << out.trimmed();
             changeModelButton->setDescription(out.right(80)); // 최근 로그 한 줄 정도
           });
           connect(proc, &QProcess::readyReadStandardError, this, [this, proc]() {
             const auto err = QString::fromUtf8(proc->readAllStandardError());
-            qWarning() << "[model_make.sh][stderr]" << err.trimmed();
+            qWarning() << "[custom.cc][ret]" << err.trimmed();
             changeModelButton->setDescription(err.right(80));
           });
 
           // 8) 종료 처리
           connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
                   this, [=](int code, QProcess::ExitStatus status) {
-            qInfo() << "model_make.sh exit code =" << code << "status=" << status;
+            qWarning() << "model_make.sh exit code =" << code << "status=" << status;
 
             if (status == QProcess::NormalExit && code == 0) {
               // 성공

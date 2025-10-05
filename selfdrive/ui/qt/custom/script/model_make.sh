@@ -4,7 +4,8 @@ set -euo pipefail
 
 PY=python3
 
-echo "[model_make] [${WORKDIR}]===== START $(date) ====="
+echo "[model_make] ===== START $(date) ====="
+echo "[model_make] [${WORKDIR}]"
 cd "${WORKDIR}"
 
 

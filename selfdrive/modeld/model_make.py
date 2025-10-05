@@ -217,7 +217,7 @@ def _choose_model_dir_from_params_only() -> Optional[Path]:
       return None
     bundle = SUPERCOMBOS_DIR / pname
     if bundle.exists():
-      cloudlog.warning(f"[modeld.params] ActiveModelName='{pname}', bundle_dir={bundle}")
+      cloudlog.warning(f"[modeld.params] ActiveModelName='{pname}'")
       return bundle
 
   except Exception as e:
@@ -266,7 +266,7 @@ def choose_model_from_params() -> Dict[str, Path]:
     'vision_pkl':  vis_pkl,
     'policy_pkl':  pol_pkl,
   }
-  cloudlog.warning(f"[modeld]  OK: {paths}")
+  cloudlog.warning("[modeld]  OK")
   return paths
 
 
@@ -275,12 +275,12 @@ def compile_model_from_params() -> Dict[str, Path]:
   번들이 있으면 해당 번들에서 onnx/meta/pkl을 확인/필요 시 생성 후 반환,
   없으면 comma defaults 반환
   """
-  cloudlog.warning("[modeld] compile_model_from_params")
+  cloudlog.info("[modeld] compile_model_from_params")
   bundle_dir = _choose_model_dir_from_params_only()
 
   if bundle_dir and bundle_dir.exists():
     paths = _resolve_onnx_only_paths(bundle_dir)
-    cloudlog.warning(f"[modeld] compile OK: {paths}")
+    cloudlog.warning("[modeld] compile OK")
     return paths
 
   paths = _comma_default_paths()
