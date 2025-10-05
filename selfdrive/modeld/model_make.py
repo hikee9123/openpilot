@@ -29,9 +29,6 @@ POLICY_PKL  = "driving_policy_tinygrad.pkl"
 # 결정성(비결정적 해싱 등) 줄이기
 os.environ.setdefault("PYTHONHASHSEED", "0")
 
-
-SAFE_META_KEYS = {"format","model_basename","basic","opset","inputs","outputs","ops","initializers"}
-
 # ----------------------------
 # Helpers
 # ----------------------------
