@@ -5,12 +5,15 @@
 #include <string>
 #include <tuple>
 #include <vector>
-
+#include <cstdlib>
 
 #include <QTabWidget>
 #include <QObject>
 #include <QJsonArray>
 #include <QProcess>
+#include <QDir>
+#include <QDebug>
+#include <QtConcurrent>
 
 #include "common/watchdog.h"
 #include "common/params.h"
@@ -708,45 +711,136 @@ void GitTab::hideEvent(QHideEvent *event)
 //
 //
 
-ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj) : ListWidget(parent) , m_jsonobj(jsonobj)
-{
+
+ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
+    : ListWidget(parent), m_jsonobj(jsonobj) {
   m_pCustom = parent;
 
+  // 현재 선택된 모델명 읽기
+  QString selected_model = QString::fromStdString(Params().get("ActiveModelName"));
+  currentModel = selected_model;
+
+  // 버튼 생성
+  changeModelButton = new ButtonControl(
+      selected_model.length() ? selected_model : tr("Select your model"),
+      selected_model.length() ? tr("CHANGE") : tr("SELECT"),
+      "");
+
+      /// connect start
+        QObject::connect(changeModelButton, &ButtonControl::clicked, this, [this]() {
+          // 1) 모델 후보 (최소 수정: 기존 고정 목록 유지)
+          QStringList items = {
+            "3.Firehose",
+            "2.Steam_Powered",
+            "1.default" };
+
+          // 현재 선택 상태 반영
+          QString selection = MultiOptionDialog::getSelection(tr("Select a model"), items, currentModel, this);
+          if (selection.isEmpty() || selection == currentModel) return;
+
+          // 2) 선택 즉시 Params 반영 (스크립트가 Params를 참조한다고 가정)
+          Params params;
+          const std::string prev = params.get("ActiveModelName");
+          params.put("ActiveModelName", selection.toStdString());
+
+          // 3) 기본 모델이면 스크립트 실행 불필요
+          if (selection == "1.default") {
+            currentModel = selection;
+            changeModelButton->setTitle(selection);
+            changeModelButton->setText(tr("CHANGE"));
+            changeModelButton->setDescription(QString());
+            qWarning() << "Comma default PATH";
+            return;
+          }
+
+          // 4) 경로 계산 (이중 슬래시 방지)
+          QDir root;
+          if (Hardware::PC()) {
+            root = QDir(QDir::homePath());      // or: root.setPath(QDir::homePath());
+          } else {
+            root = QDir(QStringLiteral("/data"));
+          }
+          root.cd("openpilot");                            // ~/openpilot
+          const QString rootPath = root.absolutePath();
+          const QString modeldPath = root.filePath("selfdrive/modeld");
+          const QString scriptPath = root.filePath("selfdrive/ui/qt/custom/script/model_make.sh");
+
+          // 5) 스크립트 검증
+          QFileInfo fi(scriptPath);
+          if (!fi.exists() || !fi.isFile() || !(fi.permissions() & QFile::ExeUser)) {
+            changeModelButton->setTitle(tr("Script missing"));
+            changeModelButton->setText(tr("RETRY"));
+            changeModelButton->setDescription(scriptPath);
+            // 롤백
+            params.put("ActiveModelName", prev);
+            return;
+          }
+
+          // 6) UI 잠금 + 진행 표시
+          changeModelButton->setEnabled(false);
+          changeModelButton->setTitle(tr("Compiling..."));
+          changeModelButton->setText(tr("WAIT"));
+          changeModelButton->setDescription(selection);
+
+          const QString prevCwd = "/data/openpilot";// QDir::currentPath();
+
+          // 7) QProcess로 비동기 실행
+          QProcess *proc = new QProcess(this);
+          proc->setProgram(scriptPath);
+          proc->setWorkingDirectory(modeldPath);
+
+          // 환경 변수 설정 (필요 시 WORKDIR 전달)
+          QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+          env.insert("WORKDIR", modeldPath);
+          proc->setProcessEnvironment(env);
+
+          // 로그 파이프 연결(원하면 별도 텍스트 위젯로 표시 가능)
+          connect(proc, &QProcess::readyReadStandardOutput, this, [this, proc]() {
+            const auto out = QString::fromUtf8(proc->readAllStandardOutput());
+            qWarning() << "[custom.cc][out]" << out.trimmed();
+            changeModelButton->setDescription(out.right(80)); // 최근 로그 한 줄 정도
+          });
+          connect(proc, &QProcess::readyReadStandardError, this, [this, proc]() {
+            const auto err = QString::fromUtf8(proc->readAllStandardError());
+            qWarning() << "[custom.cc][ret]" << err.trimmed();
+            changeModelButton->setDescription(err.right(80));
+          });
+
+          // 8) 종료 처리
+          connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                  this, [=](int code, QProcess::ExitStatus status) {
+            qWarning() << "model_make.sh exit code =" << code << "status=" << status;
+
+            if (status == QProcess::NormalExit && code == 0) {
+              // 성공
+              currentModel = selection;
+              changeModelButton->setTitle(selection);
+              changeModelButton->setText(tr("CHANGE"));
+              //changeModelButton->setDescription(QString());
+            } else {
+              // 실패 → 롤백
+              Params().put("ActiveModelName", prev);
+              changeModelButton->setTitle(tr("Failed"));
+              changeModelButton->setText(tr("RETRY"));
+              //changeModelButton->setDescription(tr("Check logs"));
+            }
+
+            if (!QDir::setCurrent(prevCwd)) {
+              qWarning() << "Failed to restore dir to" << prevCwd;
+            }
+            changeModelButton->setEnabled(true);
+            proc->deleteLater();
+          });
+
+          // 9) 시작 (인자 필요 없으면 그대로, 필요하면 selection 등 전달)
+          // 예: proc->setArguments({ selection });
+          proc->start();
+        });
+  /// connect end.
 
 
-  QString selected_model = QString::fromStdString(Params().get("SelectedModel"));
-  auto changeModel = new ButtonControl(selected_model.length() ? selected_model : tr("Select your model"),
-                    selected_model.length() ? tr("CHANGE") : tr("SELECT"), "");
 
-  QObject::connect( changeModel, &ButtonControl::clicked, [=]() {
-    QStringList items = {
-      "8.Notre Dame Model,supercombo_ND",
-      "7.North Dakota Model,supercombo_DM",
-      "6.WD40 model,supercombo_WD40",
-      "5.Duck_Amigo model,supercombo_DA",
-      "4.Recertified_Herbalist,supercombo_RH",
-      "3.Los_Angeles model,supercombo_LA",
-      "2.Certified_Herbalist2,supercombo_CH2",
-      "1.Certified_Herbalist1,supercombo_CH1",
-      };
-
-    QString selection = MultiOptionDialog::getSelection(tr("Select a model"), items, selected_model, this);
-    if ( !selection.isEmpty() )
-    {
-      //  int selectedIndex = items.indexOf(selection);
-      Params().put("SelectedModel", selection.toStdString());
-      //  printf("sected model  %d  %s", selectedIndex, selection.toStdString());
-     // qApp->exit(18);
-    //  watchdog_kick(0);
-    }
-  });
-  addItem(changeModel);
-
-
-
-
-
-
+  addItem(changeModelButton);
   setStyleSheet(R"(
     * {
       color: white;

@@ -18,7 +18,7 @@
 OnPaint::OnPaint()
 {
   m_sm = std::make_unique<SubMaster, const std::initializer_list<const char *>>({
-    "peripheralState", "gpsLocation", "gpsLocationExternal",
+    "peripheralState", "gpsLocation", "gpsLocationExternal", "liveParameters",
     "naviCustom",  "uICustom",  //"carControlCustom",
   });
 
@@ -544,6 +544,12 @@ void OnPaint::ui_main_debug(QPainter &p)
 
   if( m_param.debug.getIdx1() )
   {
+    SubMaster &sm2 = *(m_sm);
+    auto lp = sm2["liveParameters"].getLiveParameters();
+
+    float fSR = lp.getSteerRatio();
+    float fSF = lp.getStiffnessFactor();
+
     QString text;
 
     p.setFont(InterFont(38));
@@ -554,6 +560,10 @@ void OnPaint::ui_main_debug(QPainter &p)
     text.sprintf("ignition=%d", scene->ignition  );               p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
     text.sprintf("idle_ticks=%d", scene->custom.idle_ticks  );    p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
     text.sprintf("target=%d", scene->custom.target  );            p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
+
+
+    text.sprintf("SR=%.3f", fSR  );            p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
+    text.sprintf("SF=%.3f", fSF  );            p.drawText( bb_x, bb_y+nGap, text ); nGap += 40;
   }
 }
 

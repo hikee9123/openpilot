@@ -135,6 +135,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ExternalNaviType", {PERSISTENT, STRING}},
     {"MapboxToken", {PERSISTENT, STRING}},
     {"SelectedCar", {PERSISTENT, STRING}},
-    {"SelectedModel", {PERSISTENT, STRING}},
+    {"ActiveModelName", {PERSISTENT, STRING}},
     {"EnableLogging", {PERSISTENT, STRING}},
 };

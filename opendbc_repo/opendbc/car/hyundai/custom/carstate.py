@@ -85,6 +85,8 @@ class CarStateCustom:
     self.cruise_set_mode = 0
     self.cruiseGap = 0
     self.control_mode = 0
+    self.Cruise_Limit_Status = 0  # 속도 제한(ISA/크루즈 제한) 기능의 활성/유효 여부. 0=비활성, 1=활성 같은 토글.
+    self.Cruise_Limit_Target = 0  # 제한 속도 목표값(보통 km/h). 표지판 인식/맵 기반 제한 속도가 여기 들어올 수 있음.
 
 
     # 좌/우 차선변경 헬퍼(유지)
@@ -492,9 +494,14 @@ class CarStateCustom:
   # ----------------------------
   def _update_vehicle_general_states(self, ret, cp, cp_cam) -> None:
     self.brakePos   = float(self._vl(cp, "E_EMS11", "Brake_Pedal_Pos", 0.0))
+    ret.engineRpmDEPRECATED = float(self._vl(cp, "E_EMS11", "N", 0.0)) # opkr
+    self.Cruise_Limit_Status = int(self._vl(cp, "E_EMS11", "Cruise_Limit_Status", 0))
+    self.Cruise_Limit_Target = int(self._vl(cp, "E_EMS11", "Cruise_Limit_Target", 0))
     self.is_highway = bool(self._vl(cp_cam, "LFAHDA_MFC", "HDA_Icon_State", 0))
     self.clu_Vanz   = float(self._vl(cp, "CLU11", "CF_Clu_Vanz", 0.0))  # kph
     self.clu_Main   = int(self._vl(cp, "CLU11", "CF_Clu_CruiseSwMain", 0))
+
+
 
   # ----------------------------
   # Debug / telemetry
@@ -551,12 +558,13 @@ class CarStateCustom:
     # 로그 (원 포맷 유지)
     trace1.printf1('MD={:.0f},CA={:.0f}, CB={}'.format(self.control_mode, self.controlsAllowed, self._cencel_button))
     trace1.printf2('SA={:7.1f} , {:.0f}'.format(self.steeringAngle, int(self.mainMode_ACC) ))
-    trace1.printf3('SW={:.0f},{:.0f},{:.0f} T={:.0f},{:.0f}'.format(
-      self._vl(cp, "CLU11", "CF_Clu_CruiseSwState", 0),
-      self._vl(cp, "CLU11", "CF_Clu_CruiseSwMain", 0),
-      self._vl(cp, "CLU11", "CF_Clu_SldMainSW", 0),
-      self._vl(cp, "TCS13", "ACCEnable", 0),
-      self._vl(cp, "TCS13", "ACC_REQ", 0),
+    trace1.printf3('IG={:.0f},{:.0f},{:.0f} CL={:.0f},{:.0f}'.format(
+      self._vl(cp, "E_EMS11", "IG_Reactive_Stat", 0),
+      self._vl(cp, "E_EMS11", "Gear_Change", 0),
+      self._vl(cp, "E_EMS11", "Engine_Run", 0),
+      self._vl(cp, "E_EMS11", "Cruise_Limit_Status", 0),
+      self._vl(cp, "E_EMS11", "Cruise_Limit_Target", 0),
+
     ))
 
 
