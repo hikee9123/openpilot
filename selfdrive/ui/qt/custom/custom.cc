@@ -782,7 +782,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
           changeModelButton->setText(tr("WAIT"));
           changeModelButton->setDescription(selection);
 
-          const QString prevCwd = QDir::currentPath();
+          const QString prevCwd = "/data/openpilot";// QDir::currentPath();
 
           // 7) QProcess로 비동기 실행
           QProcess *proc = new QProcess(this);
