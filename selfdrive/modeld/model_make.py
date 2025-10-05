@@ -180,6 +180,9 @@ def _choose_model_dir_from_params_only() -> Optional[Path]:
   try:
     pname = Params().get("ActiveModelName")
     if pname:
+      if pname == "1.default":
+        cloudlog.warring("[8.modeld] ActiveModelName= '1.default', using comma default PATH")
+        return None
       pname = pname.decode() if isinstance(pname, (bytes, bytearray)) else pname
       bundle = SUPERCOMBOS_DIR / pname
       if bundle.exists():
