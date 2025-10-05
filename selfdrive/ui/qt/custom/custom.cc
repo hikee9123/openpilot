@@ -754,7 +754,15 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
           }
 
           // 4) 경로 계산 (이중 슬래시 방지)
-          QDir root(QDir::homePath());
+          QDir root;
+          if (Hardware::PC()) {
+          {
+             root = QDir::homePath();
+          }
+          else
+          {
+             root = QDir("/data");
+          }
           root.cd("openpilot");                            // ~/openpilot
           const QString rootPath = root.absolutePath();
           const QString modeldPath = root.filePath("selfdrive/modeld");
