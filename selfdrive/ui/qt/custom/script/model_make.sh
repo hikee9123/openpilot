@@ -11,8 +11,9 @@ rem cd "${WORKDIR}"
 # 실시간 로그 출력
 export PYTHONUNBUFFERED=1
 
+
 set +e
-${PY} model_make.py
+${PY}  ${WORKDIR}/model_make.py
 RC=$?
 set -e
 
