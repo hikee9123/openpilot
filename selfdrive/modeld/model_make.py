@@ -219,7 +219,7 @@ def _choose_model_dir_from_params_only() -> Optional[Path]:
     if bundle.exists():
       cloudlog.warning(f"[modeld.params] ActiveModelName='{pname}', bundle_dir={bundle}")
       return bundle
-    cloudlog.error(f"[modeld.params] supercombos/{pname} not found.")
+
   except Exception as e:
     cloudlog.error(f"[modeld.params] reading ActiveModelName failed: {e}")
   return None
