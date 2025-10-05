@@ -198,7 +198,9 @@ def _choose_model_dir_from_params_only() -> Optional[Path]:
 def choose_model_from_params() -> Dict[str, Path]:
   cloudlog.warning("check_model_from_params")
   bundle_dir = _choose_model_dir_from_params_only()
-  if bundle_dir is not None and bundle_dir.exists():
+  if  bundle_dir is None:
+    return _comma_default_paths()
+  elif bundle_dir is not None and bundle_dir.exists():
     vis_meta = bundle_dir / VISION_META
     pol_meta = bundle_dir / POLICY_META
     vis_pkl  = bundle_dir / VISION_PKL
