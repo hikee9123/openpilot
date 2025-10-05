@@ -729,7 +729,10 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
       /// connect start
         QObject::connect(changeModelButton, &ButtonControl::clicked, this, [this]() {
           // 1) 모델 후보 (최소 수정: 기존 고정 목록 유지)
-          QStringList items = { "3.Firehose", "2.Steam_Powered", "1.default" };
+          QStringList items = {
+            "3.Firehose",
+            "2.Steam_Powered",
+            "1.default" };
 
           // 현재 선택 상태 반영
           QString selection = MultiOptionDialog::getSelection(tr("Select a model"), items, currentModel, this);
