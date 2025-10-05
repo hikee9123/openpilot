@@ -774,6 +774,8 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
           changeModelButton->setText(tr("WAIT"));
           changeModelButton->setDescription(selection);
 
+          const QString prevCwd = QDir::currentPath();
+
           // 7) QProcess로 비동기 실행
           QProcess *proc = new QProcess(this);
           proc->setProgram(scriptPath);
@@ -806,13 +808,17 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
               currentModel = selection;
               changeModelButton->setTitle(selection);
               changeModelButton->setText(tr("CHANGE"));
-              changeModelButton->setDescription(QString());
+              //changeModelButton->setDescription(QString());
             } else {
               // 실패 → 롤백
               Params().put("ActiveModelName", prev);
               changeModelButton->setTitle(tr("Failed"));
               changeModelButton->setText(tr("RETRY"));
-              changeModelButton->setDescription(tr("Check logs"));
+              //changeModelButton->setDescription(tr("Check logs"));
+            }
+
+            if (!QDir::setCurrent(prevCwd)) {
+              qWarning() << "Failed to restore dir to" << prevCwd;
             }
             changeModelButton->setEnabled(true);
             proc->deleteLater();
