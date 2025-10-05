@@ -726,94 +726,107 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
       selected_model.length() ? tr("CHANGE") : tr("SELECT"),
       "");
 
-  // 클릭 핸들러
-  QObject::connect(changeModelButton, &ButtonControl::clicked, this, [this]() {
-    // 모델 목록
-    QStringList items = {
-        "3.Firehose",
-        "2.Steam_Powered",
-        "1.default",  // comma 기본 모델.
-    };
+      /// connect start
+        QObject::connect(changeModelButton, &ButtonControl::clicked, this, [this]() {
+          // 1) 모델 후보 (최소 수정: 기존 고정 목록 유지)
+          QStringList items = { "3.Firehose", "2.Steam_Powered", "1.default" };
 
-    // 선택 다이얼로그
-    QString selection = MultiOptionDialog::getSelection(tr("Select a model"), items, currentModel, this);
-    if (selection.isEmpty() || selection == currentModel)  return;
+          // 현재 선택 상태 반영
+          QString selection = MultiOptionDialog::getSelection(tr("Select a model"), items, currentModel, this);
+          if (selection.isEmpty() || selection == currentModel) return;
 
+          // 2) 선택 즉시 Params 반영 (스크립트가 Params를 참조한다고 가정)
+          Params params;
+          const std::string prev = params.get("ActiveModelName");
+          params.put("ActiveModelName", selection.toStdString());
 
-    // 선택 저장
-    Params params;
-    params.put("ActiveModelName", selection.toStdString());
+          // 3) 기본 모델이면 스크립트 실행 불필요
+          if (selection == "1.default") {
+            currentModel = selection;
+            changeModelButton->setTitle(selection);
+            changeModelButton->setText(tr("CHANGE"));
+            changeModelButton->setDescription(QString());
+            qWarning() << "comma default PATH";
+            return;
+          }
 
-    if (selection == "1.default") {
-    // comma 기본 모델 선택
-      currentModel = selection;
-      changeModelButton->setTitle(selection);
-      changeModelButton->setText(tr("CHANGE"));
-      changeModelButton->setDescription(QString());
-      return;
-    }
-    // UI 잠금/진행 표시
-    changeModelButton->setEnabled(false);
-    changeModelButton->setTitle(tr("Compiling..."));
-    changeModelButton->setText(tr("WAIT"));
-    changeModelButton->setDescription(selection);
+          // 4) 경로 계산 (이중 슬래시 방지)
+          QDir root(QDir::homePath());
+          root.cd("openpilot");                            // ~/openpilot
+          const QString rootPath = root.absolutePath();
+          const QString modeldPath = root.filePath("selfdrive/modeld");
+          const QString scriptPath = root.filePath("selfdrive/ui/qt/custom/script/model_make.sh");
 
+          // 5) 스크립트 검증
+          QFileInfo fi(scriptPath);
+          if (!fi.exists() || !fi.isFile() || !(fi.permissions() & QFile::ExeUser)) {
+            changeModelButton->setTitle(tr("Script missing"));
+            changeModelButton->setText(tr("RETRY"));
+            changeModelButton->setDescription(scriptPath);
+            // 롤백
+            params.put("ActiveModelName", prev);
+            return;
+          }
 
-    // /data/openpilot 로 예상 (openpilot 기본 실행 루트)
-    const QString root = QDir::homePath() + QLatin1String("/openpilot/");  // e.g. "/data/openpilot"
-    const QString scriptPath =  root + QLatin1String("/selfdrive/ui/qt/custom/script/model_make.sh");
-
-
-    // 실행 명령 구성
-    std::string cmd;
-    if (Hardware::PC()) {
-     // Linux/Mac  //scriptPath.toStdString();
-      QString path = QString(
-              "cd \"%1/selfdrive/modeld\" && "
-              "WORKDIR=\"%1/selfdrive/modeld\" "
-              "\"%2\""
-            ).arg(root, scriptPath);
-
-        cmd = path.toStdString();
-    }
-    else
-    {
-        cmd =
-          "cd /data/openpilot/selfdrive/modeld && "
-          "WORKDIR=\"/data/openpilot/selfdrive/modeld\" "
-          "/data/openpilot/selfdrive/ui/qt/custom/script/model_make.sh";
-    }
-
-    // 6) 백그라운드에서 실행 (UI 블록 방지)
-    QtConcurrent::run([this, selection, cmd]() {
-    const int rc = std::system( cmd.c_str() );
-
-      // 7) UI 갱신은 메인 스레드에서
-      QMetaObject::invokeMethod(this, [this, selection, rc]() {
-        qInfo() << "model_make.sh exit code =" << rc;
-
-        if (rc == 0) {
-          currentModel = selection;
-          changeModelButton->setTitle(selection);
-          changeModelButton->setText(tr("CHANGE"));
-          changeModelButton->setDescription(QString());
-        } else {
-          // 실패: 이전 모델로 롤백
-          //Params().put("ActiveModelName", currentModel.toStdString());
-          changeModelButton->setTitle(tr("Failed"));
-          changeModelButton->setText(tr("RETRY"));
+          // 6) UI 잠금 + 진행 표시
+          changeModelButton->setEnabled(false);
+          changeModelButton->setTitle(tr("Compiling..."));
+          changeModelButton->setText(tr("WAIT"));
           changeModelButton->setDescription(selection);
-        }
-        changeModelButton->setEnabled(true);
-      });
-    });
 
-  });
+          // 7) QProcess로 비동기 실행
+          QProcess *proc = new QProcess(this);
+          proc->setProgram(scriptPath);
+          proc->setWorkingDirectory(modeldPath);
+
+          // 환경 변수 설정 (필요 시 WORKDIR 전달)
+          QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+          env.insert("WORKDIR", modeldPath);
+          proc->setProcessEnvironment(env);
+
+          // 로그 파이프 연결(원하면 별도 텍스트 위젯로 표시 가능)
+          connect(proc, &QProcess::readyReadStandardOutput, this, [this, proc]() {
+            const auto out = QString::fromUtf8(proc->readAllStandardOutput());
+            qInfo() << "[model_make.sh][stdout]" << out.trimmed();
+            changeModelButton->setDescription(out.right(80)); // 최근 로그 한 줄 정도
+          });
+          connect(proc, &QProcess::readyReadStandardError, this, [this, proc]() {
+            const auto err = QString::fromUtf8(proc->readAllStandardError());
+            qWarning() << "[model_make.sh][stderr]" << err.trimmed();
+            changeModelButton->setDescription(err.right(80));
+          });
+
+          // 8) 종료 처리
+          connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                  this, [=](int code, QProcess::ExitStatus status) {
+            qInfo() << "model_make.sh exit code =" << code << "status=" << status;
+
+            if (status == QProcess::NormalExit && code == 0) {
+              // 성공
+              currentModel = selection;
+              changeModelButton->setTitle(selection);
+              changeModelButton->setText(tr("CHANGE"));
+              changeModelButton->setDescription(QString());
+            } else {
+              // 실패 → 롤백
+              Params().put("ActiveModelName", prev);
+              changeModelButton->setTitle(tr("Failed"));
+              changeModelButton->setText(tr("RETRY"));
+              changeModelButton->setDescription(tr("Check logs"));
+            }
+            changeModelButton->setEnabled(true);
+            proc->deleteLater();
+          });
+
+          // 9) 시작 (인자 필요 없으면 그대로, 필요하면 selection 등 전달)
+          // 예: proc->setArguments({ selection });
+          proc->start();
+        });
+  /// connect end.
+
+
 
   addItem(changeModelButton);
-
-
-
   setStyleSheet(R"(
     * {
       color: white;
