@@ -6,6 +6,7 @@
 #include <tuple>
 #include <vector>
 #include <cstdlib>
+#include <algorithm>   // std::clamp
 
 #include <QTabWidget>
 #include <QObject>
@@ -14,6 +15,7 @@
 #include <QDir>
 #include <QDebug>
 #include <QtConcurrent>
+#include <QVariant>
 
 #include "common/watchdog.h"
 #include "common/params.h"
@@ -27,106 +29,152 @@
 
 
 
+// json
+#include "custom.h"   // 또는 "CValueControl.h" — 실제 경로에 맞게
+#include <algorithm>
+#include <QVariant>
 
-CValueControl::CValueControl(const QString& param, const QString& title, const QString& desc, const QString& icon, int min, int max, int unit, QJsonObject &jsonobj  )
-              : AbstractControl(title, desc, icon) , m_jsonobj(jsonobj)
+CValueControl::CValueControl(const QString& param,
+                             const QString& title,
+                             const QString& desc,
+                             const QString& icon,
+                             int min, int max, int unit,
+                             int defVal,
+                             QJsonObject& jsonobj,
+                             QWidget* parent)
+  : AbstractControl(title, desc, icon, parent)
+  , m_jsonobj(jsonobj)
+  , m_key(param)
 {
-    key = param;
-    m_min = min;
-    m_max = max;
-    m_unit = unit;
+  if (min > max) std::swap(min, max);
+  if (unit <= 0) unit = 1;
+  m_min = min; m_max = max; m_unit = unit;
 
-    label.setAlignment( Qt::AlignVCenter | Qt::AlignRight );
-    label.setStyleSheet("color: #e0e879");
-    hlayout->addWidget( &label );
+  // 기본값 보정 저장
+  m_def = std::clamp(defVal, m_min, m_max);
 
-    int state = min;
-    if ( !m_jsonobj.contains(key) )
-    {
-      m_jsonobj.insert(key, state);
-    }
-    else
-    {
-      state  = m_jsonobj[key].toInt();
-    }
+  // 라벨
+  m_label.setAlignment(Qt::AlignVCenter | Qt::AlignRight);
+  m_label.setStyleSheet("color: #e0e879");
+  hlayout->addWidget(&m_label);
 
-    m_value = state;
+  // 버튼 공통 스타일
+  static const char* kBtnStyle = R"(
+    padding: 0;
+    border-radius: 50px;
+    font-size: 35px;
+    font-weight: 500;
+    color: #E4E4E4;
+    background-color: #393939;
+  )";
 
-    btnminus.setStyleSheet(R"(
-      padding: 0;
-      border-radius: 50px;
-      font-size: 35px;
-      font-weight: 500;
-      color: #E4E4E4;
-      background-color: #393939;
-    )");
-    btnplus.setStyleSheet(R"(
-      padding: 0;
-      border-radius: 50px;
-      font-size: 35px;
-      font-weight: 500;
-      color: #E4E4E4;
-      background-color: #393939;
-    )");
+  // - 버튼
+  m_btnMinus.setStyleSheet(kBtnStyle);
+  m_btnMinus.setFixedSize(150, 100);
+  m_btnMinus.setText(QStringLiteral("－"));
+  m_btnMinus.setAutoRepeat(true);
+  m_btnMinus.setAutoRepeatDelay(300);
+  m_btnMinus.setAutoRepeatInterval(60);
+  hlayout->addWidget(&m_btnMinus);
 
-    btnminus.setFixedSize( 150, 100 );
-    btnplus.setFixedSize( 150, 100 );
-    hlayout->addWidget( &btnminus );
-    hlayout->addWidget( &btnplus );
+  // + 버튼
+  m_btnPlus.setStyleSheet(kBtnStyle);
+  m_btnPlus.setFixedSize(150, 100);
+  m_btnPlus.setText(QStringLiteral("＋"));
+  m_btnPlus.setAutoRepeat(true);
+  m_btnPlus.setAutoRepeatDelay(300);
+  m_btnPlus.setAutoRepeatInterval(60);
+  hlayout->addWidget(&m_btnPlus);
 
-    QObject::connect(&btnminus, &QPushButton::released, [=]()
-    {
-        int value = m_value;
-        value = value - m_unit;
-        if (value < m_min)
-            value = m_min;
-
-        setValue( value );
-    });
-
-    QObject::connect(&btnplus, &QPushButton::released, [=]()
-    {
-        int value = m_value;
-        value = value + m_unit;
-        if (value > m_max)
-            value = m_max;
-
-        setValue( value );
-    });
-    refresh();
-}
-
-void CValueControl::refresh()
-{
-    QString  str;
-
-    str.sprintf("%d", m_value );
-    label.setText( str );
-    btnminus.setText("－");
-    btnplus.setText("＋");
-}
-
-
-int  CValueControl::getValue()
-{
-  int  ret_code = m_value;
-  return  ret_code;
-}
-
-void CValueControl::setValue( int value )
-{
-  if( m_value != value )
-  {
-    m_jsonobj[key] = value;
-    m_value = value;
-    refresh();
-
-    emit clicked();
+  // 초기 로드: 없거나 잘못된 값이면 def 사용 + 저장소 기록
+  bool wroteBack = false;
+  const int loaded = loadInitial(wroteBack);
+  m_value = std::clamp(loaded, m_min, m_max);
+  if (wroteBack || loaded != m_value) {
+    m_jsonobj[m_key] = m_value;   // 저장소 정정
   }
+
+  connect(&m_btnMinus, &QPushButton::pressed, this, [this]{ adjust(-m_unit); });
+  connect(&m_btnPlus,  &QPushButton::pressed, this, [this]{ adjust(+m_unit); });
+
+  updateLabel();
+  updateToolTip();
+}
+
+int CValueControl::getValue() const noexcept {
+  return m_value;
+}
+
+void CValueControl::setValue(int value) {
+  const int nv = std::clamp(value, m_min, m_max);
+  if (m_value == nv) return;
+
+  m_value = nv;
+  m_jsonobj[m_key] = m_value;
+
+  updateLabel();
+  emit valueChanged(m_value);
+  emit clicked();
+}
+
+void CValueControl::setRange(int min, int max) {
+  if (min > max) std::swap(min, max);
+  m_min = min; m_max = max;
+
+  // 기본값도 범위로 보정
+  m_def = std::clamp(m_def, m_min, m_max);
+
+  setValue(m_value);   // 재클램프
+  updateToolTip();
+}
+
+void CValueControl::setStep(int step) {
+  if (step <= 0) step = 1;
+  m_unit = step;
+  updateToolTip();
+}
+
+void CValueControl::setDefault(int defVal) {
+  m_def = std::clamp(defVal, m_min, m_max);
+  // 기본값 변경은 즉시 현재 값에 적용하지 않음 (리셋이 따로 있을 수 있음)
+}
+
+void CValueControl::adjust(int delta) {
+  setValue(m_value + delta);
+}
+
+void CValueControl::updateLabel() {
+  m_label.setText(QString::number(m_value));
+}
+
+void CValueControl::updateToolTip() {
+  const QString tip = tr("Min: %1, Max: %2, Step: %3, Default: %4")
+                        .arg(m_min).arg(m_max).arg(m_unit).arg(m_def);
+  this->setToolTip(tip);
+  m_label.setToolTip(tip);
+  m_btnMinus.setToolTip(tip);
+  m_btnPlus.setToolTip(tip);
+}
+
+int CValueControl::loadInitial(bool& wroteBack) const noexcept {
+  if (!m_jsonobj.contains(m_key)) {
+    wroteBack = true;
+    return m_def;     // 키 없을 때 def 사용
+  }
+
+  bool ok = false;
+  int v = m_jsonobj.value(m_key).toVariant().toInt(&ok);
+  if (!ok) {
+    wroteBack = true;
+    return m_def;     // 파싱 실패 시 def 사용
+  }
+
+  wroteBack = false;
+  return v;
 }
 
 
-
+// Params
 CValueControl2::CValueControl2(const QString& key, const QString& title, const QString& desc, const QString& icon, int min, int max, int unit/*=1*/)
     : AbstractControl(title, desc, icon)
 {
@@ -501,54 +549,63 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
     { "ParamCruiseMode",
       tr("Cruise mode"),
       tr("Bit flags: 0=Off, bit1=Gas control, bit2=Comma speed (CruiseGap)"),
-      kIcon, 0, 15, 1 }, // min, max, unit
+      kIcon, 0, 15, 1, // min, max, unit
+      1 },  //def
 
     { "ParamCruiseGap",
       tr("Cruise gap"),
       tr("0=Not used, 1~4=Gap for Comma speed"),
-      kIcon, 0, 4, 1 },
+      kIcon, 0, 4, 1,
+      4 }, //def
 
     { "ParamCurveSpeedLimit",
       tr("Curve speed adjust"),
       tr("Adjust maximum speed based on road curvature."),
-      kIcon, 30, 100, 5 },
+      kIcon, 30, 100, 5,
+      60 }, //def
 
     { "ParamAutoEngage",
       tr("Auto Cruise Engage Speed"),
       tr("Enables cruise automatically once the vehicle reaches the set speed."
          "30: Off · otherwise: engage at that speed (km/h)."),
-      kIcon, 30, 100, 5 },
+      kIcon, 30, 100, 5,
+      60 }, //def
 
     { "ParamAutoLaneChange",
       tr("Auto Lane Change Delay"),
       tr("After the turn signal is activated, waits the set time before starting an automatic lane change.\n"
          "0: Manual  ·value in seconds."),
-      kIcon, 0, 100, 10 },
+      kIcon, 0, 100, 10,
+      30 }, //def
 
     { "ParamBrightness",
       tr("Screen Brightness"),
       tr("Adjust the brightness level. 0 = Auto, negative = darker, positive = brighter."),
-      kIcon, -20, 5, 1 },
+      kIcon, -20, 5, 1,
+      -15 }, //def
 
     { "ParamAutoScreenOff",
       tr("Screen Timeout"),
       tr("Set how long the screen stays on before turning off automatically (in 10-second steps). 0 = None."),
-      kIcon, 0, 120, 1 },
+      kIcon, 0, 120, 1,
+      100 }, //def
 
     { "ParamPowerOff",
       tr("Power off time"),
       tr("0=Not used, 1~ = power off delay (1 sec)"),
-      kIcon, 0, 60, 1 },
+      kIcon, 0, 60, 1,
+      10 }, //def
 
     { "DUAL_CAMERA_VIEW",
       tr("Dual camera view"),
       tr("0=Off, 1=On"),
-      kIcon, 0, 1, 1 },
+      kIcon, 0, 1, 1,
+      0 }, //def
   };
 
   // 2) ValueControl 생성 및 등록 (키는 QString으로 통일)
   for (const auto &d : value_defs) {
-    auto *value = new CValueControl(d.param, d.title, d.desc, d.icon, d.min, d.max, d.unit, m_jsonobj);
+    auto *value = new CValueControl(d.param, d.title, d.desc, d.icon, d.min, d.max, d.unit, d.def, m_jsonobj);
     addItem(value);
     m_valueCtrl.insert(d.param, value);
   }
@@ -571,7 +628,8 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
   // CValueControl에 value 변경 신호가 있으면 그걸 쓰는 게 가장 좋음.
   // 여기서는 예제로 clicked에 연결(기존 시그널 유지 가정).
   if (auto *mode = m_valueCtrl.value("ParamCruiseMode", nullptr)) {
-    QObject::connect(mode, &CValueControl::clicked, this, [=] {
+    QObject::connect(mode, &CValueControl::valueChanged, this, [=](int v) {
+      Q_UNUSED(v);
       // 최신값 반영(컨트롤 내부가 즉시 m_jsonobj를 업데이트한다고 가정)
       syncCruiseGapEnabled();
       update();

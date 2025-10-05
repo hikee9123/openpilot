@@ -85,44 +85,52 @@ private:
 };
 
 
-// new CValueControl("EnableAutoEngage", "EnableAutoEngage", "0:Not used,1:Auto Engage/Cruise OFF,2:Auto Engage/Cruise ON", "../assets/offroad/icon_shell.png", 0, 2, 1);
 class CValueControl : public AbstractControl {
-    Q_OBJECT
+  Q_OBJECT
+  Q_PROPERTY(int value READ getValue WRITE setValue NOTIFY valueChanged)
 
 public:
-    CValueControl(const QString& param, const QString& title, const QString& desc, const QString& icon, int min, int max, int unit, QJsonObject &jsonobj );
+  explicit CValueControl(const QString& param,
+                         const QString& title,
+                         const QString& desc,
+                         const QString& icon,
+                         int min, int max, int unit,
+                         int defVal,                 // ★ 기본값 추가
+                         QJsonObject& jsonobj,
+                         QWidget* parent = nullptr);
 
-private:
-    QPushButton btnplus;
-    QPushButton btnminus;
-    QLabel label;
-
-    int     m_min;
-    int     m_max;
-    int     m_unit;
-    int     m_value;
-
-
-    QJsonObject &m_jsonobj;
-
-signals:
-  void clicked();
+  int  getValue() const noexcept;
 
 public slots:
+  void setValue(int value);
+  void setRange(int min, int max);
+  void setStep(int step);
+  void setDefault(int defVal);      // ★ 기본값 런타임 교체
 
+signals:
+  void valueChanged(int newValue);
+  void clicked();              // ★ DEPRECATED: 하위 호환용
 
 private:
-  void refresh();
+  void adjust(int delta);
+  void updateLabel();
+  void updateToolTip();
+  int  loadInitial(bool& wroteBack) const noexcept;  // ★ 저장소 보정 여부 반환
 
-public:
-    QString key;
+private:
+  QJsonObject& m_jsonobj;
+  QString      m_key;
 
+  int m_min  {0};
+  int m_max  {0};
+  int m_unit {1};
+  int m_def  {0};                   // ★ 기본값 멤버
+  int m_value{0};
 
- public:
-    void setValue( int value );
-    int  getValue();
+  QLabel      m_label;
+  QPushButton m_btnMinus;
+  QPushButton m_btnPlus;
 };
-
 
 
 // ajouatom:
@@ -287,6 +295,7 @@ private:
     int min;
     int max;
     int unit;
+    int def;
   };
   // 기본 아이콘 경로
   const QString kIcon = "../assets/offroad/icon_shell.png";
