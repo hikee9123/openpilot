@@ -6,7 +6,7 @@ PY=python3
 
 echo "[model_make] ===== START $(date) ====="
 echo "[model_make] [${WORKDIR}]"
-rem cd "${WORKDIR}"
+# cd "${WORKDIR}"
 
 # 실시간 로그 출력
 export PYTHONUNBUFFERED=1
