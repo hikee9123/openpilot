@@ -18,6 +18,11 @@ class QProcess;
 #include <QJsonObject>
 #include <QJsonValue>
 
+// tree
+#include <QToolButton>
+#include <QVBoxLayout>
+#include <QPropertyAnimation>
+
 #include "selfdrive/ui/qt/widgets/controls.h"
 
 #include "selfdrive/ui/qt/widgets/input.h"
@@ -26,6 +31,31 @@ class QProcess;
 
 #include "selfdrive/ui/ui.h"
 
+
+
+
+class CollapsibleSection : public QWidget {
+  Q_OBJECT
+public:
+  explicit CollapsibleSection(const QString& title, QWidget* parent = nullptr);
+
+  // 섹션 안에 위젯 추가
+  void addWidget(QWidget* w);
+
+  // 펼침/접힘 제어
+  void setExpanded(bool on);
+  bool isExpanded() const { return m_expanded; }
+
+private:
+  void toggle();
+
+private:
+  QToolButton*        m_headerBtn {nullptr};
+  QFrame*             m_body      {nullptr};
+  QVBoxLayout*        m_bodyLayout{nullptr};
+  QPropertyAnimation* m_anim      {nullptr};
+  bool                m_expanded  {true};
+};
 
 
 class JsonControl : public ToggleControl {

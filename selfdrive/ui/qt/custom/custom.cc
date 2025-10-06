@@ -17,6 +17,9 @@
 #include <QtConcurrent>
 #include <QVariant>
 
+#include <QHBoxLayout>
+#include <QScrollArea>
+
 #include "common/watchdog.h"
 #include "common/params.h"
 #include "common/watchdog.h"
@@ -29,11 +32,84 @@
 
 
 
-// json
-#include "custom.h"   // 또는 "CValueControl.h" — 실제 경로에 맞게
-#include <algorithm>
-#include <QVariant>
 
+
+
+CollapsibleSection::CollapsibleSection(const QString& title, QWidget* parent)
+  : QWidget(parent)
+{
+  auto* root = new QVBoxLayout(this);
+  root->setContentsMargins(0,0,0,0);
+  root->setSpacing(6);
+
+  m_headerBtn = new QToolButton(this);
+  m_headerBtn->setText(title);
+  m_headerBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  m_headerBtn->setArrowType(Qt::DownArrow);
+  m_headerBtn->setCheckable(true);
+  m_headerBtn->setChecked(true);
+  m_headerBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  m_headerBtn->setStyleSheet("QToolButton{ font-weight:600; font-size:18px; }");
+  root->addWidget(m_headerBtn);
+
+  m_body = new QFrame(this);
+  m_body->setFrameShape(QFrame::NoFrame);
+  m_bodyLayout = new QVBoxLayout(m_body);
+  m_bodyLayout->setContentsMargins(12, 6, 0, 6);
+  m_bodyLayout->setSpacing(6);
+  root->addWidget(m_body);
+
+  // 애니메이션으로 접기/펼치기
+  m_anim = new QPropertyAnimation(m_body, "maximumHeight", this);
+  m_anim->setDuration(150);
+
+  connect(m_headerBtn, &QToolButton::clicked, this, [this]{
+    toggle();
+  });
+}
+
+void CollapsibleSection::addWidget(QWidget* w) {
+  m_bodyLayout->addWidget(w);
+}
+
+void CollapsibleSection::setExpanded(bool on) {
+  if (m_expanded == on) return;
+  toggle();
+}
+
+void CollapsibleSection::toggle() {
+  m_expanded = !m_expanded;
+  m_headerBtn->setArrowType(m_expanded ? Qt::DownArrow : Qt::RightArrow);
+
+  m_body->setVisible(true); // 애니메이션 시작 전 보이도록
+  int start = m_body->maximumHeight();
+  int end   = 0;
+
+  if (m_expanded) {
+    // 펼칠 때 목표 높이 계산: sizeHint 사용
+    m_body->setMaximumHeight(QWIDGETSIZE_MAX);
+    end = m_body->sizeHint().height();
+    m_body->setMaximumHeight(start); // 애니메이션 시작점 복원
+  }
+
+  m_anim->stop();
+  m_anim->setStartValue(start < 0 ? 0 : start);
+  m_anim->setEndValue(m_expanded ? end : 0);
+  m_anim->start();
+
+  if (!m_expanded) {
+    connect(m_anim, &QPropertyAnimation::finished, this, [this]{
+      if (!m_expanded) m_body->setVisible(false);
+    });
+  }
+}
+
+
+
+
+
+
+// json
 CValueControl::CValueControl(const QString& param,
                              const QString& title,
                              const QString& desc,
@@ -602,6 +678,12 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
       kIcon, 0, 1, 1,
       0 }, //def
   };
+
+
+  auto* tree = new QTreeWidget(this);
+  tree->setColumnCount(1);
+  tree->setHeaderHidden(true);
+  addItem(tree);
 
   // 2) ValueControl 생성 및 등록 (키는 QString으로 통일)
   for (const auto &d : value_defs) {
