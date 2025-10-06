@@ -653,7 +653,10 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
          "0: Manual  ·value in seconds."),
       kIcon, 0, 100, 10,
       30 }, //def
+  };
 
+
+  const std::vector<ValueDef> val2_defs = {
     { "ParamBrightness",
       tr("Screen Brightness"),
       tr("Adjust the brightness level. 0 = Auto, negative = darker, positive = brighter."),
@@ -680,20 +683,28 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
   };
 
 
-  auto* tree = new QTreeWidget(this);
-  tree->setColumnCount(1);
-  tree->setHeaderHidden(true);
-  addItem(tree);
-
+  // 섹션 만들기
+  auto* cruiseSec = new CollapsibleSection(tr("Cruise Settings"), this);
+  addItem(cruiseSec);
   // 2) ValueControl 생성 및 등록 (키는 QString으로 통일)
   for (const auto &d : value_defs) {
     auto *value = new CValueControl(d.param, d.title, d.desc, d.icon, d.min, d.max, d.unit, d.def, m_jsonobj);
-    addItem(value);
+    cruiseSec->addWidget(value);
     m_valueCtrl.insert(d.param, value);
   }
 
+  auto* screenSec = new CollapsibleSection(tr("Screen & Power"), this);
+  addItem(screenSec);
+   for (const auto &d : val2_defs) {
+    auto *value = new CValueControl(d.param, d.title, d.desc, d.icon, d.min, d.max, d.unit, d.def, m_jsonobj);
+    screenSec->addWidget(value);
+    m_valueCtrl.insert(d.param, value);
+  }
+
+  auto* logSec = new CollapsibleSection(tr("Logging"), this);
+  addItem(logSec);
   // 3) 토글류 이외의 스위치 예시
-  addItem(new ParamControl("EnableLogging",
+  logSec->addWidget(new ParamControl("EnableLogging",
                            tr("Enable logging"),
                            tr("Record runtime logs"),
                            kIcon,
