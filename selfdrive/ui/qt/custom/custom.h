@@ -46,6 +46,10 @@ public:
   void setExpanded(bool on);
   bool isExpanded() const { return m_expanded; }
 
+  void setHeaderFont(const QFont& f);
+  void setBodyFont(const QFont& f);          // 바디 기본 폰트
+  void setSectionFont(const QFont& header, const QFont& body);
+
 private:
   void toggle();
 

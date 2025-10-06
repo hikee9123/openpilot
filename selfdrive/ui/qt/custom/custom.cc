@@ -104,7 +104,23 @@ void CollapsibleSection::toggle() {
   }
 }
 
+void CollapsibleSection::setHeaderFont(const QFont& f) {
+  if (m_headerBtn) m_headerBtn->setFont(f);
+}
 
+void CollapsibleSection::setBodyFont(const QFont& f) {
+  if (m_body) {
+    m_body->setFont(f);
+    // 이미 추가된 자식들에게도 적용하고 싶다면:
+    const auto children = m_body->findChildren<QWidget*>();
+    for (QWidget* w : children) w->setFont(f);
+  }
+}
+
+void CollapsibleSection::setSectionFont(const QFont& header, const QFont& body) {
+  setHeaderFont(header);
+  setBodyFont(body);
+}
 
 
 
@@ -683,6 +699,8 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
   };
 
 
+
+
   // 섹션 만들기
   auto* cruiseSec = new CollapsibleSection(tr("Cruise Settings"), this);
   addItem(cruiseSec);
@@ -694,6 +712,7 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
   }
 
   auto* screenSec = new CollapsibleSection(tr("Screen & Power"), this);
+
   addItem(screenSec);
    for (const auto &d : val2_defs) {
     auto *value = new CValueControl(d.param, d.title, d.desc, d.icon, d.min, d.max, d.unit, d.def, m_jsonobj);
