@@ -234,15 +234,15 @@ void CValueControl::adjust(double delta) {
 
 void CValueControl::updateLabel() {
   // 보기 좋은 자릿수(불필요한 0 제거). 필요시 고정 소수점으로 바꾸세요.
-  m_label.setText(QString::number(m_value, 'g', 8));
+  m_label.setText(QString::number(m_value, 'f', f));
 }
 
 void CValueControl::updateToolTip() {
   const QString tip = tr("Min: %1, Max: %2, Step: %3, Default: %4")
-                        .arg(QString::number(m_min, 'g', 8))
-                        .arg(QString::number(m_max, 'g', 8))
-                        .arg(QString::number(m_unit, 'g', 8))
-                        .arg(QString::number(m_def, 'g', 8));
+                        .arg(QString::number(m_min, 'f', 3))
+                        .arg(QString::number(m_max, 'f', 3))
+                        .arg(QString::number(m_unit, 'f', 3))
+                        .arg(QString::number(m_def, 'f', 3));
   this->setToolTip(tip);
   m_label.setToolTip(tip);
   m_btnMinus.setToolTip(tip);
