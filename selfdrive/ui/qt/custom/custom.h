@@ -18,6 +18,11 @@ class QProcess;
 #include <QJsonObject>
 #include <QJsonValue>
 
+// tree
+#include <QToolButton>
+#include <QVBoxLayout>
+#include <QPropertyAnimation>
+
 #include "selfdrive/ui/qt/widgets/controls.h"
 
 #include "selfdrive/ui/qt/widgets/input.h"
@@ -26,6 +31,35 @@ class QProcess;
 
 #include "selfdrive/ui/ui.h"
 
+
+
+
+class CollapsibleSection : public QWidget {
+  Q_OBJECT
+public:
+  explicit CollapsibleSection(const QString& title, QWidget* parent = nullptr);
+
+  // 섹션 안에 위젯 추가
+  void addWidget(QWidget* w);
+
+  // 펼침/접힘 제어
+  void setExpanded(bool on);
+  bool isExpanded() const { return m_expanded; }
+
+  void setHeaderFont(const QFont& f);
+  void setBodyFont(const QFont& f);          // 바디 기본 폰트
+  void setSectionFont(const QFont& header, const QFont& body);
+
+private:
+  void toggle();
+
+private:
+  QToolButton*        m_headerBtn {nullptr};
+  QFrame*             m_body      {nullptr};
+  QVBoxLayout*        m_bodyLayout{nullptr};
+  QPropertyAnimation* m_anim      {nullptr};
+  bool                m_expanded  {true};
+};
 
 
 class JsonControl : public ToggleControl {
@@ -85,44 +119,49 @@ private:
 };
 
 
-// new CValueControl("EnableAutoEngage", "EnableAutoEngage", "0:Not used,1:Auto Engage/Cruise OFF,2:Auto Engage/Cruise ON", "../assets/offroad/icon_shell.png", 0, 2, 1);
 class CValueControl : public AbstractControl {
-    Q_OBJECT
-
+  Q_OBJECT
 public:
-    CValueControl(const QString& param, const QString& title, const QString& desc, const QString& icon, int min, int max, int unit, QJsonObject &jsonobj );
+  explicit CValueControl(const QString& param,
+                         const QString& title,
+                         const QString& desc,
+                         const QString& icon,
+                         double min, double max, double unit,
+                         double defVal,
+                         QJsonObject& jsonobj,
+                         QWidget* parent = nullptr);
 
-private:
-    QPushButton btnplus;
-    QPushButton btnminus;
-    QLabel label;
-
-    int     m_min;
-    int     m_max;
-    int     m_unit;
-    int     m_value;
-
-
-    QJsonObject &m_jsonobj;
+  double getValue() const noexcept;
+  void   setValue(double value);
+  void   setRange(double min, double max);
+  void   setStep(double step);
+  void   setDefault(double defVal);
+  void   adjust(double delta);
+  int    decimalsFor(double step);
 
 signals:
+  void valueChanged(double value);
   void clicked();
 
-public slots:
-
+private:
+  void updateLabel();
+  void updateToolTip();
+  double loadInitial(bool& wroteBack) const noexcept;
 
 private:
-  void refresh();
+  QJsonObject& m_jsonobj;
+  QString m_key;
 
-public:
-    QString key;
+  QLabel m_label;
+  QPushButton m_btnMinus, m_btnPlus;
 
+  int    m_decimal = 1;
+  double m_min = 0.0, m_max = 100.0, m_unit = 1.0;
+  double m_def = 0.0;
+  double m_value = 0.0;
 
- public:
-    void setValue( int value );
-    int  getValue();
+  static constexpr double EPS = 1e-9;
 };
-
 
 
 // ajouatom:
@@ -284,9 +323,10 @@ private:
     QString title;
     QString desc;
     QString icon;
-    int min;
-    int max;
-    int unit;
+    double min;
+    double max;
+    double unit;
+    double def;
   };
   // 기본 아이콘 경로
   const QString kIcon = "../assets/offroad/icon_shell.png";

@@ -6,6 +6,7 @@
 #include <tuple>
 #include <vector>
 #include <cstdlib>
+#include <algorithm>   // std::clamp
 
 #include <QTabWidget>
 #include <QObject>
@@ -14,6 +15,10 @@
 #include <QDir>
 #include <QDebug>
 #include <QtConcurrent>
+#include <QVariant>
+
+#include <QHBoxLayout>
+#include <QScrollArea>
 
 #include "common/watchdog.h"
 #include "common/params.h"
@@ -28,105 +33,285 @@
 
 
 
-CValueControl::CValueControl(const QString& param, const QString& title, const QString& desc, const QString& icon, int min, int max, int unit, QJsonObject &jsonobj  )
-              : AbstractControl(title, desc, icon) , m_jsonobj(jsonobj)
+
+
+CollapsibleSection::CollapsibleSection(const QString& title, QWidget* parent)
+  : QWidget(parent)
 {
-    key = param;
-    m_min = min;
-    m_max = max;
-    m_unit = unit;
+  auto* root = new QVBoxLayout(this);
+  root->setContentsMargins(0,0,0,0);
+  root->setSpacing(6);
 
-    label.setAlignment( Qt::AlignVCenter | Qt::AlignRight );
-    label.setStyleSheet("color: #e0e879");
-    hlayout->addWidget( &label );
+  m_headerBtn = new QToolButton(this);
+  m_headerBtn->setText(title);
+  m_headerBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  m_headerBtn->setArrowType(Qt::DownArrow);
+  m_headerBtn->setCheckable(true);
+  m_headerBtn->setChecked(true);
+  m_headerBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  m_headerBtn->setStyleSheet("QToolButton{ font-weight:600; font-size:18px; }");
+  root->addWidget(m_headerBtn);
 
-    int state = min;
-    if ( !m_jsonobj.contains(key) )
-    {
-      m_jsonobj.insert(key, state);
-    }
-    else
-    {
-      state  = m_jsonobj[key].toInt();
-    }
+  m_body = new QFrame(this);
+  m_body->setFrameShape(QFrame::NoFrame);
+  m_bodyLayout = new QVBoxLayout(m_body);
+  m_bodyLayout->setContentsMargins(12, 6, 0, 6);
+  m_bodyLayout->setSpacing(6);
+  root->addWidget(m_body);
 
-    m_value = state;
+  // 애니메이션으로 접기/펼치기
+  m_anim = new QPropertyAnimation(m_body, "maximumHeight", this);
+  m_anim->setDuration(150);
 
-    btnminus.setStyleSheet(R"(
-      padding: 0;
-      border-radius: 50px;
-      font-size: 35px;
-      font-weight: 500;
-      color: #E4E4E4;
-      background-color: #393939;
-    )");
-    btnplus.setStyleSheet(R"(
-      padding: 0;
-      border-radius: 50px;
-      font-size: 35px;
-      font-weight: 500;
-      color: #E4E4E4;
-      background-color: #393939;
-    )");
+  connect(m_headerBtn, &QToolButton::clicked, this, [this]{
+    toggle();
+  });
+}
 
-    btnminus.setFixedSize( 150, 100 );
-    btnplus.setFixedSize( 150, 100 );
-    hlayout->addWidget( &btnminus );
-    hlayout->addWidget( &btnplus );
+void CollapsibleSection::addWidget(QWidget* w) {
+  m_bodyLayout->addWidget(w);
+}
 
-    QObject::connect(&btnminus, &QPushButton::released, [=]()
-    {
-        int value = m_value;
-        value = value - m_unit;
-        if (value < m_min)
-            value = m_min;
+void CollapsibleSection::setExpanded(bool on) {
+  if (m_expanded == on) return;
+  toggle();
+}
 
-        setValue( value );
+void CollapsibleSection::toggle() {
+  m_expanded = !m_expanded;
+  m_headerBtn->setArrowType(m_expanded ? Qt::DownArrow : Qt::RightArrow);
+
+  m_body->setVisible(true); // 애니메이션 시작 전 보이도록
+  int start = m_body->maximumHeight();
+  int end   = 0;
+
+  if (m_expanded) {
+    // 펼칠 때 목표 높이 계산: sizeHint 사용
+    m_body->setMaximumHeight(QWIDGETSIZE_MAX);
+    end = m_body->sizeHint().height();
+    m_body->setMaximumHeight(start); // 애니메이션 시작점 복원
+  }
+
+  m_anim->stop();
+  m_anim->setStartValue(start < 0 ? 0 : start);
+  m_anim->setEndValue(m_expanded ? end : 0);
+  m_anim->start();
+
+  if (!m_expanded) {
+    connect(m_anim, &QPropertyAnimation::finished, this, [this]{
+      if (!m_expanded) m_body->setVisible(false);
     });
-
-    QObject::connect(&btnplus, &QPushButton::released, [=]()
-    {
-        int value = m_value;
-        value = value + m_unit;
-        if (value > m_max)
-            value = m_max;
-
-        setValue( value );
-    });
-    refresh();
-}
-
-void CValueControl::refresh()
-{
-    QString  str;
-
-    str.sprintf("%d", m_value );
-    label.setText( str );
-    btnminus.setText("－");
-    btnplus.setText("＋");
-}
-
-
-int  CValueControl::getValue()
-{
-  int  ret_code = m_value;
-  return  ret_code;
-}
-
-void CValueControl::setValue( int value )
-{
-  if( m_value != value )
-  {
-    m_jsonobj[key] = value;
-    m_value = value;
-    refresh();
-
-    emit clicked();
   }
 }
 
+void CollapsibleSection::setHeaderFont(const QFont& f) {
+  if (m_headerBtn) m_headerBtn->setFont(f);
+}
+
+void CollapsibleSection::setBodyFont(const QFont& f) {
+  if (m_body) {
+    m_body->setFont(f);
+    // 이미 추가된 자식들에게도 적용하고 싶다면:
+    const auto children = m_body->findChildren<QWidget*>();
+    for (QWidget* w : children) w->setFont(f);
+  }
+}
+
+void CollapsibleSection::setSectionFont(const QFont& header, const QFont& body) {
+  setHeaderFont(header);
+  setBodyFont(body);
+}
 
 
+
+
+// json
+CValueControl::CValueControl(const QString& param,
+                             const QString& title,
+                             const QString& desc,
+                             const QString& icon,
+                             double min, double max, double unit,
+                             double defVal,
+                             QJsonObject& jsonobj,
+                             QWidget* parent)
+  : AbstractControl(title, desc, icon, parent)
+  , m_jsonobj(jsonobj)
+  , m_key(param) {
+
+  if (min > max) std::swap(min, max);
+  if (unit <= 0.0) unit = 1.0;
+  m_min = min; m_max = max; m_unit = unit;
+
+  m_def = std::clamp(defVal, m_min, m_max);
+
+  m_decimal = decimalsFor( m_unit );
+
+  m_label.setAlignment(Qt::AlignVCenter | Qt::AlignRight);
+  m_label.setStyleSheet("color: #e0e879");
+  hlayout->addWidget(&m_label);
+
+  static const char* kBtnStyle = R"(
+    padding: 0;
+    border-radius: 50px;
+    font-size: 35px;
+    font-weight: 500;
+    color: #E4E4E4;
+    background-color: #393939;
+  )";
+
+  m_btnMinus.setStyleSheet(kBtnStyle);
+  m_btnMinus.setFixedSize(150, 100);
+  m_btnMinus.setText(QStringLiteral("－"));
+  m_btnMinus.setAutoRepeat(true);
+  m_btnMinus.setAutoRepeatDelay(300);
+  m_btnMinus.setAutoRepeatInterval(60);
+  hlayout->addWidget(&m_btnMinus);
+
+  m_btnPlus.setStyleSheet(kBtnStyle);
+  m_btnPlus.setFixedSize(150, 100);
+  m_btnPlus.setText(QStringLiteral("＋"));
+  m_btnPlus.setAutoRepeat(true);
+  m_btnPlus.setAutoRepeatDelay(300);
+  m_btnPlus.setAutoRepeatInterval(60);
+  hlayout->addWidget(&m_btnPlus);
+
+  bool wroteBack = false;
+  const double loaded = loadInitial(wroteBack);
+  m_value = std::clamp(loaded, m_min, m_max);
+  if (wroteBack || std::abs(loaded - m_value) > EPS) {
+    m_jsonobj[m_key] = m_value; // JSON에 double 기록
+  }
+
+  connect(&m_btnMinus, &QPushButton::pressed, this, [this]{ adjust(-m_unit); });
+  connect(&m_btnPlus,  &QPushButton::pressed, this, [this]{ adjust(+m_unit); });
+
+  updateLabel();
+  updateToolTip();
+}
+
+double CValueControl::getValue() const noexcept { return m_value; }
+
+
+static inline bool nearInteger(double x) noexcept {
+  if (!std::isfinite(x)) return false;
+
+  const double n    = std::round(x);
+  const double diff = std::abs(x - n);
+
+  // 값의 크기에 비례한 상대 허용오차(ULP 기반)
+  const double ulp  = std::numeric_limits<double>::epsilon();
+  const double base = std::max(1.0, std::max(std::abs(x), std::abs(n)));
+  const double tol  = ulp * 16 * base;
+
+  return diff <= tol;
+}
+
+
+
+int CValueControl::decimalsFor(double step)
+{
+  if (!(step > 0.0) || !std::isfinite(step)) return 0;
+
+  double scale = 1.0;
+  for (int d = 0; d <= 5; ++d) {
+    const double scaled = step * scale;
+    if (nearInteger(scaled)) return d;
+    scale *= 10.0;
+  }
+  return 8;
+}
+
+void CValueControl::setValue(double value) {
+  // 스텝 스냅(격자 정렬)
+  if (m_unit > EPS) {
+    const double base = m_min;
+    const double steps = std::round((value - base) / m_unit);
+    value = base + steps * m_unit;
+  }
+
+  const double nv = std::clamp(value, m_min, m_max);
+  if (std::abs(m_value - nv) <= EPS) return;
+
+  m_value = nv;
+  m_jsonobj[m_key] = m_value;  // QJson은 double로 저장
+
+  updateLabel();
+  emit valueChanged(m_value);
+  emit clicked();
+}
+
+void CValueControl::setRange(double min, double max) {
+  if (min > max) std::swap(min, max);
+  m_min = min; m_max = max;
+  m_def = std::clamp(m_def, m_min, m_max);
+  setValue(m_value);   // 재클램프 + 스냅
+  updateToolTip();
+}
+
+void CValueControl::setStep(double step) {
+  if (step <= 0.0) step = 1.0;
+  m_unit = step;
+  // 현재 값을 새 스텝에 맞춰 재정렬하고 싶다면:
+  setValue(m_value);
+  updateToolTip();
+}
+
+void CValueControl::setDefault(double defVal) {
+  m_def = std::clamp(defVal, m_min, m_max);
+}
+
+void CValueControl::adjust(double delta) {
+  setValue(m_value + delta);
+}
+
+void CValueControl::updateLabel() {
+  // 보기 좋은 자릿수(불필요한 0 제거). 필요시 고정 소수점으로 바꾸세요.
+  m_label.setText(QString::number(m_value, 'f', m_decimal));
+}
+
+void CValueControl::updateToolTip() {
+
+
+  const QString tip = tr("Min: %1, Max: %2, Step: %3, Default: %4")
+                        .arg(QString::number(m_min, 'f', m_decimal))
+                        .arg(QString::number(m_max, 'f', m_decimal))
+                        .arg(QString::number(m_unit, 'f', m_decimal))
+                        .arg(QString::number(m_def, 'f', m_decimal));
+  this->setToolTip(tip);
+  m_label.setToolTip(tip);
+  m_btnMinus.setToolTip(tip);
+  m_btnPlus.setToolTip(tip);
+}
+
+double CValueControl::loadInitial(bool& wroteBack) const noexcept {
+  wroteBack = false;
+
+  if (!m_jsonobj.contains(m_key)) {
+    wroteBack = true;
+    return m_def;
+  }
+  const QJsonValue v = m_jsonobj.value(m_key);
+
+  if (v.isDouble()) {
+    return v.toDouble();
+  }
+  if (v.isString()) {
+    bool ok = false;
+    const double d = v.toString().toDouble(&ok);
+    if (ok) return d;
+    wroteBack = true;
+    return m_def;
+  }
+  if (v.isBool()) {
+    return v.toBool() ? 1.0 : 0.0;
+  }
+
+  wroteBack = true;
+  return m_def;
+}
+
+
+// Params
 CValueControl2::CValueControl2(const QString& key, const QString& title, const QString& desc, const QString& icon, int min, int max, int unit/*=1*/)
     : AbstractControl(title, desc, icon)
 {
@@ -341,10 +526,21 @@ void CustomPanel::updateToggles( int bSave )
   int cruiseMode = m_jsonobj["ParamCruiseMode"].toInt();
   int cruiseGap = m_jsonobj["ParamCruiseGap"].toInt();
   int curveSpeedLimit = m_jsonobj["ParamCurveSpeedLimit"].toInt();
+  float steerRatio = m_jsonobj["ParamSteerRatio"].toDouble();
+  float stiffnessFactor = m_jsonobj["ParamStiffnessFactor"].toDouble();
+  float angleOffsetDeg = m_jsonobj["ParamAngleOffsetDeg"].toDouble();
+
+
+
+
   comunity.setCmdIdx( m_cmdIdx );
   comunity.setCruiseMode( cruiseMode );
   comunity.setCruiseGap( cruiseGap );
   comunity.setCurveSpeedLimit( curveSpeedLimit );
+
+  comunity.setSteerRatio( steerRatio );
+  comunity.setStiffnessFactor( stiffnessFactor );
+  comunity.setAngleOffsetDeg( angleOffsetDeg );
 
 
   auto ui = custom.initUserInterface();
@@ -366,6 +562,9 @@ void CustomPanel::updateToggles( int bSave )
 
   int _autoScreenOff = m_jsonobj["ParamAutoScreenOff"].toInt();
   int _brightness = m_jsonobj["ParamBrightness"].toInt();
+
+
+
 
 
 
@@ -501,60 +700,115 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
     { "ParamCruiseMode",
       tr("Cruise mode"),
       tr("Bit flags: 0=Off, bit1=Gas control, bit2=Comma speed (CruiseGap)"),
-      kIcon, 0, 15, 1 }, // min, max, unit
+      kIcon, 0, 15, 1, // min, max, unit
+      1 },  //def
 
     { "ParamCruiseGap",
       tr("Cruise gap"),
       tr("0=Not used, 1~4=Gap for Comma speed"),
-      kIcon, 0, 4, 1 },
+      kIcon, 0, 4, 1,
+      4 }, //def
 
     { "ParamCurveSpeedLimit",
       tr("Curve speed adjust"),
       tr("Adjust maximum speed based on road curvature."),
-      kIcon, 30, 100, 5 },
+      kIcon, 30, 100, 5,
+      60 }, //def
 
     { "ParamAutoEngage",
       tr("Auto Cruise Engage Speed"),
       tr("Enables cruise automatically once the vehicle reaches the set speed."
          "30: Off · otherwise: engage at that speed (km/h)."),
-      kIcon, 30, 100, 5 },
+      kIcon, 30, 100, 5,
+      60 }, //def
 
     { "ParamAutoLaneChange",
       tr("Auto Lane Change Delay"),
       tr("After the turn signal is activated, waits the set time before starting an automatic lane change.\n"
          "0: Manual  ·value in seconds."),
-      kIcon, 0, 100, 10 },
+      kIcon, 0, 100, 10,
+      30 }, //def
 
+    { "ParamSteerRatio",
+      tr("Steering Ratio"),
+      tr("Vehicle-specific ratio between steering wheel angle and road wheel angle (unitless).\n"
+        "Used for curvature conversion and lateral control.\n"
+        "Typical values: ~12–20. Incorrect values can cause poor lane keeping or oscillation.\n"
+        "Change only if you know the calibrated value."),
+      kIcon, -0.2, 0.2, 0.01,
+      0 }, // def
+
+    { "ParamStiffnessFactor",
+      tr("Lateral Stiffness Factor"),
+      tr("Scaling factor for lateral (tire/steering) stiffness used by the lateral controller (unitless).\n"
+        "1.0 = nominal (recommended). Higher = more aggressive response; lower = smoother but lazier.\n"
+        "Too high may cause oscillations; too low may cause understeer-like drift."),
+      kIcon, -0.1, 0.1, 0.01,
+      0 }, // def
+
+    { "ParamAngleOffsetDeg",
+      tr("Steering Angle Offset (deg)"),
+      tr("Static correction for steering angle sensor zero, in degrees.\n"
+        "Positive = sensor reads left-of-center as positive (adjust to make straight driving show ~0°).\n"
+        "Change in small steps and verify on a straight, flat road."),
+      kIcon, -2, 2, 0.1,
+      0 }, // def
+
+
+  };
+
+
+  const std::vector<ValueDef> val2_defs = {
     { "ParamBrightness",
       tr("Screen Brightness"),
       tr("Adjust the brightness level. 0 = Auto, negative = darker, positive = brighter."),
-      kIcon, -20, 5, 1 },
+      kIcon, -20, 5, 1,
+      -15 }, //def
 
     { "ParamAutoScreenOff",
       tr("Screen Timeout"),
       tr("Set how long the screen stays on before turning off automatically (in 10-second steps). 0 = None."),
-      kIcon, 0, 120, 1 },
+      kIcon, 0, 120, 1,
+      100 }, //def
 
     { "ParamPowerOff",
       tr("Power off time"),
       tr("0=Not used, 1~ = power off delay (1 sec)"),
-      kIcon, 0, 60, 1 },
+      kIcon, 0, 60, 1,
+      10 }, //def
 
     { "DUAL_CAMERA_VIEW",
       tr("Dual camera view"),
       tr("0=Off, 1=On"),
-      kIcon, 0, 1, 1 },
+      kIcon, 0, 1, 1,
+      0 }, //def
   };
 
+
+
+
+  // 섹션 만들기
+  auto* cruiseSec = new CollapsibleSection(tr("Cruise Settings"), this);
+  addItem(cruiseSec);
   // 2) ValueControl 생성 및 등록 (키는 QString으로 통일)
   for (const auto &d : value_defs) {
-    auto *value = new CValueControl(d.param, d.title, d.desc, d.icon, d.min, d.max, d.unit, m_jsonobj);
-    addItem(value);
+    auto *value = new CValueControl(d.param, d.title, d.desc, d.icon, d.min, d.max, d.unit, d.def, m_jsonobj);
+    cruiseSec->addWidget(value);
     m_valueCtrl.insert(d.param, value);
   }
 
+  auto* screenSec = new CollapsibleSection(tr("Screen & Power"), this);
+  addItem(screenSec);
+   for (const auto &d : val2_defs) {
+    auto *value = new CValueControl(d.param, d.title, d.desc, d.icon, d.min, d.max, d.unit, d.def, m_jsonobj);
+    screenSec->addWidget(value);
+    m_valueCtrl.insert(d.param, value);
+  }
+
+  auto* logSec = new CollapsibleSection(tr("Logging"), this);
+  addItem(logSec);
   // 3) 토글류 이외의 스위치 예시
-  addItem(new ParamControl("EnableLogging",
+  logSec->addWidget(new ParamControl("EnableLogging",
                            tr("Enable logging"),
                            tr("Record runtime logs"),
                            kIcon,
@@ -571,7 +825,8 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
   // CValueControl에 value 변경 신호가 있으면 그걸 쓰는 게 가장 좋음.
   // 여기서는 예제로 clicked에 연결(기존 시그널 유지 가정).
   if (auto *mode = m_valueCtrl.value("ParamCruiseMode", nullptr)) {
-    QObject::connect(mode, &CValueControl::clicked, this, [=] {
+    QObject::connect(mode, &CValueControl::valueChanged, this, [=](int v) {
+      Q_UNUSED(v);
       // 최신값 반영(컨트롤 내부가 즉시 m_jsonobj를 업데이트한다고 가정)
       syncCruiseGapEnabled();
       update();

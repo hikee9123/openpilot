@@ -54,6 +54,9 @@ struct UICustom @0xda96579883444c35 {
        cruiseGap @2 :Int16;
        curveSpeedLimit @3 :Int16;
 
+       steerRatio @4 :Float32;
+       stiffnessFactor @5 :Float32;
+       angleOffsetDeg @6 :Float32;
     }
 
     struct UserInterface
