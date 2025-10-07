@@ -99,7 +99,7 @@ class Controls:
     CS = self.sm['carState']
 
     if self.sm.updated["uICustom"]:
-      uc  = self.sm['uICustom']
+      uc  = self.sm['uICustom'].community
       # 1) 사용자 보정 배율 확정
       self.sr_scale = self.to_scale(uc.steerRatio)
       self.x_scale  = self.to_scale(uc.stiffnessFactor)
