@@ -137,6 +137,7 @@ public:
   void   setStep(double step);
   void   setDefault(double defVal);
   void   adjust(double delta);
+  int    decimalsFor(double step);
 
 signals:
   void valueChanged(double value);
@@ -154,6 +155,7 @@ private:
   QLabel m_label;
   QPushButton m_btnMinus, m_btnPlus;
 
+  int    m_decimal = 1;
   double m_min = 0.0, m_max = 100.0, m_unit = 1.0;
   double m_def = 0.0;
   double m_value = 0.0;
@@ -321,10 +323,10 @@ private:
     QString title;
     QString desc;
     QString icon;
-    float min;
-    float max;
-    float unit;
-    float def;
+    double min;
+    double max;
+    double unit;
+    double def;
   };
   // 기본 아이콘 경로
   const QString kIcon = "../assets/offroad/icon_shell.png";

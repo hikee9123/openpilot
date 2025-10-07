@@ -144,6 +144,8 @@ CValueControl::CValueControl(const QString& param,
 
   m_def = std::clamp(defVal, m_min, m_max);
 
+  m_decimal = decimalsFor( m_unit );
+
   m_label.setAlignment(Qt::AlignVCenter | Qt::AlignRight);
   m_label.setStyleSheet("color: #e0e879");
   hlayout->addWidget(&m_label);
@@ -188,6 +190,36 @@ CValueControl::CValueControl(const QString& param,
 }
 
 double CValueControl::getValue() const noexcept { return m_value; }
+
+
+static inline bool nearInteger(double x) noexcept {
+  if (!std::isfinite(x)) return false;
+
+  const double n    = std::round(x);
+  const double diff = std::abs(x - n);
+
+  // 값의 크기에 비례한 상대 허용오차(ULP 기반)
+  const double ulp  = std::numeric_limits<double>::epsilon();
+  const double base = std::max(1.0, std::max(std::abs(x), std::abs(n)));
+  const double tol  = ulp * 16 * base;
+
+  return diff <= tol;
+}
+
+
+
+int CValueControl::decimalsFor(double step)
+{
+  if (!(step > 0.0) || !std::isfinite(step)) return 0;
+
+  double scale = 1.0;
+  for (int d = 0; d <= 5; ++d) {
+    const double scaled = step * scale;
+    if (nearInteger(scaled)) return d;
+    scale *= 10.0;
+  }
+  return 8;
+}
 
 void CValueControl::setValue(double value) {
   // 스텝 스냅(격자 정렬)
@@ -234,15 +266,17 @@ void CValueControl::adjust(double delta) {
 
 void CValueControl::updateLabel() {
   // 보기 좋은 자릿수(불필요한 0 제거). 필요시 고정 소수점으로 바꾸세요.
-  m_label.setText(QString::number(m_value, 'f', f));
+  m_label.setText(QString::number(m_value, 'f', m_decimal));
 }
 
 void CValueControl::updateToolTip() {
+
+
   const QString tip = tr("Min: %1, Max: %2, Step: %3, Default: %4")
-                        .arg(QString::number(m_min, 'f', 3))
-                        .arg(QString::number(m_max, 'f', 3))
-                        .arg(QString::number(m_unit, 'f', 3))
-                        .arg(QString::number(m_def, 'f', 3));
+                        .arg(QString::number(m_min, 'f', m_decimal))
+                        .arg(QString::number(m_max, 'f', m_decimal))
+                        .arg(QString::number(m_unit, 'f', m_decimal))
+                        .arg(QString::number(m_def, 'f', m_decimal));
   this->setToolTip(tip);
   m_label.setToolTip(tip);
   m_btnMinus.setToolTip(tip);
