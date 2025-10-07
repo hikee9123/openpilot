@@ -99,11 +99,12 @@ class Controls:
     CS = self.sm['carState']
 
     if self.sm.updated["uICustom"]:
-      uc  = self.sm['uICustom'].community
+      uc  = self.sm['uICustom']
+      com = uc.community
       # 1) 사용자 보정 배율 확정
-      self.sr_scale = self.to_scale(uc.steerRatio)
-      self.x_scale  = self.to_scale(uc.stiffnessFactor)
-      self.angleOffsetDeg = uc.angleOffsetDeg
+      self.sr_scale = self.to_scale(com.steerRatio)
+      self.x_scale  = self.to_scale(com.stiffnessFactor)
+      self.angleOffsetDeg = com.angleOffsetDeg
 
     # Update VehicleModel
     lp = self.sm['liveParameters']
