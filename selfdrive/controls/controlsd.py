@@ -103,7 +103,7 @@ class Controls:
       # 1) 사용자 보정 배율 확정
       self.sr_scale = self.to_scale(getattr(uc, 'steerRatio', 0.0))
       self.x_scale  = self.to_scale(getattr(uc, 'stiffnessFactor', 0.0))
-      angleOffsetDeg = uc.angleOffsetDeg
+      self.angleOffsetDeg = uc.angleOffsetDeg
 
     # Update VehicleModel
     lp = self.sm['liveParameters']
@@ -117,7 +117,7 @@ class Controls:
     sr = self._smooth_sr.update(sr)
     self.VM.update_params(x, sr)
 
-    steer_angle_without_offset = math.radians(CS.steeringAngleDeg - (lp.angleOffsetDeg + angleOffsetDeg))
+    steer_angle_without_offset = math.radians(CS.steeringAngleDeg - (lp.angleOffsetDeg + self.angleOffsetDeg))
     self.curvature = -self.VM.calc_curvature(steer_angle_without_offset, CS.vEgo, lp.roll)
 
     # Update Torque Params
