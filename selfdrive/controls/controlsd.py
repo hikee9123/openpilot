@@ -79,7 +79,7 @@ class Controls:
       self.LaC = LatControlTorque(self.CP, self.CI)
 
   # 사용자 입력을 '배율'로 통일: 0.05 -> 1.05, 1.05 -> 1.05
-  def to_scale(v: float) -> float:
+  def to_scale(self, v: float) -> float:
     if not math.isfinite(v):
       return 1.0
     # 0.0~0.5 사이면 '증분(%)'로 보고 1+v 처리, 그 외엔 '배율'로 간주
