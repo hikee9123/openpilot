@@ -545,20 +545,15 @@ void OnPaint::ui_main_debug(QPainter &p)
   if( m_param.debug.getIdx1() )
   {
 
-  //float steerRatio = m_jsonobj["ParamSteerRatio"].toDouble();
-  //float stiffnessFactor = m_jsonobj["ParamStiffnessFactor"].toDouble();
-  //float angleOffsetDeg = m_jsonobj["ParamAngleOffsetDeg"].toDouble();
-
-
     SubMaster &sm2 = *(m_sm);
     auto lp = sm2["liveParameters"].getLiveParameters();
 
     float fSR = lp.getSteerRatio();
     float fSF = lp.getStiffnessFactor();
 
-    float fSteerRatio =  m_param.community.getSteerRatio()
-    float fStiffnessFactor = m_param.community.getStiffnessFactor()
-    float fAngleOffsetDeg = m_param.community.getAngleOffsetDeg()
+    float fSteerRatio =  m_param.community.getSteerRatio();
+    float fStiffnessFactor = m_param.community.getStiffnessFactor();
+    float fAngleOffsetDeg = m_param.community.getAngleOffsetDeg();
 
 
     QString text;
