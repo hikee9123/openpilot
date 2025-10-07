@@ -121,49 +121,44 @@ private:
 
 class CValueControl : public AbstractControl {
   Q_OBJECT
-  Q_PROPERTY(int value READ getValue WRITE setValue NOTIFY valueChanged)
-
 public:
   explicit CValueControl(const QString& param,
                          const QString& title,
                          const QString& desc,
                          const QString& icon,
-                         int min, int max, int unit,
-                         int defVal,                 // ★ 기본값 추가
+                         double min, double max, double unit,
+                         double defVal,
                          QJsonObject& jsonobj,
                          QWidget* parent = nullptr);
 
-  int  getValue() const noexcept;
-
-public slots:
-  void setValue(int value);
-  void setRange(int min, int max);
-  void setStep(int step);
-  void setDefault(int defVal);      // ★ 기본값 런타임 교체
+  double getValue() const noexcept;
+  void   setValue(double value);
+  void   setRange(double min, double max);
+  void   setStep(double step);
+  void   setDefault(double defVal);
+  void   adjust(double delta);
 
 signals:
-  void valueChanged(int newValue);
-  void clicked();              // ★ DEPRECATED: 하위 호환용
+  void valueChanged(double value);
+  void clicked();
 
 private:
-  void adjust(int delta);
   void updateLabel();
   void updateToolTip();
-  int  loadInitial(bool& wroteBack) const noexcept;  // ★ 저장소 보정 여부 반환
+  double loadInitial(bool& wroteBack) const noexcept;
 
 private:
   QJsonObject& m_jsonobj;
-  QString      m_key;
+  QString m_key;
 
-  int m_min  {0};
-  int m_max  {0};
-  int m_unit {1};
-  int m_def  {0};                   // ★ 기본값 멤버
-  int m_value{0};
+  QLabel m_label;
+  QPushButton m_btnMinus, m_btnPlus;
 
-  QLabel      m_label;
-  QPushButton m_btnMinus;
-  QPushButton m_btnPlus;
+  double m_min = 0.0, m_max = 100.0, m_unit = 1.0;
+  double m_def = 0.0;
+  double m_value = 0.0;
+
+  static constexpr double EPS = 1e-9;
 };
 
 
@@ -326,10 +321,10 @@ private:
     QString title;
     QString desc;
     QString icon;
-    int min;
-    int max;
-    int unit;
-    int def;
+    float min;
+    float max;
+    float unit;
+    float def;
   };
   // 기본 아이콘 경로
   const QString kIcon = "../assets/offroad/icon_shell.png";

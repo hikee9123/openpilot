@@ -130,27 +130,24 @@ CValueControl::CValueControl(const QString& param,
                              const QString& title,
                              const QString& desc,
                              const QString& icon,
-                             int min, int max, int unit,
-                             int defVal,
+                             double min, double max, double unit,
+                             double defVal,
                              QJsonObject& jsonobj,
                              QWidget* parent)
   : AbstractControl(title, desc, icon, parent)
   , m_jsonobj(jsonobj)
-  , m_key(param)
-{
+  , m_key(param) {
+
   if (min > max) std::swap(min, max);
-  if (unit <= 0) unit = 1;
+  if (unit <= 0.0) unit = 1.0;
   m_min = min; m_max = max; m_unit = unit;
 
-  // 기본값 보정 저장
   m_def = std::clamp(defVal, m_min, m_max);
 
-  // 라벨
   m_label.setAlignment(Qt::AlignVCenter | Qt::AlignRight);
   m_label.setStyleSheet("color: #e0e879");
   hlayout->addWidget(&m_label);
 
-  // 버튼 공통 스타일
   static const char* kBtnStyle = R"(
     padding: 0;
     border-radius: 50px;
@@ -160,7 +157,6 @@ CValueControl::CValueControl(const QString& param,
     background-color: #393939;
   )";
 
-  // - 버튼
   m_btnMinus.setStyleSheet(kBtnStyle);
   m_btnMinus.setFixedSize(150, 100);
   m_btnMinus.setText(QStringLiteral("－"));
@@ -169,7 +165,6 @@ CValueControl::CValueControl(const QString& param,
   m_btnMinus.setAutoRepeatInterval(60);
   hlayout->addWidget(&m_btnMinus);
 
-  // + 버튼
   m_btnPlus.setStyleSheet(kBtnStyle);
   m_btnPlus.setFixedSize(150, 100);
   m_btnPlus.setText(QStringLiteral("＋"));
@@ -178,12 +173,11 @@ CValueControl::CValueControl(const QString& param,
   m_btnPlus.setAutoRepeatInterval(60);
   hlayout->addWidget(&m_btnPlus);
 
-  // 초기 로드: 없거나 잘못된 값이면 def 사용 + 저장소 기록
   bool wroteBack = false;
-  const int loaded = loadInitial(wroteBack);
+  const double loaded = loadInitial(wroteBack);
   m_value = std::clamp(loaded, m_min, m_max);
-  if (wroteBack || loaded != m_value) {
-    m_jsonobj[m_key] = m_value;   // 저장소 정정
+  if (wroteBack || std::abs(loaded - m_value) > EPS) {
+    m_jsonobj[m_key] = m_value; // JSON에 double 기록
   }
 
   connect(&m_btnMinus, &QPushButton::pressed, this, [this]{ adjust(-m_unit); });
@@ -193,76 +187,93 @@ CValueControl::CValueControl(const QString& param,
   updateToolTip();
 }
 
-int CValueControl::getValue() const noexcept {
-  return m_value;
-}
+double CValueControl::getValue() const noexcept { return m_value; }
 
-void CValueControl::setValue(int value) {
-  const int nv = std::clamp(value, m_min, m_max);
-  if (m_value == nv) return;
+void CValueControl::setValue(double value) {
+  // 스텝 스냅(격자 정렬)
+  if (m_unit > EPS) {
+    const double base = m_min;
+    const double steps = std::round((value - base) / m_unit);
+    value = base + steps * m_unit;
+  }
+
+  const double nv = std::clamp(value, m_min, m_max);
+  if (std::abs(m_value - nv) <= EPS) return;
 
   m_value = nv;
-  m_jsonobj[m_key] = m_value;
+  m_jsonobj[m_key] = m_value;  // QJson은 double로 저장
 
   updateLabel();
   emit valueChanged(m_value);
   emit clicked();
 }
 
-void CValueControl::setRange(int min, int max) {
+void CValueControl::setRange(double min, double max) {
   if (min > max) std::swap(min, max);
   m_min = min; m_max = max;
-
-  // 기본값도 범위로 보정
   m_def = std::clamp(m_def, m_min, m_max);
-
-  setValue(m_value);   // 재클램프
+  setValue(m_value);   // 재클램프 + 스냅
   updateToolTip();
 }
 
-void CValueControl::setStep(int step) {
-  if (step <= 0) step = 1;
+void CValueControl::setStep(double step) {
+  if (step <= 0.0) step = 1.0;
   m_unit = step;
+  // 현재 값을 새 스텝에 맞춰 재정렬하고 싶다면:
+  setValue(m_value);
   updateToolTip();
 }
 
-void CValueControl::setDefault(int defVal) {
+void CValueControl::setDefault(double defVal) {
   m_def = std::clamp(defVal, m_min, m_max);
-  // 기본값 변경은 즉시 현재 값에 적용하지 않음 (리셋이 따로 있을 수 있음)
 }
 
-void CValueControl::adjust(int delta) {
+void CValueControl::adjust(double delta) {
   setValue(m_value + delta);
 }
 
 void CValueControl::updateLabel() {
-  m_label.setText(QString::number(m_value));
+  // 보기 좋은 자릿수(불필요한 0 제거). 필요시 고정 소수점으로 바꾸세요.
+  m_label.setText(QString::number(m_value, 'g', 8));
 }
 
 void CValueControl::updateToolTip() {
   const QString tip = tr("Min: %1, Max: %2, Step: %3, Default: %4")
-                        .arg(m_min).arg(m_max).arg(m_unit).arg(m_def);
+                        .arg(QString::number(m_min, 'g', 8))
+                        .arg(QString::number(m_max, 'g', 8))
+                        .arg(QString::number(m_unit, 'g', 8))
+                        .arg(QString::number(m_def, 'g', 8));
   this->setToolTip(tip);
   m_label.setToolTip(tip);
   m_btnMinus.setToolTip(tip);
   m_btnPlus.setToolTip(tip);
 }
 
-int CValueControl::loadInitial(bool& wroteBack) const noexcept {
+double CValueControl::loadInitial(bool& wroteBack) const noexcept {
+  wroteBack = false;
+
   if (!m_jsonobj.contains(m_key)) {
     wroteBack = true;
-    return m_def;     // 키 없을 때 def 사용
+    return m_def;
   }
+  const QJsonValue v = m_jsonobj.value(m_key);
 
-  bool ok = false;
-  int v = m_jsonobj.value(m_key).toVariant().toInt(&ok);
-  if (!ok) {
+  if (v.isDouble()) {
+    return v.toDouble();
+  }
+  if (v.isString()) {
+    bool ok = false;
+    const double d = v.toString().toDouble(&ok);
+    if (ok) return d;
     wroteBack = true;
-    return m_def;     // 파싱 실패 시 def 사용
+    return m_def;
+  }
+  if (v.isBool()) {
+    return v.toBool() ? 1.0 : 0.0;
   }
 
-  wroteBack = false;
-  return v;
+  wroteBack = true;
+  return m_def;
 }
 
 
