@@ -481,10 +481,21 @@ void CustomPanel::updateToggles( int bSave )
   int cruiseMode = m_jsonobj["ParamCruiseMode"].toInt();
   int cruiseGap = m_jsonobj["ParamCruiseGap"].toInt();
   int curveSpeedLimit = m_jsonobj["ParamCurveSpeedLimit"].toInt();
+  float steerRatio = m_jsonobj["ParamSteerRatio"].toDouble();
+  float stiffnessFactor = m_jsonobj["ParamStiffnessFactor"].toDouble();
+  float angleOffsetDeg = m_jsonobj["ParamAngleOffsetDeg"].toDouble();
+
+
+
+
   comunity.setCmdIdx( m_cmdIdx );
   comunity.setCruiseMode( cruiseMode );
   comunity.setCruiseGap( cruiseGap );
   comunity.setCurveSpeedLimit( curveSpeedLimit );
+
+  comunity.setSteerRatio( steerRatio );
+  comunity.setStiffnessFactor( stiffnessFactor );
+  comunity.setAngleOffsetDeg( angleOffsetDeg );
 
 
   auto ui = custom.initUserInterface();
@@ -506,6 +517,9 @@ void CustomPanel::updateToggles( int bSave )
 
   int _autoScreenOff = m_jsonobj["ParamAutoScreenOff"].toInt();
   int _brightness = m_jsonobj["ParamBrightness"].toInt();
+
+
+
 
 
 
@@ -669,6 +683,33 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
          "0: Manual  ·value in seconds."),
       kIcon, 0, 100, 10,
       30 }, //def
+
+    { "ParamSteerRatio",
+      tr("Steering Ratio"),
+      tr("Vehicle-specific ratio between steering wheel angle and road wheel angle (unitless).\n"
+        "Used for curvature conversion and lateral control.\n"
+        "Typical values: ~12–20. Incorrect values can cause poor lane keeping or oscillation.\n"
+        "Change only if you know the calibrated value."),
+      kIcon, -0.2, 0.2, 0.01,
+      0 }, // def
+
+    { "ParamStiffnessFactor",
+      tr("Lateral Stiffness Factor"),
+      tr("Scaling factor for lateral (tire/steering) stiffness used by the lateral controller (unitless).\n"
+        "1.0 = nominal (recommended). Higher = more aggressive response; lower = smoother but lazier.\n"
+        "Too high may cause oscillations; too low may cause understeer-like drift."),
+      kIcon, -0.1, 0.1, 0.01,
+      0 }, // def
+
+    { "ParamAngleOffsetDeg",
+      tr("Steering Angle Offset (deg)"),
+      tr("Static correction for steering angle sensor zero, in degrees.\n"
+        "Positive = sensor reads left-of-center as positive (adjust to make straight driving show ~0°).\n"
+        "Change in small steps and verify on a straight, flat road."),
+      kIcon, -2, 2, 0.1,
+      0 }, // def
+
+
   };
 
 
@@ -712,7 +753,6 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
   }
 
   auto* screenSec = new CollapsibleSection(tr("Screen & Power"), this);
-
   addItem(screenSec);
    for (const auto &d : val2_defs) {
     auto *value = new CValueControl(d.param, d.title, d.desc, d.icon, d.min, d.max, d.unit, d.def, m_jsonobj);
@@ -899,7 +939,10 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
       /// connect start
         QObject::connect(changeModelButton, &ButtonControl::clicked, this, [this]() {
           // 1) 모델 후보 (최소 수정: 기존 고정 목록 유지)
-          QStringList items = { "3.Firehose", "2.Steam_Powered", "1.default" };
+          QStringList items = {
+            "3.Firehose",
+            "2.Steam_Powered",
+            "1.default" };
 
           // 현재 선택 상태 반영
           QString selection = MultiOptionDialog::getSelection(tr("Select a model"), items, currentModel, this);

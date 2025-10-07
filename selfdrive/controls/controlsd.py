@@ -37,7 +37,9 @@ class Controls:
 
     self.sm = messaging.SubMaster(['liveParameters', 'liveTorqueParameters', 'modelV2', 'selfdriveState',
                                    'liveCalibration', 'livePose', 'longitudinalPlan', 'carState', 'carOutput',
-                                   'driverMonitoringState', 'onroadEvents', 'driverAssistance'], poll='selfdriveState')
+                                   'driverMonitoringState', 'onroadEvents', 'driverAssistance', 'uICustom'],
+                                   poll='selfdriveState', ignore_avg_freq=['uICustom'])
+
     self.pm = messaging.PubMaster(['carControl', 'controlsState'])
 
     self.steer_limited_by_safety = False
@@ -68,13 +70,20 @@ class Controls:
   def state_control(self):
     CS = self.sm['carState']
 
+    uc  = self.sm['uICustom']
+    steerRatio = (1+uc.steerRatio)
+    stiffnessFactor = (1+uc.stiffnessFactor)
+    angleOffsetDeg = uc.angleOffsetDeg
+
     # Update VehicleModel
     lp = self.sm['liveParameters']
     x = max(lp.stiffnessFactor, 0.1)
     sr = max(lp.steerRatio, 0.1)
+    sr *= steerRatio
+    x *= stiffnessFactor
     self.VM.update_params(x, sr)
 
-    steer_angle_without_offset = math.radians(CS.steeringAngleDeg - lp.angleOffsetDeg)
+    steer_angle_without_offset = math.radians(CS.steeringAngleDeg - (lp.angleOffsetDeg + angleOffsetDeg))
     self.curvature = -self.VM.calc_curvature(steer_angle_without_offset, CS.vEgo, lp.roll)
 
     # Update Torque Params
