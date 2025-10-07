@@ -85,8 +85,7 @@ class Controls:
     # 0.0~0.5 사이면 '증분(%)'로 보고 1+v 처리, 그 외엔 '배율'로 간주
     return 1.0 + v if -0.5 <= v <= 0.5 else v
 
-  def finite_or_default(v: float, default: float) -> float:
-    return v if (v is not None and math.isfinite(v)) else default
+
 
   def update(self):
     self.sm.update(15)
@@ -99,11 +98,12 @@ class Controls:
   def state_control(self):
     CS = self.sm['carState']
 
-    uc  = self.sm['uICustom']
-    # 1) 사용자 보정 배율 확정
-    self.sr_scale = self.to_scale(self.finite_or_default(getattr(uc, 'steerRatio', 0.0), 0.0))
-    self.x_scale  = self.to_scale(self.finite_or_default(getattr(uc, 'stiffnessFactor', 0.0), 0.0))
-    angleOffsetDeg = uc.angleOffsetDeg
+    if self.sm.updated["uICustom"]:
+      uc  = self.sm['uICustom']
+      # 1) 사용자 보정 배율 확정
+      self.sr_scale = self.to_scale(getattr(uc, 'steerRatio', 0.0))
+      self.x_scale  = self.to_scale(getattr(uc, 'stiffnessFactor', 0.0))
+      angleOffsetDeg = uc.angleOffsetDeg
 
     # Update VehicleModel
     lp = self.sm['liveParameters']
