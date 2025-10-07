@@ -101,8 +101,8 @@ class Controls:
     if self.sm.updated["uICustom"]:
       uc  = self.sm['uICustom']
       # 1) 사용자 보정 배율 확정
-      self.sr_scale = self.to_scale(getattr(uc, 'steerRatio', 0.0))
-      self.x_scale  = self.to_scale(getattr(uc, 'stiffnessFactor', 0.0))
+      self.sr_scale = self.to_scale(uc.steerRatio)
+      self.x_scale  = self.to_scale(uc.stiffnessFactor)
       self.angleOffsetDeg = uc.angleOffsetDeg
 
     # Update VehicleModel
