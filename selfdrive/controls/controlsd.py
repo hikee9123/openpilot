@@ -25,6 +25,14 @@ LaneChangeDirection = log.LaneChangeDirection
 
 ACTUATOR_FIELDS = tuple(car.CarControl.Actuators.schema.fields.keys())
 
+# 간단한 지연 필터: 튐 완화용
+class Smooth:
+  def __init__(self, alpha: float, init: float):
+    self.a = alpha
+    self.y = init
+  def update(self, x: float) -> float:
+    self.y = self.a * x + (1.0 - self.a) * self.y
+    return self.y
 
 class Controls:
   def __init__(self) -> None:
@@ -49,6 +57,17 @@ class Controls:
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
 
+    self.sr_scale = 0
+    self.x_scale = 0
+    self.angleOffsetDeg = 0
+
+    # 모듈 전역/클래스 멤버로 보관해 한 번만 생성 권장
+    if not hasattr(self, "_smooth_sr"):
+      self._smooth_sr = Smooth(alpha=0.3, init=10.0)      # steerRatio 초기값 가정
+    if not hasattr(self, "_smooth_x"):
+      self._smooth_x  = Smooth(alpha=0.3, init=0.5)       # stiffnessFactor 초기값 가정
+
+
     self.LoC = LongControl(self.CP)
     self.VM = VehicleModel(self.CP)
     self.LaC: LatControl
@@ -58,6 +77,16 @@ class Controls:
       self.LaC = LatControlPID(self.CP, self.CI)
     elif self.CP.lateralTuning.which() == 'torque':
       self.LaC = LatControlTorque(self.CP, self.CI)
+
+  # 사용자 입력을 '배율'로 통일: 0.05 -> 1.05, 1.05 -> 1.05
+  def to_scale(v: float) -> float:
+    if not math.isfinite(v):
+      return 1.0
+    # 0.0~0.5 사이면 '증분(%)'로 보고 1+v 처리, 그 외엔 '배율'로 간주
+    return 1.0 + v if -0.5 <= v <= 0.5 else v
+
+  def finite_or_default(v: float, default: float) -> float:
+    return v if (v is not None and math.isfinite(v)) else default
 
   def update(self):
     self.sm.update(15)
@@ -71,16 +100,21 @@ class Controls:
     CS = self.sm['carState']
 
     uc  = self.sm['uICustom']
-    steerRatio = (1+uc.steerRatio)
-    stiffnessFactor = (1+uc.stiffnessFactor)
+    # 1) 사용자 보정 배율 확정
+    self.sr_scale = self.to_scale(self.finite_or_default(getattr(uc, 'steerRatio', 0.0), 0.0))
+    self.x_scale  = self.to_scale(self.finite_or_default(getattr(uc, 'stiffnessFactor', 0.0), 0.0))
     angleOffsetDeg = uc.angleOffsetDeg
 
     # Update VehicleModel
     lp = self.sm['liveParameters']
     x = max(lp.stiffnessFactor, 0.1)
     sr = max(lp.steerRatio, 0.1)
-    sr *= steerRatio
-    x *= stiffnessFactor
+    sr *= self.sr_scale
+    x *= self.x_scale
+    x  = min(max(x,  0.50), 1.5)
+    sr = min(max(sr, 12.0), 20.0)
+    x  = self._smooth_x.update(x)
+    sr = self._smooth_sr.update(sr)
     self.VM.update_params(x, sr)
 
     steer_angle_without_offset = math.radians(CS.steeringAngleDeg - (lp.angleOffsetDeg + angleOffsetDeg))
