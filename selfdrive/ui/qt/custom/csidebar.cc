@@ -24,7 +24,7 @@ void CSidebar::mouseReleaseEvent(QMouseEvent *event, cereal::UserBookmark::Build
 {
   UIState   *s = uiState();
   UIScene   &scene = s->scene;
-  printf( "CSidebar::mouseReleaseEvent  m_idxUserFlag=%d   \n", m_idxUserFlag );
+
 
   scene.custom.m_powerflag = 0;
   m_idxUserFlag++;
