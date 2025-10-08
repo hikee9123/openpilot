@@ -66,7 +66,7 @@ class CarStateCustom:
     self.lead_distance = 0.0
     self.gapSet = 0
     self._gas_pressed_prev = False
-    self._cencel_button = False
+    self._cencel_button = True
 
     # 차량/주행 상태
     self.clu_Vanz = 0.0
