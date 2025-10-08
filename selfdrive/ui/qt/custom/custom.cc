@@ -701,7 +701,7 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
       tr("Cruise mode"),
       tr("Bit flags: 0=Off, bit1=Gas control, bit2=Comma speed (CruiseGap)"),
       kIcon, 0, 15, 1, // min, max, unit
-      1 },  //def
+      2 },  //def
 
     { "ParamCruiseGap",
       tr("Cruise gap"),
@@ -713,7 +713,7 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
       tr("Curve speed adjust"),
       tr("Adjust maximum speed based on road curvature."),
       kIcon, 30, 100, 5,
-      60 }, //def
+      70 }, //def
 
     { "ParamAutoEngage",
       tr("Auto Cruise Engage Speed"),
@@ -763,19 +763,19 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
       tr("Screen Brightness"),
       tr("Adjust the brightness level. 0 = Auto, negative = darker, positive = brighter."),
       kIcon, -20, 5, 1,
-      -15 }, //def
+      -12 }, //def
 
     { "ParamAutoScreenOff",
       tr("Screen Timeout"),
       tr("Set how long the screen stays on before turning off automatically (in 10-second steps). 0 = None."),
       kIcon, 0, 120, 1,
-      100 }, //def
+      8 }, //def
 
     { "ParamPowerOff",
       tr("Power off time"),
       tr("0=Not used, 1~ = power off delay (1 sec)"),
       kIcon, 0, 60, 1,
-      10 }, //def
+      15 }, //def
 
     { "DUAL_CAMERA_VIEW",
       tr("Dual camera view"),
