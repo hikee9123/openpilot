@@ -49,6 +49,9 @@ public:
   void setHeaderFont(const QFont& f);
   void setBodyFont(const QFont& f);          // 바디 기본 폰트
   void setSectionFont(const QFont& header, const QFont& body);
+  void setHeaderIconSize(const QSize &sz) {
+    if (m_headerBtn) m_headerBtn->setIconSize(sz);
+  }
 
 private:
   void toggle();
