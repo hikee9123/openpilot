@@ -84,7 +84,7 @@ void HomeWindow::mousePressEvent(QMouseEvent* e) {
     sidebar->setVisible(!sidebar->isVisible());
   }
 
-  printf( "mousePressEvent = (%d,%d)\n", e->x(), e->y() );
+
   uiState()->scene.custom.touched++;
 }
 

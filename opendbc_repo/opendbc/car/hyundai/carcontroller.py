@@ -137,7 +137,7 @@ class CarController(CarControllerBase):
       can_sends.append( hyundaican.create_mdps12( self.packer, self.frame, CS.customCS.mdps12 ) ) #custom  # 100 Hz send mdps12 to LKAS to prevent LKAS error
       if CC.cruiseControl.cancel:
         can_sends.append(hyundaican.create_clu11(self.packer, self.frame, CS.clu11, Buttons.CANCEL, self.CP))
-        self.customCC.NC.reset()  #custom í˜¹ì€ self.customCC ë‚´ë¶€ì— reset ë…¸ì¶œ
+        self.customCC.NC.reset()  #custom ?¹ì? self.customCC ?´ë???reset ?¸ì¶œ
       elif CC.cruiseControl.resume:
         # send resume at a max freq of 10Hz
         if (self.frame - self.last_button_frame) * DT_CTRL > 0.1:
@@ -158,7 +158,7 @@ class CarController(CarControllerBase):
 
     # 20 Hz LFA MFA message
     if self.frame % 5 == 0 and self.CP.flags & HyundaiFlags.SEND_LFA.value:
-      can_sends.append(hyundaican.create_lfahda_mfc(self.packer, CC.enabled, CS))
+      can_sends.append(hyundaican.create_lfahda_mfc(self.packer, CC.enabled))
 
     # 5 Hz ACC options
     if self.frame % 20 == 0 and self.CP.openpilotLongitudinalControl:

@@ -1,6 +1,7 @@
 #include "selfdrive/ui/qt/sidebar.h"
 
 #include <QMouseEvent>
+#include <QDebug>
 
 #include "selfdrive/ui/qt/util.h"
 
@@ -63,14 +64,21 @@ void Sidebar::mouseReleaseEvent(QMouseEvent *event) {
     flag_pressed = settings_pressed = mic_indicator_pressed = false;
     update();
   }
-  if (onroad && home_btn.contains(event->pos())) {
-    MessageBuilder msg;
-    //msg.initEvent().initBookmarkButton();
+
+  if (home_btn.contains(event->pos()))
+  {
+     const QPointF p = event->localPos();
+     printf("FSidebar::mouseReleaseEvent( [%.1f],[%.1f]: \n", p.x(), p.y() );
     // #custom
+    MessageBuilder msg;
     auto userFlag = msg.initEvent().initBookmarkButton();
     m_pSideBar->mouseReleaseEvent( event, userFlag );
+  }
 
-    pm->send("bookmarkButton", msg);
+  if (onroad && home_btn.contains(event->pos())) {
+    //MessageBuilder msg;
+    //msg.initEvent().initBookmarkButton();
+    //pm->send("bookmarkButton", msg);
   } else if (settings_btn.contains(event->pos())) {
     emit openSettings();
   } else if (recording_audio && mic_indicator_btn.contains(event->pos())) {

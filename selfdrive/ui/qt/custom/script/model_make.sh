@@ -6,14 +6,15 @@ PY=python3
 
 echo "[model_make] ===== START $(date) ====="
 echo "[model_make] [${WORKDIR}]"
-# cd "${WORKDIR}"
+cd "${WORKDIR}"
+
 
 # 실시간 로그 출력
 export PYTHONUNBUFFERED=1
 
-
+echo "[model_make] 실행"
 set +e
-${PY}  ${WORKDIR}/model_make.py
+${PY} model_make.py
 RC=$?
 set -e
 

@@ -200,7 +200,7 @@ void Device::updateBrightness(const UIState &s) {
 
   UIState *pui = uiState();
   pui->scene.custom.idle_ticks = idle_ticks;
-
+  float light_sensor =  pui->scene.light_sensor;
   const int timeout_steps = s.scene.custom.autoScreenOff;  // 0 or 1..60 (10초 단위)
   const int64_t ticks_per_10s = static_cast<int64_t>(UI_FREQ) * 10;
   const int64_t timeout_ticks = (timeout_steps > 0) ? timeout_steps * ticks_per_10s : 0;
@@ -227,8 +227,11 @@ void Device::updateBrightness(const UIState &s) {
   const int filtered = (int)std::lround(filtered_f);
 
   // 2) 켜짐/꺼짐 목표값
-  int target = cmd_awake ? filtered : 1;
-  pui->scene.custom.target = target;
+  int limit_light = 2;
+  if( light_sensor > 60.0f ) limit_light = 5;
+  else  limit_light = 1;
+
+  int target = cmd_awake ? filtered : limit_light;
   // 3) Deadband로 소진동 제거 (±1% 이내는 무시)
   if (last_brightness >= 0) {
     if (std::abs(target - last_brightness) <= 1) {
@@ -245,7 +248,7 @@ void Device::updateBrightness(const UIState &s) {
     fade_to    = std::clamp(target, 0, 100);
     fade_start = std::chrono::steady_clock::now();
     // 필요시 서로 다른 시간 적용 가능
-    fade_duration_ms = cmd_awake ? 1000 : 10000;
+    fade_duration_ms = cmd_awake ? 1000 : 30000;
   }
   prev_awake = cmd_awake;
 
@@ -261,7 +264,7 @@ void Device::updateBrightness(const UIState &s) {
       to_apply = fade_to;
     }
   }
-
+  pui->scene.custom.target = to_apply;
   // ------------- 5) 실제 하드웨어 반영 (스큐/중복 방지) -------------
   // future 실행 중이면 직전 값과 동일 변화는 스킵하고, 목표를 캐시
   // (watcher 등에서 future 완료시 캐시를 반영하는 패턴 추천)
