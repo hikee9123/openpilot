@@ -129,7 +129,14 @@ def test_vs_onnx(new_inputs, test_val, onnx_file, ort=False):
   return timings
 
 if __name__ == "__main__":
-  onnx_file = fetch(OPENPILOT_MODEL)
+  #onnx_file = fetch(OPENPILOT_MODEL)
+  onnx_file = OPENPILOT_MODEL
+  if os.path.exists(OPENPILOT_MODEL):
+      print(f"[LOCAL] Using local ONNX file: {OPENPILOT_MODEL}")
+  else:
+      from tinygrad.helpers import fetch
+      onnx_file = fetch(OPENPILOT_MODEL)
+
   test_val = compile(onnx_file) if not getenv("RUN") else None
 
   with open(OUTPUT, "rb") as f: pickle_loaded = pickle.load(f)
