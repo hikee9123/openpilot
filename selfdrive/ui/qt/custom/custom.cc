@@ -772,7 +772,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
     }
 
     //QDir root(QDir::homePath());
-    QDir root("/data/openpilot");
+    QDir root("/data");
     root.cd("openpilot"); // ~/openpilot
     const QString modeldPath = root.filePath("selfdrive/modeld");
     const QString scriptPath = root.filePath("selfdrive/ui/qt/custom/script/model_make.sh");
