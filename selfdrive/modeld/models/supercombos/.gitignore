@@ -15,7 +15,3 @@ a.out
 .hypothesis
 .cache/
 .vs/
-
-
-
-*.pkl
