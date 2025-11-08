@@ -742,10 +742,10 @@ static inline QString detectOpenpilotRoot()
 {
     // 1) 기기(AGNOS/Android) 경로가 실제로 있는지 먼저 확인
     if (QFileInfo::exists("/data/openpilot"))
-        return "/data/openpilot";
+        return "/data";
 
     // 2) 개발 PC 기본 경로
-    QString pc = QDir::homePath() + "/openpilot";
+    QString pc = QDir::homePath();// + "/openpilot";
     if (QFileInfo::exists(pc))
         return pc;
 
