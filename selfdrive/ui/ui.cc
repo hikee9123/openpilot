@@ -232,6 +232,11 @@ void Device::updateBrightness(const UIState &s) {
   else  limit_light = 1;
 
   int target = cmd_awake ? filtered : limit_light;
+  if ( s.scene.started )
+  {
+      target = filtered;
+  }
+
   // 3) Deadband로 소진동 제거 (±1% 이내는 무시)
   if (last_brightness >= 0) {
     if (std::abs(target - last_brightness) <= 1) {
