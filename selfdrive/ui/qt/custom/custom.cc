@@ -738,6 +738,21 @@ void GitTab::hideEvent(QHideEvent *event) { QWidget::hideEvent(event); }
 // ======================================================================================
 // ModelTab
 // ======================================================================================
+static inline QString detectOpenpilotRoot()
+{
+    // 1) 기기(AGNOS/Android) 경로가 실제로 있는지 먼저 확인
+    if (QFileInfo::exists("/data/openpilot"))
+        return "/data/openpilot";
+
+    // 2) 개발 PC 기본 경로
+    QString pc = QDir::homePath() + "/openpilot";
+    if (QFileInfo::exists(pc))
+        return pc;
+
+    // 3) 마지막 fallback: 홈 디렉터리
+    return QDir::homePath();
+}
+
 ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
     : ListWidget(parent), m_jsonobj(jsonobj), m_pCustom(parent) {
   const QString selected_model = QString::fromStdString(Params().get("ActiveModelName"));
@@ -772,7 +787,8 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
     }
 
     //QDir root(QDir::homePath());
-    QDir root("/data");
+    //QDir root("/data");
+    QDir  root(detectOpenpilotRoot());
     root.cd("openpilot"); // ~/openpilot
     const QString modeldPath = root.filePath("selfdrive/modeld");
     const QString scriptPath = root.filePath("selfdrive/ui/qt/custom/script/model_make.sh");
