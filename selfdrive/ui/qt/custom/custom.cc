@@ -764,8 +764,8 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
 
   QObject::connect(changeModelButton, &ButtonControl::clicked, this, [this]() {
     const QStringList items = {
-      "5.North_Nevada",
-      "4.The_Cool_Peoples",
+      "5.North_Nevada",  // “North Nevada”는 안정성/자연스러움 강화형입니다.
+      "4.The_Cool_Peoples",  // “Cool People’s”는 반응성/민첩성 향상형,
       "3.Firehose",
       "2.Steam_Powered",
       "1.default"};
