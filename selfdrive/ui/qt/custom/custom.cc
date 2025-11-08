@@ -766,7 +766,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
     const QStringList items = {
       "5.North_Nevada",  // “North Nevada”는 안정성/자연스러움 강화형입니다.
       "4.The_Cool_Peoples",  // “Cool People’s”는 반응성/민첩성 향상형,
-      "3.Firehose",
+      "3.Firehose",         // 부드럽고 안정적이지만 여전히 반응성이 빠른 모델
       "2.Steam_Powered",
       "1.default"};
 
