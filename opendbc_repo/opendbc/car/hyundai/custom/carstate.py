@@ -169,6 +169,7 @@ class CarStateCustom:
 
       angle_rad = math.atan(wheelbase_m * curvature)
       angle_deg = math.degrees(angle_rad)
+      angle_deg *= 16.0
       return angle_deg
 
 
@@ -557,7 +558,7 @@ class CarStateCustom:
 
     # 로그 (원 포맷 유지)
     trace1.printf1('MD={:.0f},CA={:.0f}, CB={}'.format(self.control_mode, self.controlsAllowed, self._cencel_button))
-    trace1.printf2('SA={:7.1f} , {:.0f}'.format(self.steeringAngle, int(self.mainMode_ACC) ))
+    trace1.printf2('SA={:5.2f} , {:.0f}'.format(self.steeringAngle, int(self.mainMode_ACC) ))
     trace1.printf3('IG={:.0f},{:.0f},{:.0f} CL={:.0f},{:.0f}'.format(
       self._vl(cp, "E_EMS11", "IG_Reactive_Stat", 0),
       self._vl(cp, "E_EMS11", "Gear_Change", 0),

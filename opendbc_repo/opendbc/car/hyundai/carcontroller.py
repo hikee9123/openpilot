@@ -78,7 +78,7 @@ class CarController(CarControllerBase):
       apply_torque = 0
 
     # Hold torque with induced temporary fault when cutting the actuation bit
-    # FIXME: we don't use this with CAN FD?
+    # FIXME: we don't use this with CAN FD
     torque_fault = CC.latActive and not apply_steer_req
 
     self.apply_torque_last = apply_torque
@@ -137,7 +137,7 @@ class CarController(CarControllerBase):
       can_sends.append( hyundaican.create_mdps12( self.packer, self.frame, CS.customCS.mdps12 ) ) #custom  # 100 Hz send mdps12 to LKAS to prevent LKAS error
       if CC.cruiseControl.cancel:
         can_sends.append(hyundaican.create_clu11(self.packer, self.frame, CS.clu11, Buttons.CANCEL, self.CP))
-        self.customCC.NC.reset()  #custom ?¹ì? self.customCC ?´ë???reset ?¸ì¶œ
+        self.customCC.NC.reset()  #custom
       elif CC.cruiseControl.resume:
         # send resume at a max freq of 10Hz
         if (self.frame - self.last_button_frame) * DT_CTRL > 0.1:

@@ -738,6 +738,21 @@ void GitTab::hideEvent(QHideEvent *event) { QWidget::hideEvent(event); }
 // ======================================================================================
 // ModelTab
 // ======================================================================================
+static inline QString detectOpenpilotRoot()
+{
+    // 1) 기기(AGNOS/Android) 경로가 실제로 있는지 먼저 확인
+    if (QFileInfo::exists("/data/openpilot"))
+        return "/data";
+
+    // 2) 개발 PC 기본 경로
+    QString pc = QDir::homePath();// + "/openpilot";
+    if (QFileInfo::exists(pc))
+        return pc;
+
+    // 3) 마지막 fallback: 홈 디렉터리
+    return QDir::homePath();
+}
+
 ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
     : ListWidget(parent), m_jsonobj(jsonobj), m_pCustom(parent) {
   const QString selected_model = QString::fromStdString(Params().get("ActiveModelName"));
@@ -749,9 +764,9 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
 
   QObject::connect(changeModelButton, &ButtonControl::clicked, this, [this]() {
     const QStringList items = {
-      "5.North_Nevada",
-      "4.The_Cool_Peoples",
-      "3.Firehose",
+      "5.North_Nevada",  // “North Nevada”는 안정성/자연스러움 강화형입니다.
+      "4.The_Cool_Peoples",  // “Cool People’s”는 반응성/민첩성 향상형,
+      "3.Firehose",         // 부드럽고 안정적이지만 여전히 반응성이 빠른 모델
       "2.Steam_Powered",
       "1.default"};
 
@@ -771,7 +786,9 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
       return;
     }
 
-    QDir root(QDir::homePath());
+    //QDir root(QDir::homePath());
+    //QDir root("/data");
+    QDir  root(detectOpenpilotRoot());
     root.cd("openpilot"); // ~/openpilot
     const QString modeldPath = root.filePath("selfdrive/modeld");
     const QString scriptPath = root.filePath("selfdrive/ui/qt/custom/script/model_make.sh");
