@@ -764,7 +764,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
 
   QObject::connect(changeModelButton, &ButtonControl::clicked, this, [this]() {
     const QStringList items = {
-      //"6.Dark_Souls_2",  // Dark Souls 2는 빠르게 반응하되, 그 반응을 스스로 제어할 수 있는 안정 지향형 고성능 모델이다.
+      "6.Dark_Souls_2",  // Dark Souls 2는 빠르게 반응하되, 그 반응을 스스로 제어할 수 있는 안정 지향형 고성능 모델이다.
       "5.North_Nevada",  // “North Nevada”는 안정성/자연스러움 강화형입니다.
       "4.The_Cool_Peoples",  // “Cool People’s”는 반응성/민첩성 향상형,
       "3.Firehose",         // 부드럽고 안정적이지만 여전히 반응성이 빠른 모델
