@@ -170,6 +170,7 @@ static inline float cie1931_from_percent(float Ypct) {
   }
 }
 
+
 void Device::updateBrightness(const UIState &s) {
   // ==== 0) 상수 ====
   constexpr float kMinAutoPct      = 10.0f;   // 센서 기반 최소
