@@ -22,6 +22,7 @@ from openpilot.selfdrive.selfdrived.state import StateMachine
 from openpilot.selfdrive.selfdrived.alertmanager import AlertManager, set_offroad_alert
 
 from openpilot.system.version import get_build_metadata
+from openpilot.system.hardware import HARDWARE
 
 REPLAY = "REPLAY" in os.environ
 SIMULATION = "SIMULATION" in os.environ
@@ -123,6 +124,8 @@ class SelfdriveD:
 
     # Determine startup event
     self.startup_event = EventName.startup if build_metadata.openpilot.comma_remote and build_metadata.tested_channel else EventName.startupMaster
+    if HARDWARE.get_device_type() == 'mici':
+      self.startup_event = None
     if not car_recognized:
       self.startup_event = EventName.startupNoCar
     elif car_recognized and self.CP.passive:
@@ -189,12 +192,11 @@ class SelfdriveD:
           # body always wants to enable
           self.events.add(EventName.pcmEnable)
 
-      if self.CP.openpilotLongitudinalControl: #custrom
-        # Disable on rising edge of accelerator or brake. Also disable on brake when speed > 0
-        if (CS.gasPressed and not self.CS_prev.gasPressed and self.disengage_on_accelerator) or \
-          (CS.brakePressed and (not self.CS_prev.brakePressed or not CS.standstill)) or \
-          (CS.regenBraking and (not self.CS_prev.regenBraking or not CS.standstill)):
-          self.events.add(EventName.pedalPressed)
+      # Disable on rising edge of accelerator or brake. Also disable on brake when speed > 0
+      if (CS.gasPressed and not self.CS_prev.gasPressed and self.disengage_on_accelerator) or \
+        (CS.brakePressed and (not self.CS_prev.brakePressed or not CS.standstill)) or \
+        (CS.regenBraking and (not self.CS_prev.regenBraking or not CS.standstill)):
+        self.events.add(EventName.pedalPressed)
 
     # Create events for temperature, disk space, and memory
     if self.sm['deviceState'].thermalStatus >= ThermalStatus.red:

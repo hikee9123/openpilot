@@ -6,7 +6,7 @@ from cereal import car, log
 import cereal.messaging as messaging
 from openpilot.common.constants import CV
 from openpilot.common.params import Params
-from openpilot.common.realtime import config_realtime_process, Priority, Ratekeeper
+from openpilot.common.realtime import config_realtime_process, DT_CTRL, Priority, Ratekeeper
 from openpilot.common.swaglog import cloudlog
 
 from opendbc.car.car_helpers import interfaces
@@ -17,6 +17,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
 from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
 from openpilot.selfdrive.controls.lib.longcontrol import LongControl
+from openpilot.selfdrive.modeld.modeld import LAT_SMOOTH_SECONDS
 from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
 
 State = log.SelfdriveState.OpenpilotState
@@ -35,11 +36,9 @@ class Controls:
 
     self.CI = interfaces[self.CP.carFingerprint](self.CP)
 
-    self.sm = messaging.SubMaster(['liveParameters', 'liveTorqueParameters', 'modelV2', 'selfdriveState',
+    self.sm = messaging.SubMaster(['liveDelay', 'liveParameters', 'liveTorqueParameters', 'modelV2', 'selfdriveState',
                                    'liveCalibration', 'livePose', 'longitudinalPlan', 'carState', 'carOutput',
-                                   'driverMonitoringState', 'onroadEvents', 'driverAssistance', 'uICustom'],
-                                   poll='selfdriveState', ignore_avg_freq=['uICustom'])
-
+                                   'driverMonitoringState', 'onroadEvents', 'driverAssistance'], poll='selfdriveState')
     self.pm = messaging.PubMaster(['carControl', 'controlsState'])
 
     self.steer_limited_by_safety = False
@@ -49,29 +48,15 @@ class Controls:
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
 
-    self.sr_scale = 1
-    self.x_scale = 1
-    self.angleOffsetDeg = 0
-
-
     self.LoC = LongControl(self.CP)
     self.VM = VehicleModel(self.CP)
     self.LaC: LatControl
     if self.CP.steerControlType == car.CarParams.SteerControlType.angle:
-      self.LaC = LatControlAngle(self.CP, self.CI)
+      self.LaC = LatControlAngle(self.CP, self.CI, DT_CTRL)
     elif self.CP.lateralTuning.which() == 'pid':
-      self.LaC = LatControlPID(self.CP, self.CI)
+      self.LaC = LatControlPID(self.CP, self.CI, DT_CTRL)
     elif self.CP.lateralTuning.which() == 'torque':
-      self.LaC = LatControlTorque(self.CP, self.CI)
-
-  # 사용자 입력을 '배율'로 통일: 0.05 -> 1.05, 1.05 -> 1.05
-  def to_scale(self, v: float) -> float:
-    if not math.isfinite(v):
-      return 1.0
-    # 0.0~0.5 사이면 '증분(%)'로 보고 1+v 처리, 그 외엔 '배율'로 간주
-    return 1.0 + v if -0.5 <= v <= 0.5 else v
-
-
+      self.LaC = LatControlTorque(self.CP, self.CI, DT_CTRL)
 
   def update(self):
     self.sm.update(15)
@@ -84,25 +69,13 @@ class Controls:
   def state_control(self):
     CS = self.sm['carState']
 
-    if self.sm.updated["uICustom"]:
-      uc  = self.sm['uICustom']
-      com = uc.community
-      # 1) 사용자 보정 배율 확정
-      self.sr_scale = self.to_scale(com.steerRatio)
-      self.x_scale  = self.to_scale(com.stiffnessFactor)
-      self.angleOffsetDeg = com.angleOffsetDeg
-
     # Update VehicleModel
     lp = self.sm['liveParameters']
     x = max(lp.stiffnessFactor, 0.1)
-    sr = max(lp.steerRatio, 12.0)
-    sr *= self.sr_scale
-    x *= self.x_scale
-    x  = min(max(x,  0.50), 1.5)
-    sr = min(max(sr, 12.0), 20.0)
+    sr = max(lp.steerRatio, 0.1)
     self.VM.update_params(x, sr)
 
-    steer_angle_without_offset = math.radians(CS.steeringAngleDeg - (lp.angleOffsetDeg + self.angleOffsetDeg))
+    steer_angle_without_offset = math.radians(CS.steeringAngleDeg - lp.angleOffsetDeg)
     self.curvature = -self.VM.calc_curvature(steer_angle_without_offset, CS.vEgo, lp.roll)
 
     # Update Torque Params
@@ -145,11 +118,12 @@ class Controls:
     # Reset desired curvature to current to avoid violating the limits on engage
     new_desired_curvature = model_v2.action.desiredCurvature if CC.latActive else self.curvature
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll)
+    lat_delay = self.sm["liveDelay"].lateralDelay + LAT_SMOOTH_SECONDS
 
     actuators.curvature = self.desired_curvature
     steer, steeringAngleDeg, lac_log = self.LaC.update(CC.latActive, CS, self.VM, lp,
                                                        self.steer_limited_by_safety, self.desired_curvature,
-                                                       curvature_limited)  # TODO what if not available
+                                                       curvature_limited, lat_delay)
     actuators.torque = float(steer)
     actuators.steeringAngleDeg = float(steeringAngleDeg)
     # Ensure no NaNs/Infs
