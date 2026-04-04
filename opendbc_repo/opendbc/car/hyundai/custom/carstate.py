@@ -527,8 +527,6 @@ class CarStateCustom:
     tpms_msg.rr = rr * factor
 
   def _send_debug(self, ret, cp):
-    if self.menu_debug == 0:
-      return
 
     carSCustom = car.CarState.CarSCustom.new_message()
     carSCustom.supportedCars = self.cars
@@ -556,6 +554,8 @@ class CarStateCustom:
 
     ret.carSCustom = carSCustom
 
+    if self.menu_debug == 0:
+      return
     # 로그 (원 포맷 유지)
     trace1.printf1('MD={:.0f},CA={:.0f}, CB={}'.format(self.control_mode, self.controlsAllowed, self._cencel_button))
     trace1.printf2('SA={:5.2f} , {:.0f}'.format(self.steeringAngle, int(self.mainMode_ACC) ))
