@@ -328,10 +328,14 @@ class DriverMonitoring:
       self._reset_awareness()
       return
 
-    driver_attentive = self.driver_distraction_filter.x < 0.37
     awareness_prev = self.awareness
+    _reaching_pre = self.awareness - self.step_change <= self.threshold_pre
+    _reaching_terminal = self.awareness - self.step_change <= 0
+    standstill_orange_exemption = standstill and _reaching_pre
+    always_on_red_exemption = always_on_valid and not op_engaged and _reaching_terminal
 
-    if (driver_attentive and self.face_detected and self.pose.low_std and self.awareness > 0):
+    if self.awareness > 0 and \
+       ((self.driver_distraction_filter.x < 0.37 and self.face_detected and self.pose.low_std) or standstill_orange_exemption):
       if driver_engaged:
         self._reset_awareness()
         return
@@ -345,9 +349,6 @@ class DriverMonitoring:
         return
 
     _reaching_audible = self.awareness - self.step_change <= self.threshold_prompt
-    _reaching_terminal = self.awareness - self.step_change <= 0
-    standstill_orange_exemption = standstill and _reaching_audible
-    always_on_red_exemption = always_on_valid and not op_engaged and _reaching_terminal
     always_on_lowspeed_exemption = always_on_valid and not op_engaged and car_speed < self.settings._ALWAYS_ON_ALERT_MIN_SPEED
 
     certainly_distracted = self.driver_distraction_filter.x > 0.63 and self.driver_distracted and self.face_detected
