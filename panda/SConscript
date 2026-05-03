@@ -14,7 +14,7 @@ if os.getenv("RELEASE"):
   assert os.path.exists(cert_fn), 'Certificate file not found. Please specify absolute path'
 else:
   BUILD_TYPE = "DEBUG"
-  cert_fn = File("./certs/debug").srcnode().relpath
+  cert_fn = File("./certs/debug").srcnode().get_path(Dir("#"))
   common_flags += ["-DALLOW_DEBUG"]
 
   if os.getenv("DEBUG"):
@@ -74,7 +74,7 @@ def build_project(project_name, project, main, extra_flags):
     "-fno-builtin",
     "-std=gnu11",
     "-fmax-errors=1",
-    f"-T{File(project['LINKER_SCRIPT']).srcnode().relpath}",
+    f"-T{File(project['LINKER_SCRIPT']).srcnode().get_path(Dir('#'))}",
     "-fsingle-precision-constant",
     "-Os",
     "-g",
@@ -117,7 +117,7 @@ def build_project(project_name, project, main, extra_flags):
     main
   ], LINKFLAGS=[f"-Wl,--section-start,.isr_vector={project['APP_START_ADDRESS']}"] + flags)
   main_bin = env.Objcopy(f"{project_dir}/main.bin", main_elf)
-  sign_py = File(f"./crypto/sign.py").srcnode().relpath
+  sign_py = File(f"./crypto/sign.py").srcnode().get_path(Dir("#"))
   env.Command(f"./board/obj/{project_name}.bin.signed", main_bin, f"SETLEN=1 {sign_py} $SOURCE $TARGET {cert_fn}")
 
 
