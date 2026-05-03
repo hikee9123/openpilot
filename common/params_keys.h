@@ -138,6 +138,11 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"MapboxToken", {PERSISTENT, STRING}},
     {"SelectedCar", {PERSISTENT, STRING}},
     {"ActiveModelName", {PERSISTENT, STRING}},
+    {"CustomModelCompileStatus", {PERSISTENT, STRING}},
+    {"CustomModelCompileName", {PERSISTENT, STRING}},
+    {"CustomModelCompileStartedAt", {PERSISTENT, STRING}},
+    {"CustomModelCompileFinishedAt", {PERSISTENT, STRING}},
+    {"CustomModelCompileError", {PERSISTENT, STRING}},
     {"EnableLogging", {PERSISTENT, STRING}},
     // #custom end
 };

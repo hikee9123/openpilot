@@ -1,0 +1,28 @@
+venv/
+.venv/
+.ci_cache
+.env
+.clang-format
+.DS_Store
+.tags
+.ipynb_checkpoints
+.idea
+.overlay_init
+.overlay_consistent
+.sconsign.dblite
+model2.png
+a.out
+.hypothesis
+.cache/
+# #custom start: tracked source metadata
+!**/driving_vision_metadata.pkl
+!**/driving_policy_metadata.pkl
+!**/driving_on_policy_metadata.pkl
+!**/driving_off_policy_metadata.pkl
+# #custom end
+# #custom start: generated 0.11 tinygrad bundles
+**/driving_*x*_tinygrad.pkl
+**/driving_*x*_tinygrad.pkl.chunk*
+**/driving_*x*_tinygrad.pkl.chunkmanifest
+# #custom end
+.vs/

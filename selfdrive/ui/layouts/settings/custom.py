@@ -1,5 +1,6 @@
 import subprocess
 import threading
+import time
 from collections.abc import Callable
 
 import pyray as rl
@@ -21,15 +22,32 @@ from openpilot.system.ui.widgets.scroller_tici import Scroller
 
 # #custom start: Python port of qt/custom settings panel
 MODEL_OPTIONS = [
-  "1.default",
-  "2.Steam_Powered",
-  "3.Firehose",
-  "4.The_Cool_Peoples",
-  "5.North_Nevada",
+  "8.MacroStiff_Model",
+  "9.SC_Driving",
+  "10.WMI_Model",
+  "11.CD210_Model",
+  "7.POP_Model",
   "6.Dark_Souls_2",
+  "5.North_Nevada",
+  "4.The_Cool_Peoples",
+  "3.Firehose",
+  "2.Steam_Powered",
+  "1.Stock_Model",
 ]
+DEFAULT_MODEL_NAME = "1.Stock_Model"
+DEFAULT_MODEL_NAMES = {DEFAULT_MODEL_NAME, "1.default", "7.Current_Model", "7.Current_0.11_6a7d09ad"}
 
 EXTERNAL_NAVI_OPTIONS = ["0", "1", "2"]
+STATUS_IDLE = "idle"
+STATUS_RUNNING = "running"
+STATUS_SUCCESS = "success"
+STATUS_FAILED = "failed"
+COMPILE_STATUS_KEY = "CustomModelCompileStatus"
+COMPILE_NAME_KEY = "CustomModelCompileName"
+COMPILE_STARTED_AT_KEY = "CustomModelCompileStartedAt"
+COMPILE_FINISHED_AT_KEY = "CustomModelCompileFinishedAt"
+COMPILE_ERROR_KEY = "CustomModelCompileError"
+COMPILE_LOG_PATH = "/tmp/openpilot_custom_model_compile.log"
 TAB_HEIGHT = 110
 TAB_GAP = 10
 TAB_FONT_SIZE = 40
@@ -180,7 +198,8 @@ class CustomSettingsLayout(Widget):
         self._command_item(tr_noop("Revert Commit"), tr_noop("ROLLBACK"), ["git", "reset", "--hard", "ec448a9"], confirm=True),
       ],
       "Model": [
-        self._selection_item("ActiveModelName", tr_noop("Active model"), lambda: MODEL_OPTIONS),
+        self._model_selection_item(),
+        text_item(lambda: tr("Compile status"), self._compile_status_text),
       ],
       "Debug": [
         self._toggle_json_item("debug1", tr_noop("Debug 1")),
@@ -366,18 +385,110 @@ class CustomSettingsLayout(Widget):
     item.action_item.set_value(lambda k=key: self._param_text(k))
     return item
 
+  def _model_selection_item(self):
+    item = button_item(
+      lambda: tr("Active model"),
+      self._model_button_text,
+      callback=self._handle_model_button,
+      enabled=lambda: self._compile_status() != STATUS_RUNNING,
+    )
+    item.action_item.set_value(self._active_model_text)
+    return item
+
+  def _active_model_text(self) -> str:
+    model_name = self._param_text("ActiveModelName")
+    return DEFAULT_MODEL_NAME if not model_name or model_name in DEFAULT_MODEL_NAMES else model_name
+
+  def _compile_status(self) -> str:
+    return self._param_text(COMPILE_STATUS_KEY) or STATUS_IDLE
+
+  def _compile_status_text(self) -> str:
+    status = self._compile_status()
+    model_name = self._param_text(COMPILE_NAME_KEY)
+    if status == STATUS_RUNNING:
+      started_at = self._param_text(COMPILE_STARTED_AT_KEY)
+      elapsed = ""
+      if started_at:
+        try:
+          elapsed = f" ({max(0, int(time.time()) - int(started_at))}s)"
+        except ValueError:
+          elapsed = ""
+      return f"{tr('Compiling...')} {model_name}{elapsed}".strip()
+    if status == STATUS_SUCCESS:
+      return f"{tr('Ready')} {model_name}".strip()
+    if status == STATUS_FAILED:
+      error = self._param_text(COMPILE_ERROR_KEY)
+      error = error.splitlines()[-1] if error else ""
+      if len(error) > 80:
+        error = error[-80:]
+      return f"{tr('Failed')} {model_name}: {error}".strip(": ")
+    return tr("Idle")
+
+  def _model_button_text(self) -> str:
+    status = self._compile_status()
+    if status == STATUS_RUNNING:
+      return tr("WAIT")
+    if status == STATUS_FAILED:
+      return tr("RETRY")
+    return tr("CHANGE")
+
+  def _handle_model_button(self) -> None:
+    if self._compile_status() == STATUS_FAILED:
+      model_name = self._param_text(COMPILE_NAME_KEY) or self._param_text("ActiveModelName")
+      if model_name and model_name not in DEFAULT_MODEL_NAMES:
+        self._compile_selected_model(model_name)
+        return
+    self._show_selection("ActiveModelName", tr_noop("Active model"), MODEL_OPTIONS)
+
   def _show_selection(self, key: str, title: str, options: list[str]) -> None:
     current = self._param_text(key)
+    if key == "ActiveModelName" and current in DEFAULT_MODEL_NAMES:
+      current = DEFAULT_MODEL_NAME
 
     def handle_selection(result: DialogResult) -> None:
       if result == DialogResult.CONFIRM and self._dialog is not None:
         self._params.put(key, self._dialog.selection)
         if key == "ActiveModelName":
           ui_state.custom_publisher.update(force=True)
+          self._compile_selected_model(self._dialog.selection)
       self._dialog = None
 
     self._dialog = MultiOptionDialog(tr(title), options, current, callback=handle_selection)
     gui_app.push_widget(self._dialog)
+
+  def _compile_selected_model(self, model_name: str) -> None:
+    if not model_name or model_name in DEFAULT_MODEL_NAMES:
+      self._params.put(COMPILE_STATUS_KEY, STATUS_IDLE)
+      self._params.put("ActiveModelName", DEFAULT_MODEL_NAME)
+      self._params.put(COMPILE_NAME_KEY, "")
+      self._params.put(COMPILE_ERROR_KEY, "")
+      return
+
+    self._params.put(COMPILE_STATUS_KEY, STATUS_RUNNING)
+    self._params.put(COMPILE_NAME_KEY, model_name)
+    self._params.put(COMPILE_STARTED_AT_KEY, str(int(time.time())))
+    self._params.put(COMPILE_FINISHED_AT_KEY, "")
+    self._params.put(COMPILE_ERROR_KEY, "")
+
+    def worker() -> None:
+      with open(COMPILE_LOG_PATH, "w") as log_file:
+        result = subprocess.run(["python3", "model_make.py", "--model", model_name], cwd="/home/bhcho/openpilot/selfdrive/modeld",
+                                stdout=log_file, stderr=subprocess.STDOUT, text=True, check=False)
+      status = self._param_text(COMPILE_STATUS_KEY)
+      if result.returncode == 0 and status == STATUS_RUNNING:
+        self._params.put(COMPILE_STATUS_KEY, STATUS_SUCCESS)
+        self._params.put(COMPILE_FINISHED_AT_KEY, str(int(time.time())))
+      elif result.returncode != 0 and status == STATUS_RUNNING:
+        try:
+          with open(COMPILE_LOG_PATH) as log_file:
+            error = log_file.read()[-500:]
+        except OSError:
+          error = f"exit code {result.returncode}"
+        self._params.put(COMPILE_STATUS_KEY, STATUS_FAILED)
+        self._params.put(COMPILE_FINISHED_AT_KEY, str(int(time.time())))
+        self._params.put(COMPILE_ERROR_KEY, error)
+
+    threading.Thread(target=worker, daemon=True).start()
 
   def _car_options(self) -> list[str]:
     options: list[str] = []
