@@ -41,7 +41,7 @@ MODEL_OPTIONS = [
   "3.Firehose",
   "2.Steam_Powered",
 ]
-DEFAULT_MODEL_NAMES = {"1.Stock_Model", "1.default", "7.Current_Model", "7.Current_0.11_6a7d09ad"}
+DEFAULT_MODEL_NAMES = {"1.Stock_Model"}
 STATUS_IDLE = "idle"
 STATUS_RUNNING = "running"
 STATUS_SUCCESS = "success"
