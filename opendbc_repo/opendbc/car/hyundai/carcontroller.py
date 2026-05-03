@@ -122,18 +122,22 @@ class CarController(CarControllerBase):
 
   def create_can_msgs(self, apply_steer_req, apply_torque, torque_fault, set_speed_in_units, accel, stopping, hud_control, actuators, CS, CC):
     can_sends = []
+    stock_passthrough = not self.CP.openpilotLongitudinalControl and not CS.out.cruiseState.available
 
     # HUD messages
     sys_warning, sys_state, left_lane_warning, right_lane_warning = process_hud_alert(CC.enabled, self.car_fingerprint,
                                                                                       hud_control)
 
-    can_sends.append(hyundaican.create_lkas11(self.packer, self.frame, self.CP, apply_torque, apply_steer_req,
-                                              torque_fault, CS.lkas11, sys_warning, sys_state, CC.enabled,
-                                              hud_control.leftLaneVisible, hud_control.rightLaneVisible,
-                                              left_lane_warning, right_lane_warning))
+    if not stock_passthrough:
+      can_sends.append(hyundaican.create_lkas11(self.packer, self.frame, self.CP, apply_torque, apply_steer_req,
+                                                torque_fault, CS.lkas11, sys_warning, sys_state, CC.enabled,
+                                                hud_control.leftLaneVisible, hud_control.rightLaneVisible,
+                                                left_lane_warning, right_lane_warning))
 
     # Button messages
-    if not self.CP.openpilotLongitudinalControl:
+    if stock_passthrough:
+      self.customCC.NC.reset()
+    elif not self.CP.openpilotLongitudinalControl:
       can_sends.append( hyundaican.create_mdps12( self.packer, self.frame, CS.customCS.mdps12 ) ) #custom  # 100 Hz send mdps12 to LKAS to prevent LKAS error
       if CC.cruiseControl.cancel:
         can_sends.append(hyundaican.create_clu11(self.packer, self.frame, CS.clu11, Buttons.CANCEL, self.CP))
@@ -157,7 +161,7 @@ class CarController(CarControllerBase):
                                                       CC.cruiseControl.override, use_fca, self.CP))
 
     # 20 Hz LFA MFA message
-    if self.frame % 5 == 0 and self.CP.flags & HyundaiFlags.SEND_LFA.value:
+    if not stock_passthrough and self.frame % 5 == 0 and self.CP.flags & HyundaiFlags.SEND_LFA.value:
       can_sends.append(hyundaican.create_lfahda_mfc(self.packer, CC.enabled))
 
     # 5 Hz ACC options
