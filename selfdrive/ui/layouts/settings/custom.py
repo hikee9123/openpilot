@@ -22,11 +22,11 @@ from openpilot.system.ui.widgets.scroller_tici import Scroller
 
 # #custom start: Python port of qt/custom settings panel
 MODEL_OPTIONS = [
-  "7.MacroStiff_Model",
-  "8.SC_Driving",
-  "9.WMI_Model",
-  "10.CD210_Model",
   "11.POP_Model",
+  "10.CD210_Model",
+  "9.WMI_Model",
+  "8.SC_Driving",
+  "7.MacroStiff_Model",
   "6.Dark_Souls_2",
   "5.North_Nevada",
   "4.The_Cool_Peoples",
