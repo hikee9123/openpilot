@@ -6,6 +6,10 @@ export NUMEXPR_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export VECLIB_MAXIMUM_THREADS=1
 
+if [ -n "${DEBUG:-}" ] && ! [[ "$DEBUG" =~ ^[0-9]+$ ]]; then
+  unset DEBUG
+fi
+
 export BIG="${BIG:-1}"
 
 # models get lower priority than ui

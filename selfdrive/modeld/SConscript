@@ -1,4 +1,5 @@
 import glob
+import contextlib
 import json
 import os
 from itertools import product
@@ -30,11 +31,15 @@ def estimate_pickle_max_size(onnx_size):
   return 1.2 * onnx_size  + 10 * 1024 * 1024  # 20% + 10MB is plenty
 
 # get fastest TG config
-available = set(Device.get_available_devices())
-if 'CUDA' in available:
+def device_available(device):
+  with contextlib.suppress(Exception):
+    return Device[device].device == device
+  return False
+
+if device_available('CUDA'):
   tg_backend = 'CUDA'
   tg_flags = f'DEV={tg_backend}'
-elif 'QCOM' in available:
+elif device_available('QCOM'):
   tg_backend = 'QCOM'
   tg_flags = f'DEV={tg_backend} IMAGE=1 FLOAT16=1 NOLOCALS=1 JIT_BATCH_SIZE=0 OPENPILOT_HACKS=1'
 else:
