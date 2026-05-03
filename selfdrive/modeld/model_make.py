@@ -30,11 +30,11 @@ MODELS_DIR = MODELD_DIR / "models"
 SUPERCOMBOS_DIR = MODELS_DIR / "supercombos"
 COMPILED_FLAGS_PATH = MODELS_DIR / "tg_compiled_flags.json"
 MODEL_OPTIONS = [
-  "8.MacroStiff_Model",
-  "9.SC_Driving",
-  "10.WMI_Model",
-  "11.CD210_Model",
-  "7.POP_Model",
+  "7.MacroStiff_Model",
+  "8.SC_Driving",
+  "9.WMI_Model",
+  "10.CD210_Model",
+  "11.POP_Model",
   "6.Dark_Souls_2",
   "5.North_Nevada",
   "4.The_Cool_Peoples",
