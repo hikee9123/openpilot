@@ -4,6 +4,10 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
 
 source "$DIR/launch_env.sh"
 
+if [ -d "$DIR/.venv/bin" ]; then
+  export PATH="$DIR/.venv/bin:$PATH"
+fi
+
 function agnos_init {
   # TODO: move this to agnos
   sudo rm -f /data/etc/NetworkManager/system-connections/*.nmmeta
@@ -67,7 +71,9 @@ function launch {
   fi
 
   # handle pythonpath
-  ln -sfn $(pwd) /data/pythonpath
+  if [ -w /data ]; then
+    ln -sfn "$(pwd)" /data/pythonpath
+  fi
   export PYTHONPATH="$PWD"
 
   # hardware specific init
@@ -76,7 +82,9 @@ function launch {
   fi
 
   # write tmux scrollback to a file
-  tmux capture-pane -pq -S-1000 > /tmp/launch_log
+  if command -v tmux >/dev/null && tmux display-message -p '#S' >/dev/null 2>&1; then
+    tmux capture-pane -pq -S-1000 > /tmp/launch_log
+  fi
 
   # start manager
   cd system/manager

@@ -12,6 +12,12 @@ from SCons.Defaults import _stripixes
 
 SCons.Warnings.warningAsException(True)
 
+if "DEBUG" in os.environ:
+  try:
+    int(os.environ["DEBUG"])
+  except ValueError:
+    os.environ.pop("DEBUG")
+
 Decider('MD5-timestamp')
 
 SetOption('num_jobs', max(1, int(os.cpu_count()/2)))
