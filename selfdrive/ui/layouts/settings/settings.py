@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 from collections.abc import Callable
 from openpilot.selfdrive.ui.layouts.settings.developer import DeveloperLayout
+from openpilot.selfdrive.ui.layouts.settings.custom import CustomSettingsLayout
 from openpilot.selfdrive.ui.layouts.settings.device import DeviceLayout
 from openpilot.selfdrive.ui.layouts.settings.firehose import FirehoseLayout
 from openpilot.selfdrive.ui.layouts.settings.software import SoftwareLayout
@@ -37,6 +38,9 @@ class PanelType(IntEnum):
   SOFTWARE = 3
   FIREHOSE = 4
   DEVELOPER = 5
+  # #custom start: custom settings panel
+  CUSTOM = 6
+  # #custom end
 
 
 @dataclass
@@ -62,6 +66,9 @@ class SettingsLayout(Widget):
       PanelType.SOFTWARE: PanelInfo(tr_noop("Software"), SoftwareLayout()),
       PanelType.FIREHOSE: PanelInfo(tr_noop("Firehose"), FirehoseLayout()),
       PanelType.DEVELOPER: PanelInfo(tr_noop("Developer"), DeveloperLayout()),
+      # #custom start: custom settings panel
+      PanelType.CUSTOM: PanelInfo(tr_noop("Custom"), CustomSettingsLayout()),
+      # #custom end
     }
 
     self._font_medium = gui_app.font(FontWeight.MEDIUM)

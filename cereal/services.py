@@ -82,6 +82,11 @@ _services: dict[str, tuple] = {
   "wideRoadEncodeData": (False, 20., None, QueueSize.BIG),
   "qRoadEncodeData": (False, 20., None, QueueSize.BIG),
 
+  # #custom start: custom UI/service messages
+  "naviCustom": (True, 20., 5),
+  "uICustom": (True, 0.),
+  # #custom end
+
   # debug
   "uiDebug": (True, 0., 1),
   "testJoystick": (True, 0.),

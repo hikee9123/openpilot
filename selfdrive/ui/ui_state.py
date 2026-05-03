@@ -8,6 +8,7 @@ from cereal import messaging, car, log
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
+from openpilot.selfdrive.ui.custom import CustomPublisher
 from openpilot.selfdrive.ui.lib.prime_state import PrimeState
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.hardware import HARDWARE, PC
@@ -61,6 +62,9 @@ class UIState:
     )
 
     self.prime_state = PrimeState()
+    # #custom start: publish custom UI tuning state
+    self.custom_publisher = CustomPublisher(self.params)
+    # #custom end
 
     # UI Status tracking
     self.status: UIStatus = UIStatus.DISENGAGED
@@ -115,6 +119,9 @@ class UIState:
     self._update_status()
     if time.monotonic() - self._param_update_time >= PARAM_UPDATE_TIME:
       self.update_params()
+    # #custom start: publish custom UI tuning state
+    self.custom_publisher.update()
+    # #custom end
     device.update()
 
   def _update_state(self) -> None:
