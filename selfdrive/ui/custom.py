@@ -59,11 +59,27 @@ def read_custom_param_map(params: Params | None = None) -> dict:
 def _coerce_like_default(key: str, value):
   default = DEFAULT_CUSTOM_PARAMS[key]
   if isinstance(default, bool):
-    return bool(value)
+    if isinstance(value, bool):
+      return value
+    if isinstance(value, (int, float)):
+      return value != 0
+    if isinstance(value, str):
+      lowered = value.strip().lower()
+      if lowered in ("1", "true", "yes", "on"):
+        return True
+      if lowered in ("0", "false", "no", "off", ""):
+        return False
+    return default
   if isinstance(default, int) and not isinstance(default, bool):
-    return int(value)
+    try:
+      return int(value)
+    except (TypeError, ValueError):
+      return default
   if isinstance(default, float):
-    return float(value)
+    try:
+      return float(value)
+    except (TypeError, ValueError):
+      return default
   return value
 
 

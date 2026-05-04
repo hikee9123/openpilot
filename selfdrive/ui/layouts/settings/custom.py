@@ -2,10 +2,12 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 import pyray as rl
 from cereal import car, messaging
 
+from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
 from openpilot.selfdrive.ui.custom import read_custom_param_map, read_custom_params, write_custom_params
 from openpilot.selfdrive.ui.ui_state import ui_state
@@ -48,6 +50,11 @@ COMPILE_STARTED_AT_KEY = "CustomModelCompileStartedAt"
 COMPILE_FINISHED_AT_KEY = "CustomModelCompileFinishedAt"
 COMPILE_ERROR_KEY = "CustomModelCompileError"
 COMPILE_LOG_PATH = "/tmp/openpilot_custom_model_compile.log"
+GIT_STATUS_KEY = "CustomGitUpdateStatus"
+GIT_ERROR_KEY = "CustomGitUpdateError"
+GIT_LOG_PATH = "/tmp/openpilot_git_update.log"
+REPO_ROOT = Path(BASEDIR)
+MODELD_DIR = REPO_ROOT / "selfdrive/modeld"
 TAB_HEIGHT = 110
 TAB_GAP = 10
 TAB_FONT_SIZE = 40
@@ -71,6 +78,32 @@ STEPPER_VALUE_COLOR = rl.Color(170, 170, 170, 255)
 SECTION_HEIGHT = 92
 SECTION_FONT_SIZE = 42
 SECTION_BG = rl.Color(58, 58, 58, 255)
+
+
+def run_logged(command: list[str], cwd: Path, log_path: str) -> subprocess.CompletedProcess:
+  Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+  with open(log_path, "a", encoding="utf-8") as log_file:
+    log_file.write(f"\n$ {' '.join(command)}\n")
+    log_file.flush()
+    return subprocess.run(command, cwd=cwd, stdout=log_file, stderr=subprocess.STDOUT, text=True, check=False)
+
+
+def clear_log(log_path: str) -> None:
+  path = Path(log_path)
+  path.parent.mkdir(parents=True, exist_ok=True)
+  path.write_text("", encoding="utf-8")
+
+
+def valid_branch_name(branch: str) -> bool:
+  if not branch or branch.startswith("-"):
+    return False
+  return subprocess.run(["git", "check-ref-format", "--branch", branch],
+                        cwd=REPO_ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False).returncode == 0
+
+
+def origin_branch_exists(branch: str) -> bool:
+  return subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}"],
+                        cwd=REPO_ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False).returncode == 0
 
 
 class StepperAction(ItemAction):
@@ -195,7 +228,7 @@ class CustomSettingsLayout(Widget):
       "Git": [
         self._command_item(tr_noop("Fetch All and Prune"), tr_noop("SYNC"), ["bash", "-lc", "git fetch --all --prune && git remote prune origin"], confirm=False),
         self._update_from_remote_item(),
-        self._command_item(tr_noop("Revert Commit"), tr_noop("ROLLBACK"), ["git", "reset", "--hard", "ec448a9"], confirm=True),
+        text_item(lambda: tr("Git status"), self._git_update_status_text),
       ],
       "Model": [
         self._model_selection_item(),
@@ -326,7 +359,15 @@ class CustomSettingsLayout(Widget):
 
   def _command_item(self, title: str, button_text: str, command: list[str], confirm: bool):
     def run() -> None:
-      threading.Thread(target=lambda: subprocess.run(command, cwd="/home/bhcho/openpilot", check=False), daemon=True).start()
+      def worker() -> None:
+        self._set_git_status(STATUS_RUNNING)
+        clear_log(GIT_LOG_PATH)
+        result = run_logged(command, REPO_ROOT, GIT_LOG_PATH)
+        status = STATUS_SUCCESS if result.returncode == 0 else STATUS_FAILED
+        error = "" if result.returncode == 0 else f"exit code {result.returncode}"
+        self._set_git_status(status, error)
+
+      threading.Thread(target=worker, daemon=True).start()
 
     def callback() -> None:
       if not confirm:
@@ -344,8 +385,38 @@ class CustomSettingsLayout(Widget):
 
       def run() -> None:
         def worker() -> None:
-          subprocess.run(["git", "fetch", "origin"], cwd="/home/bhcho/openpilot", check=False)
-          subprocess.run(["git", "reset", "--hard", f"origin/{branch}"], cwd="/home/bhcho/openpilot", check=False)
+          self._set_git_status(STATUS_RUNNING)
+          clear_log(GIT_LOG_PATH)
+
+          if not valid_branch_name(branch):
+            self._set_git_status(STATUS_FAILED, f"invalid branch: {branch}")
+            return
+
+          fetch_result = run_logged(["git", "fetch", "origin"], REPO_ROOT, GIT_LOG_PATH)
+          if fetch_result.returncode != 0:
+            self._set_git_status(STATUS_FAILED, f"fetch failed: {fetch_result.returncode}")
+            return
+
+          if not origin_branch_exists(branch):
+            self._set_git_status(STATUS_FAILED, f"missing origin/{branch}")
+            return
+
+          reset_result = run_logged(["git", "reset", "--hard", f"origin/{branch}"], REPO_ROOT, GIT_LOG_PATH)
+          if reset_result.returncode != 0:
+            self._set_git_status(STATUS_FAILED, f"reset failed: {reset_result.returncode}")
+            return
+
+          sync_result = run_logged(["git", "submodule", "sync", "--recursive"], REPO_ROOT, GIT_LOG_PATH)
+          if sync_result.returncode != 0:
+            self._set_git_status(STATUS_FAILED, f"submodule sync failed: {sync_result.returncode}")
+            return
+
+          submodule_result = run_logged(["git", "submodule", "update", "--init", "--recursive"], REPO_ROOT, GIT_LOG_PATH)
+          if submodule_result.returncode != 0:
+            self._set_git_status(STATUS_FAILED, f"submodule update failed: {submodule_result.returncode}")
+            return
+
+          self._set_git_status(STATUS_SUCCESS, "")
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -354,6 +425,23 @@ class CustomSettingsLayout(Widget):
       gui_app.push_widget(dialog)
 
     return button_item(lambda: tr("Update from Remote"), lambda: tr("UPDATE"), callback=callback)
+
+  def _set_git_status(self, status: str, error: str = "") -> None:
+    self._params.put(GIT_STATUS_KEY, status)
+    self._params.put(GIT_ERROR_KEY, error[-500:])
+
+  def _git_update_status_text(self) -> str:
+    status = self._param_text(GIT_STATUS_KEY) or STATUS_IDLE
+    if status == STATUS_RUNNING:
+      return tr("Running")
+    if status == STATUS_SUCCESS:
+      return tr("Ready")
+    if status == STATUS_FAILED:
+      error = self._param_text(GIT_ERROR_KEY)
+      if len(error) > 80:
+        error = error[-80:]
+      return f"{tr('Failed')}: {error}".strip(": ")
+    return tr("Idle")
 
   def _text_edit_item(self, key: str, title: str):
     item = button_item(lambda: tr(title), lambda: tr("EDIT"), callback=lambda k=key, t=title: self._show_keyboard(k, t))
@@ -472,7 +560,7 @@ class CustomSettingsLayout(Widget):
 
     def worker() -> None:
       with open(COMPILE_LOG_PATH, "w") as log_file:
-        result = subprocess.run(["python3", "model_make.py", "--model", model_name], cwd="/home/bhcho/openpilot/selfdrive/modeld",
+        result = subprocess.run(["python3", "model_make.py", "--model", model_name], cwd=MODELD_DIR,
                                 stdout=log_file, stderr=subprocess.STDOUT, text=True, check=False)
       status = self._param_text(COMPILE_STATUS_KEY)
       if result.returncode == 0 and status == STATUS_RUNNING:

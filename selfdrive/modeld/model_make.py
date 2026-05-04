@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import platform
 import subprocess
 import time
 from pathlib import Path
@@ -70,19 +71,23 @@ def device_available(device: str) -> bool:
 
 def tinygrad_flags() -> str:
   dev = ""
+  if device_available("CUDA"):
+    dev = "CUDA"
+  elif device_available("QCOM"):
+    dev = "QCOM"
+
   if COMPILED_FLAGS_PATH.exists():
     try:
-      dev = str(json.loads(COMPILED_FLAGS_PATH.read_text()).get("DEV", ""))
+      compiled_dev = str(json.loads(COMPILED_FLAGS_PATH.read_text()).get("DEV", ""))
+      if compiled_dev in ("CUDA", "QCOM") and device_available(compiled_dev):
+        dev = compiled_dev
+      elif compiled_dev.startswith("CPU") and not dev:
+        dev = compiled_dev
     except Exception:
-      dev = ""
+      pass
 
   if not dev:
-    if device_available("CUDA"):
-      dev = "CUDA"
-    elif device_available("QCOM"):
-      dev = "QCOM"
-    else:
-      dev = "CPU"
+    dev = "CPU" if platform.system() == "Darwin" else "CPU:LLVM"
 
   if dev == "QCOM":
     return "DEV=QCOM IMAGE=1 FLOAT16=1 NOLOCALS=1 JIT_BATCH_SIZE=0 OPENPILOT_HACKS=1"

@@ -133,7 +133,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
 
     // #custom start: custom UI/model/car settings
     {"CustomParam", {PERSISTENT, STRING}},
-    {"UseExternalNaviRoutes", {PERSISTENT, STRING}},
+    {"UseExternalNaviRoutes", {PERSISTENT, BOOL}},
     {"ExternalNaviType", {PERSISTENT, STRING}},
     {"MapboxToken", {PERSISTENT, STRING}},
     {"SelectedCar", {PERSISTENT, STRING}},
@@ -143,6 +143,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"CustomModelCompileStartedAt", {PERSISTENT, STRING}},
     {"CustomModelCompileFinishedAt", {PERSISTENT, STRING}},
     {"CustomModelCompileError", {PERSISTENT, STRING}},
-    {"EnableLogging", {PERSISTENT, STRING}},
+    {"CustomGitUpdateStatus", {PERSISTENT, STRING}},
+    {"CustomGitUpdateError", {PERSISTENT, STRING}},
+    {"EnableLogging", {PERSISTENT, BOOL}},
     // #custom end
 };
