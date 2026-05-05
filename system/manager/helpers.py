@@ -17,6 +17,7 @@ CUSTOM_MODEL_COMPILE_STATUS = "CustomModelCompileStatus"
 CUSTOM_MODEL_COMPILE_NAME = "CustomModelCompileName"
 CUSTOM_MODEL_COMPILE_FINISHED_AT = "CustomModelCompileFinishedAt"
 CUSTOM_MODEL_COMPILE_ERROR = "CustomModelCompileError"
+CUSTOM_MODEL_COMPILE_PROGRESS = "CustomModelCompileProgress"
 STATUS_RUNNING = "running"
 STATUS_FAILED = "failed"
 
@@ -70,6 +71,8 @@ def init_custom_model_compile_state(params: Params) -> None:
   params.put(CUSTOM_MODEL_COMPILE_NAME, model_name_text)
   params.put(CUSTOM_MODEL_COMPILE_FINISHED_AT, str(int(time.time())))
   params.put(CUSTOM_MODEL_COMPILE_ERROR, "compile interrupted by device or manager restart")
+  if params.get(CUSTOM_MODEL_COMPILE_PROGRESS) is None:
+    params.put(CUSTOM_MODEL_COMPILE_PROGRESS, "0")
 
 
 def logging_enabled(params: Params) -> bool:

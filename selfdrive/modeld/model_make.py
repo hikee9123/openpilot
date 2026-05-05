@@ -59,6 +59,7 @@ COMPILE_NAME_KEY = "CustomModelCompileName"
 COMPILE_STARTED_AT_KEY = "CustomModelCompileStartedAt"
 COMPILE_FINISHED_AT_KEY = "CustomModelCompileFinishedAt"
 COMPILE_ERROR_KEY = "CustomModelCompileError"
+COMPILE_PROGRESS_KEY = "CustomModelCompileProgress"
 CAMERA_CONFIGS = [
   (_ar_ox_fisheye.width, _ar_ox_fisheye.height),
   (_os_fisheye.width, _os_fisheye.height),
@@ -119,9 +120,17 @@ def set_compile_status(status: str, model_name: str, error: str = "") -> None:
   if status == STATUS_RUNNING:
     params.put(COMPILE_STARTED_AT_KEY, str(int(time.time())))
     params.put(COMPILE_FINISHED_AT_KEY, "")
+    params.put(COMPILE_PROGRESS_KEY, "0")
   if status in (STATUS_SUCCESS, STATUS_FAILED):
     params.put(COMPILE_FINISHED_AT_KEY, str(int(time.time())))
+    progress = params.get(COMPILE_PROGRESS_KEY)
+    progress_text = progress.decode("utf-8") if isinstance(progress, bytes) else str(progress or "0")
+    params.put(COMPILE_PROGRESS_KEY, "100" if status == STATUS_SUCCESS else progress_text)
   params.put(COMPILE_ERROR_KEY, error[-500:])
+
+
+def set_compile_progress(progress: int) -> None:
+  Params().put(COMPILE_PROGRESS_KEY, str(max(0, min(100, progress))))
 
 
 def run(command: list[str], env: dict[str, str]) -> None:
@@ -152,6 +161,7 @@ def compile_bundle(model_dir: Path, env: dict[str, str]) -> None:
 
       if compiled_artifact_exists(pkl_path):
         cloudlog.warning(f"[custom model_make] already compiled: {pkl_path}")
+        set_compile_progress(30 + (CAMERA_CONFIGS.index((cam_w, cam_h)) * 2 + int(prepare_only) + 1) * 15)
         continue
 
       run([
@@ -165,6 +175,7 @@ def compile_bundle(model_dir: Path, env: dict[str, str]) -> None:
         *(["--prepare-only"] if prepare_only else []),
       ], env)
       chunk_file(str(pkl_path), chunk_targets)
+      set_compile_progress(30 + (CAMERA_CONFIGS.index((cam_w, cam_h)) * 2 + int(prepare_only) + 1) * 15)
 
 
 def main() -> None:
@@ -190,7 +201,9 @@ def main() -> None:
   cloudlog.warning(f"[custom model_make] compile {model_name} in {model_dir}")
   set_compile_status(STATUS_RUNNING, model_name)
   try:
+    set_compile_progress(5)
     ensure_metadata(model_dir, env)
+    set_compile_progress(30)
     compile_bundle(model_dir, env)
   except Exception as e:
     set_compile_status(STATUS_FAILED, model_name, str(e))

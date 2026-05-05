@@ -51,6 +51,7 @@ COMPILE_NAME_KEY = "CustomModelCompileName"
 COMPILE_STARTED_AT_KEY = "CustomModelCompileStartedAt"
 COMPILE_FINISHED_AT_KEY = "CustomModelCompileFinishedAt"
 COMPILE_ERROR_KEY = "CustomModelCompileError"
+COMPILE_PROGRESS_KEY = "CustomModelCompileProgress"
 COMPILE_LOG_PATH = "/data/tmp/openpilot_custom_model_compile.log"
 COMPILE_STATUS_CHECK_INTERVAL = 5.0
 COMPILE_PROCESS_GRACE_SECONDS = 60
@@ -520,6 +521,14 @@ class CustomSettingsLayout(Widget):
     self._params.put(COMPILE_NAME_KEY, model_name)
     self._params.put(COMPILE_FINISHED_AT_KEY, str(int(time.time())))
     self._params.put(COMPILE_ERROR_KEY, "")
+    self._params.put(COMPILE_PROGRESS_KEY, "100")
+
+  def _compile_progress(self) -> int:
+    raw = self._param_text(COMPILE_PROGRESS_KEY)
+    try:
+      return max(0, min(100, int(raw)))
+    except ValueError:
+      return 0
 
   def _compile_process_running(self, model_name: str) -> bool | None:
     proc_dir = Path("/proc")
@@ -580,7 +589,7 @@ class CustomSettingsLayout(Widget):
           elapsed = f" ({max(0, int(time.time()) - int(started_at))}s)"
         except ValueError:
           elapsed = ""
-      return f"{tr('Compiling...')} {model_name}{elapsed}".strip()
+      return f"{tr('Compiling...')} {self._compile_progress()}% {model_name}{elapsed}".strip()
     if status == STATUS_SUCCESS:
       return f"{tr('Ready')} {model_name}".strip()
     if status == STATUS_FAILED:
@@ -629,6 +638,7 @@ class CustomSettingsLayout(Widget):
       self._params.put("ActiveModelName", DEFAULT_MODEL_NAME)
       self._params.put(COMPILE_NAME_KEY, "")
       self._params.put(COMPILE_ERROR_KEY, "")
+      self._params.put(COMPILE_PROGRESS_KEY, "0")
       return
 
     self._params.put(COMPILE_STATUS_KEY, STATUS_RUNNING)
@@ -636,6 +646,7 @@ class CustomSettingsLayout(Widget):
     self._params.put(COMPILE_STARTED_AT_KEY, str(int(time.time())))
     self._params.put(COMPILE_FINISHED_AT_KEY, "")
     self._params.put(COMPILE_ERROR_KEY, "")
+    self._params.put(COMPILE_PROGRESS_KEY, "0")
 
     def worker() -> None:
       result: subprocess.CompletedProcess | None = None

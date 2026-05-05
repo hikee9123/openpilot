@@ -143,6 +143,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"CustomModelCompileStartedAt", {PERSISTENT, STRING}},
     {"CustomModelCompileFinishedAt", {PERSISTENT, STRING}},
     {"CustomModelCompileError", {PERSISTENT, STRING}},
+    {"CustomModelCompileProgress", {PERSISTENT, INT}},
     {"CustomGitUpdateStatus", {PERSISTENT, STRING}},
     {"CustomGitUpdateError", {PERSISTENT, STRING}},
     {"EnableLogging", {PERSISTENT, BOOL}},
