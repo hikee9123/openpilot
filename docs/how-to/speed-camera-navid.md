@@ -46,7 +46,7 @@ You can also download the official public data portal CSV and import it in one s
 On device, the same flow is available from `Custom > Navigation > Speed camera DB`.
 The button downloads the national public dataset, writes `speed_cameras.csv`, and
 replaces the local SQLite DB used by `navid`. The Navigation menu also shows the
-current update status and progress percentage.
+current update status, progress percentage, and public data reference date.
 
 You can override paths:
 

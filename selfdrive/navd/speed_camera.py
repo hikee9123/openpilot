@@ -136,6 +136,7 @@ def create_database_from_csv(csv_path: Path = DEFAULT_CSV_PATH, db_path: Path = 
     conn.execute("DELETE FROM speed_cameras")
 
     inserted = 0
+    source_updated_at = ""
     for idx, row in enumerate(rows):
       lat = _parse_float(_first(row, "lat"))
       lon = _parse_float(_first(row, "lon"))
@@ -144,6 +145,9 @@ def create_database_from_csv(csv_path: Path = DEFAULT_CSV_PATH, db_path: Path = 
 
       raw_camera_id = _first(row, "id") or f"camera-{idx}"
       camera_id = f"{raw_camera_id}-{lat:.7f}-{lon:.7f}"
+      updated_at = _first(row, "updated_at")
+      if updated_at > source_updated_at:
+        source_updated_at = updated_at
       conn.execute("""
         INSERT OR REPLACE INTO speed_cameras(
           id, lat, lon, camera_type, speed_limit, road_name, place, direction,
@@ -161,12 +165,32 @@ def create_database_from_csv(csv_path: Path = DEFAULT_CSV_PATH, db_path: Path = 
         _first(row, "section_type"),
         _parse_int(_first(row, "section_length_m")),
         _first(row, "school_zone"),
-        _first(row, "updated_at"),
+        updated_at,
       ))
       inserted += 1
 
+    conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("source_updated_at", source_updated_at))
     conn.commit()
     return conn.execute("SELECT COUNT(*) FROM speed_cameras").fetchone()[0]
+
+
+def database_data_date(db_path: Path = DEFAULT_DB_PATH) -> str:
+  if not db_path.exists():
+    return ""
+
+  with sqlite3.connect(db_path) as conn:
+    try:
+      row = conn.execute("SELECT value FROM metadata WHERE key = ?", ("source_updated_at",)).fetchone()
+      if row and row[0]:
+        return str(row[0])
+    except sqlite3.Error:
+      pass
+
+    try:
+      row = conn.execute("SELECT MAX(updated_at) FROM speed_cameras").fetchone()
+      return str(row[0] or "")
+    except sqlite3.Error:
+      return ""
 
 
 def _fetch_data_go_json(path: str, params: dict, timeout: int = DATA_GO_KR_TIMEOUT_SECONDS):

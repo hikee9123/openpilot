@@ -11,9 +11,11 @@ from openpilot.selfdrive.navd.speed_camera import (
   DEFAULT_DB_PATH,
   PUBLIC_DATA_PK,
   create_database_from_csv,
+  database_data_date,
   download_public_speed_camera_csv,
 )
 
+SPEED_CAMERA_DATA_DATE_KEY = "SpeedCameraDataDate"
 SPEED_CAMERA_PROGRESS_KEY = "SpeedCameraUpdateProgress"
 
 
@@ -57,8 +59,12 @@ def main() -> None:
 
   _put_progress(params, 95)
   imported = create_database_from_csv(args.csv, args.db)
+  data_date = database_data_date(args.db)
+  if data_date:
+    params.put(SPEED_CAMERA_DATA_DATE_KEY, data_date)
   _put_progress(params, 100)
   print(f"imported {imported} speed cameras into {args.db}")
+  print(f"data date {data_date or 'unknown'}")
 
 
 if __name__ == "__main__":

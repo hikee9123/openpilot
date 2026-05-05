@@ -4,6 +4,7 @@ import openpilot.selfdrive.navd.speed_camera as speed_camera
 from openpilot.selfdrive.navd.speed_camera import (
   camera_type_code,
   create_database_from_csv,
+  database_data_date,
   direction_bearing_deg,
   download_public_speed_camera_csv,
   find_lead_camera,
@@ -89,6 +90,7 @@ def test_public_data_portal_column_codes(tmp_path: Path) -> None:
   assert camera.id.startswith("J0071-")
   assert camera.speed_limit == 40
   assert camera.camera_type == "01"
+  assert database_data_date(db_path) == "2026-01-29"
 
 
 def test_download_public_speed_camera_csv(tmp_path: Path, monkeypatch) -> None:
