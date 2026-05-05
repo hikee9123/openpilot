@@ -33,6 +33,16 @@ On PC, if `/persist` does not exist, the fallback is:
 ~/.comma/persist/speed_cameras.sqlite3
 ```
 
+You can also download the official public data portal CSV and import it in one step:
+
+```bash
+.venv/bin/python tools/scripts/update_speed_cameras.py
+```
+
+On device, the same flow is available from `Custom > Navigation > Speed camera DB`.
+The button downloads the national public dataset, writes `speed_cameras.csv`, and
+replaces the local SQLite DB used by `navid`.
+
 You can override paths:
 
 ```bash

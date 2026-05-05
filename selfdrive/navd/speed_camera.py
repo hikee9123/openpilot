@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 import csv
+import json
 import math
 import os
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 
 DB_VERSION = 1
+PUBLIC_DATA_PK = "15028200"
+PUBLIC_DATA_BASE_URL = "https://www.data.go.kr"
 
 
 def _default_persist_root() -> Path:
@@ -25,6 +30,8 @@ LOOKAHEAD_DISTANCE_M = 2500.0
 LOOKAHEAD_ANGLE_DEG = 45.0
 CAMERA_DIRECTION_ANGLE_DEG = 70.0
 EARTH_RADIUS_M = 6371000.0
+DATA_GO_KR_TIMEOUT_SECONDS = 30
+DATA_GO_KR_USER_AGENT = "Mozilla/5.0 (openpilot speed camera updater)"
 
 
 FIELD_ALIASES = {
@@ -158,6 +165,57 @@ def create_database_from_csv(csv_path: Path = DEFAULT_CSV_PATH, db_path: Path = 
 
     conn.commit()
     return conn.execute("SELECT COUNT(*) FROM speed_cameras").fetchone()[0]
+
+
+def _fetch_data_go_json(path: str, params: dict, timeout: int = DATA_GO_KR_TIMEOUT_SECONDS):
+  url = f"{PUBLIC_DATA_BASE_URL}{path}?{urlencode(params, doseq=True)}"
+  request = Request(url, headers={"User-Agent": DATA_GO_KR_USER_AGENT, "Accept": "application/json"})
+  with urlopen(request, timeout=timeout) as response:
+    return json.loads(response.read().decode("utf-8"))
+
+
+def download_public_speed_camera_csv(
+  csv_path: Path = DEFAULT_CSV_PATH,
+  public_data_pk: str = PUBLIC_DATA_PK,
+  per_page: int = 10000,
+  max_pages: int | None = None,
+) -> int:
+  header = _fetch_data_go_json("/download/columList.json", {"pk": public_data_pk, "ext": "CSV"})
+  column_list = header["columList"]
+  column_codes = [item["columCode"] for item in column_list]
+  column_names = [item["columNm"] for item in column_list]
+  total_count = int(header["totalCount"])
+  svc_table_name = header["tableVO"]["svcTableNm"]
+  col_name_list = header["tableVO"].get("colNmList") or column_codes
+
+  per_page = max(1, min(10000, int(per_page)))
+  page_count = math.ceil(total_count / per_page)
+  if max_pages is not None:
+    page_count = min(page_count, max(0, int(max_pages)))
+
+  csv_path.parent.mkdir(parents=True, exist_ok=True)
+  written = 0
+  with csv_path.open("w", encoding="utf-8-sig", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(column_names)
+
+    for page in range(1, page_count + 1):
+      rows = _fetch_data_go_json("/download/standard.json", {
+        "publicDataPk": public_data_pk,
+        "colNmList": col_name_list,
+        "totalCount": total_count,
+        "svcTableNm": svc_table_name,
+        "perPage": per_page,
+        "page": page,
+      })
+      if not isinstance(rows, list):
+        raise ValueError(f"unexpected public data response on page {page}: {type(rows).__name__}")
+
+      for row in rows:
+        writer.writerow([row.get(code, "") for code in column_codes])
+        written += 1
+
+  return written
 
 
 def haversine_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:

@@ -71,14 +71,20 @@ COMPILE_STARTED_AT_KEY = "CustomModelCompileStartedAt"
 COMPILE_FINISHED_AT_KEY = "CustomModelCompileFinishedAt"
 COMPILE_ERROR_KEY = "CustomModelCompileError"
 COMPILE_PROGRESS_KEY = "CustomModelCompileProgress"
-COMPILE_LOG_PATH = "/tmp/openpilot_custom_model_compile.log" if PC else "/data/tmp/openpilot_custom_model_compile.log"
+CUSTOM_TMP_ROOT = Path("/tmp") if PC else Path("/data/tmp")
+COMPILE_LOG_PATH = str(CUSTOM_TMP_ROOT / "openpilot_custom_model_compile.log")
 COMPILE_STATUS_CHECK_INTERVAL = 5.0
 COMPILE_LOG_CACHE_INTERVAL = 2.0
 COMPILE_PROCESS_GRACE_SECONDS = 60
 COMPILE_STALE_SECONDS = 2 * 60 * 60
 GIT_STATUS_KEY = "CustomGitUpdateStatus"
 GIT_ERROR_KEY = "CustomGitUpdateError"
-GIT_LOG_PATH = "/tmp/openpilot_git_update.log"
+GIT_LOG_PATH = str(CUSTOM_TMP_ROOT / "openpilot_git_update.log")
+SPEED_CAMERA_STATUS_KEY = "SpeedCameraUpdateStatus"
+SPEED_CAMERA_ERROR_KEY = "SpeedCameraUpdateError"
+SPEED_CAMERA_COUNT_KEY = "SpeedCameraUpdateCount"
+SPEED_CAMERA_UPDATED_AT_KEY = "SpeedCameraUpdatedAt"
+SPEED_CAMERA_LOG_PATH = str(CUSTOM_TMP_ROOT / "openpilot_speed_camera_update.log")
 REPO_ROOT = Path(BASEDIR)
 MODELD_DIR = REPO_ROOT / "selfdrive/modeld"
 TAB_HEIGHT = 110
@@ -374,6 +380,9 @@ class CustomSettingsLayout(Widget):
         self._toggle_json_item("debug6", tr_noop("Debug 6"), tr_noop("Enables custom debug flag 6 for supported vehicle or UI code.")),
       ],
       "Navigation": [
+        self._speed_camera_update_item(),
+        text_item(lambda: tr("Speed camera status"), self._speed_camera_status_text,
+                  description=lambda: tr("Shows the last public speed camera CSV download and DB import result.")),
         self._toggle_param_item("UseExternalNaviRoutes", tr_noop("Use external navi routes"),
                                 tr_noop("Allows navigation to use routes from an external navigation provider.")),
         self._cycle_param_int_item("ExternalNaviType", tr_noop("External navi type"), EXTERNAL_NAVI_OPTIONS,
@@ -579,6 +588,85 @@ class CustomSettingsLayout(Widget):
     return button_item(lambda: tr("Update from Remote"), lambda: tr("UPDATE"),
                        description=lambda: tr("Fetches the configured origin branch and resets this checkout to match it."),
                        callback=callback)
+
+  def _speed_camera_update_item(self):
+    return button_item(
+      lambda: tr("Speed camera DB"),
+      self._speed_camera_button_text,
+      description=lambda: tr("Downloads the national public unmanned traffic enforcement camera CSV and imports it into the local navigation DB."),
+      callback=self._handle_speed_camera_update,
+      enabled=lambda: self._speed_camera_update_status() != STATUS_RUNNING,
+    )
+
+  def _handle_speed_camera_update(self) -> None:
+    def run() -> None:
+      def worker() -> None:
+        self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_RUNNING)
+        self._params.put(SPEED_CAMERA_ERROR_KEY, "")
+        clear_log(SPEED_CAMERA_LOG_PATH)
+
+        result = run_logged([sys.executable, "tools/scripts/update_speed_cameras.py"], REPO_ROOT, SPEED_CAMERA_LOG_PATH)
+        if result.returncode != 0:
+          self._set_speed_camera_failed(f"exit code {result.returncode}")
+          return
+
+        count = self._speed_camera_db_count_from_log()
+        self._params.put(SPEED_CAMERA_COUNT_KEY, max(0, count))
+        self._params.put(SPEED_CAMERA_UPDATED_AT_KEY, time.strftime("%Y-%m-%d %H:%M"))
+        self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_SUCCESS)
+        self._params.put(SPEED_CAMERA_ERROR_KEY, "")
+
+      threading.Thread(target=worker, daemon=True).start()
+
+    content = tr("Download public speed camera CSV and replace the local DB?")
+    dialog = ConfirmDialog(content, tr("UPDATE"), callback=lambda result: run() if result == DialogResult.CONFIRM else None)
+    gui_app.push_widget(dialog)
+
+  def _speed_camera_update_status(self) -> str:
+    return self._param_text(SPEED_CAMERA_STATUS_KEY) or STATUS_IDLE
+
+  def _speed_camera_button_text(self) -> str:
+    status = self._speed_camera_update_status()
+    if status == STATUS_RUNNING:
+      return tr("WAIT")
+    if status == STATUS_FAILED:
+      return tr("RETRY")
+    return tr("UPDATE")
+
+  def _speed_camera_db_count_from_log(self) -> int:
+    try:
+      with open(SPEED_CAMERA_LOG_PATH, encoding="utf-8", errors="replace") as log_file:
+        for line in reversed(log_file.readlines()):
+          if line.startswith("imported "):
+            return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+      pass
+    return 0
+
+  def _set_speed_camera_failed(self, error: str) -> None:
+    try:
+      with open(SPEED_CAMERA_LOG_PATH, encoding="utf-8", errors="replace") as log_file:
+        tail = log_file.read()[-500:].strip()
+    except OSError:
+      tail = ""
+    self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_FAILED)
+    self._params.put(SPEED_CAMERA_ERROR_KEY, tail or error)
+
+  def _speed_camera_status_text(self) -> str:
+    status = self._speed_camera_update_status()
+    if status == STATUS_RUNNING:
+      return tr("Downloading")
+    if status == STATUS_SUCCESS:
+      count = self._param_text(SPEED_CAMERA_COUNT_KEY) or "0"
+      updated_at = self._param_text(SPEED_CAMERA_UPDATED_AT_KEY)
+      suffix = f" {updated_at}" if updated_at else ""
+      return f"{tr('Ready')} {count}{suffix}"
+    if status == STATUS_FAILED:
+      error = self._param_text(SPEED_CAMERA_ERROR_KEY)
+      if len(error) > 80:
+        error = error[-80:]
+      return f"{tr('Failed')}: {error}".strip(": ")
+    return tr("Idle")
 
   def _set_git_status(self, status: str, error: str = "") -> None:
     self._params.put(GIT_STATUS_KEY, status)

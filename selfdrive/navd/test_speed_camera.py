@@ -1,9 +1,11 @@
 from pathlib import Path
 
+import openpilot.selfdrive.navd.speed_camera as speed_camera
 from openpilot.selfdrive.navd.speed_camera import (
   camera_type_code,
   create_database_from_csv,
   direction_bearing_deg,
+  download_public_speed_camera_csv,
   find_lead_camera,
 )
 
@@ -83,3 +85,52 @@ def test_public_data_portal_column_codes(tmp_path: Path) -> None:
   assert camera.id.startswith("J0071-")
   assert camera.speed_limit == 40
   assert camera.camera_type == "01"
+
+
+def test_download_public_speed_camera_csv(tmp_path: Path, monkeypatch) -> None:
+  def fake_fetch(path: str, params: dict, timeout: int = speed_camera.DATA_GO_KR_TIMEOUT_SECONDS):
+    if path.endswith("columList.json"):
+      return {
+        "totalCount": 2,
+        "fileName": "전국무인교통단속카메라표준데이터",
+        "columList": [
+          {"columCode": "MNLSS_REGLT_CAMERA_MANAGE_NO", "columNm": "무인교통단속카메라관리번호"},
+          {"columCode": "LATITUDE", "columNm": "위도"},
+          {"columCode": "LONGITUDE", "columNm": "경도"},
+          {"columCode": "REGLT_SE", "columNm": "단속구분"},
+          {"columCode": "LMTT_VE", "columNm": "제한속도"},
+          {"columCode": "ITLPC", "columNm": "설치장소"},
+        ],
+        "tableVO": {
+          "colNmList": ["MNLSS_REGLT_CAMERA_MANAGE_NO", "LATITUDE", "LONGITUDE", "REGLT_SE", "LMTT_VE", "ITLPC"],
+          "svcTableNm": "tn_pubr_public_unmanned_traffic_camera_svc",
+        },
+      }
+    assert path.endswith("standard.json")
+    assert params["page"] == 1
+    return [
+      {
+        "MNLSS_REGLT_CAMERA_MANAGE_NO": "J0071",
+        "LATITUDE": "35.765665",
+        "LONGITUDE": "128.13621",
+        "REGLT_SE": "01",
+        "LMTT_VE": "40",
+        "ITLPC": "야천삼거리",
+      },
+      {
+        "MNLSS_REGLT_CAMERA_MANAGE_NO": "J0070",
+        "LATITUDE": "35.7655683",
+        "LONGITUDE": "128.1360521",
+        "REGLT_SE": "01",
+        "LMTT_VE": "60",
+        "ITLPC": "야천삼거리",
+      },
+    ]
+
+  monkeypatch.setattr(speed_camera, "_fetch_data_go_json", fake_fetch)
+
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+
+  assert download_public_speed_camera_csv(csv_path, per_page=10000) == 2
+  assert create_database_from_csv(csv_path, db_path) == 2
