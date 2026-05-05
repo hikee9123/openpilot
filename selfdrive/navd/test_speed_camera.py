@@ -131,6 +131,12 @@ def test_download_public_speed_camera_csv(tmp_path: Path, monkeypatch) -> None:
 
   csv_path = tmp_path / "speed_cameras.csv"
   db_path = tmp_path / "speed_cameras.sqlite3"
+  progress = []
 
-  assert download_public_speed_camera_csv(csv_path, per_page=10000) == 2
+  assert download_public_speed_camera_csv(
+    csv_path,
+    per_page=10000,
+    progress_callback=lambda written, total: progress.append((written, total)),
+  ) == 2
   assert create_database_from_csv(csv_path, db_path) == 2
+  assert progress == [(0, 2), (2, 2)]

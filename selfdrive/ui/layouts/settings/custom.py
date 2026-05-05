@@ -83,6 +83,7 @@ GIT_LOG_PATH = str(CUSTOM_TMP_ROOT / "openpilot_git_update.log")
 SPEED_CAMERA_STATUS_KEY = "SpeedCameraUpdateStatus"
 SPEED_CAMERA_ERROR_KEY = "SpeedCameraUpdateError"
 SPEED_CAMERA_COUNT_KEY = "SpeedCameraUpdateCount"
+SPEED_CAMERA_PROGRESS_KEY = "SpeedCameraUpdateProgress"
 SPEED_CAMERA_UPDATED_AT_KEY = "SpeedCameraUpdatedAt"
 SPEED_CAMERA_LOG_PATH = str(CUSTOM_TMP_ROOT / "openpilot_speed_camera_update.log")
 REPO_ROOT = Path(BASEDIR)
@@ -383,6 +384,8 @@ class CustomSettingsLayout(Widget):
         self._speed_camera_update_item(),
         text_item(lambda: tr("Speed camera status"), self._speed_camera_status_text,
                   description=lambda: tr("Shows the last public speed camera CSV download and DB import result.")),
+        text_item(lambda: tr("Speed camera progress"), self._speed_camera_progress_text,
+                  description=lambda: tr("Shows download and import progress for the speed camera DB update.")),
         self._toggle_param_item("UseExternalNaviRoutes", tr_noop("Use external navi routes"),
                                 tr_noop("Allows navigation to use routes from an external navigation provider.")),
         self._cycle_param_int_item("ExternalNaviType", tr_noop("External navi type"), EXTERNAL_NAVI_OPTIONS,
@@ -603,6 +606,7 @@ class CustomSettingsLayout(Widget):
       def worker() -> None:
         self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_RUNNING)
         self._params.put(SPEED_CAMERA_ERROR_KEY, "")
+        self._params.put(SPEED_CAMERA_PROGRESS_KEY, 0)
         clear_log(SPEED_CAMERA_LOG_PATH)
 
         result = run_logged([sys.executable, "tools/scripts/update_speed_cameras.py"], REPO_ROOT, SPEED_CAMERA_LOG_PATH)
@@ -612,6 +616,7 @@ class CustomSettingsLayout(Widget):
 
         count = self._speed_camera_db_count_from_log()
         self._params.put(SPEED_CAMERA_COUNT_KEY, max(0, count))
+        self._params.put(SPEED_CAMERA_PROGRESS_KEY, 100)
         self._params.put(SPEED_CAMERA_UPDATED_AT_KEY, time.strftime("%Y-%m-%d %H:%M"))
         self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_SUCCESS)
         self._params.put(SPEED_CAMERA_ERROR_KEY, "")
@@ -651,6 +656,12 @@ class CustomSettingsLayout(Widget):
       tail = ""
     self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_FAILED)
     self._params.put(SPEED_CAMERA_ERROR_KEY, tail or error)
+
+  def _speed_camera_progress_text(self) -> str:
+    progress = self._param_text(SPEED_CAMERA_PROGRESS_KEY)
+    if not progress:
+      return "--"
+    return f"{progress}%"
 
   def _speed_camera_status_text(self) -> str:
     status = self._speed_camera_update_status()

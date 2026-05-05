@@ -5,6 +5,7 @@ import math
 import os
 import sqlite3
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlencode
@@ -186,6 +187,7 @@ def download_public_speed_camera_csv(
   public_data_pk: str = PUBLIC_DATA_PK,
   per_page: int = 10000,
   max_pages: int | None = None,
+  progress_callback: Callable[[int, int], None] | None = None,
 ) -> int:
   header = _fetch_data_go_json("/download/columList.json", {"pk": public_data_pk, "ext": "CSV"})
   column_list = header["columList"]
@@ -202,6 +204,9 @@ def download_public_speed_camera_csv(
 
   csv_path.parent.mkdir(parents=True, exist_ok=True)
   written = 0
+  if progress_callback is not None:
+    progress_callback(written, total_count)
+
   with csv_path.open("w", encoding="utf-8-sig", newline="") as f:
     writer = csv.writer(f)
     writer.writerow(column_names)
@@ -221,6 +226,8 @@ def download_public_speed_camera_csv(
       for row in rows:
         writer.writerow([row.get(code, "") for code in column_codes])
         written += 1
+      if progress_callback is not None:
+        progress_callback(written, total_count)
 
   return written
 
