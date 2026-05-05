@@ -11,7 +11,7 @@ from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.widgets import Widget
 
 
-MAX_ITEMS = 7
+MAX_ITEMS = 9
 BASE_PANEL_WIDTH = 180
 BASE_ITEM_HEIGHT = 105
 BASE_PANEL_PADDING = 10
@@ -160,6 +160,7 @@ class KegmanRenderer(Widget):
       ui_custom.kegmanLag,
       ui_custom.kegmanBattery,
       ui_custom.kegmanGPU,
+      ui_custom.kegmanGPULoad,
       ui_custom.kegmanAngle,
       ui_custom.kegmanDistance,
       ui_custom.kegmanSpeed,
@@ -175,6 +176,8 @@ class KegmanRenderer(Widget):
       measures.append(self._battery_measure())
     if ui_custom.kegmanGPU or default_overlay:
       measures.append(self._gps_measure())
+    if ui_custom.kegmanGPULoad or default_overlay:
+      measures.append(self._gpu_measure())
     if ui_custom.kegmanAngle or default_overlay:
       measures.append(self._steering_angle_measure())
     if ui_custom.kegmanDistance:
@@ -262,6 +265,22 @@ class KegmanRenderer(Widget):
     else:
       value = f"{accuracy:.2f}"
     return KegmanMeasure(value, f"{altitude:.1f}", "GPS PREC", self._threshold_color(accuracy, 5, 2))
+
+  def _gpu_measure(self) -> KegmanMeasure:
+    device_state = ui_state.sm["deviceState"]
+    gpu_temps = list(device_state.gpuTempC)
+    gpu_temp = max(gpu_temps) if gpu_temps else 0.0
+    gpu_usage = max(0, int(device_state.gpuUsagePercent))
+    if gpu_temp > 120:
+      gpu_temp = 0.0
+    return KegmanMeasure(
+      str(gpu_usage),
+      "%",
+      f"GPU {gpu_temp:.1f}C",
+      self._threshold_color(gpu_usage, 90, 60),
+      self._threshold_color(gpu_temp, 92, 80),
+      self._threshold_color(gpu_usage, 90, 60),
+    )
 
   def _steering_angle_measure(self) -> KegmanMeasure:
     angle = ui_state.sm["carState"].steeringAngleDeg

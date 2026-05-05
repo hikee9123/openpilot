@@ -29,6 +29,7 @@ DEFAULT_CUSTOM_PARAMS: dict[str, int | float | bool] = {
   "kegmanCPU": False,
   "kegmanBattery": False,
   "kegmanGPU": False,
+  "kegmanGPULoad": False,
   "kegmanAngle": False,
   "kegmanEngine": False,
   "kegmanDistance": False,
@@ -158,6 +159,7 @@ class CustomPublisher:
     user_interface.kegmanCPU = int(values["kegmanCPU"])
     user_interface.kegmanBattery = int(values["kegmanBattery"])
     user_interface.kegmanGPU = int(values["kegmanGPU"])
+    user_interface.kegmanGPULoad = int(values["kegmanGPULoad"])
     user_interface.kegmanAngle = int(values["kegmanAngle"])
     user_interface.kegmanEngine = int(values["kegmanEngine"])
     user_interface.kegmanDistance = int(values["kegmanDistance"])

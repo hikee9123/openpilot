@@ -77,6 +77,7 @@ struct UICustom @0xda96579883444c35 {
     kegmanLag @13 :Int16;
     autoScreenOff @14 :Int16;
     brightness @15 :Int16;
+    kegmanGPULoad @16 :Int16;
   }
 
   struct Debug {
