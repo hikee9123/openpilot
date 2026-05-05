@@ -267,65 +267,101 @@ class CustomSettingsLayout(Widget):
     self._sections = {
       "UI": [
         SectionHeader(tr_noop("Toggle def")),
-        self._toggle_json_item("ShowDebugMessage", tr_noop("Show debug message")),
-        self._toggle_param_item("DisableUpdates", tr_noop("Disable OTA updates")),
-        self._toggle_json_item("ShowCarTracking", tr_noop("Show car tracking")),
-        self._toggle_json_item("tpms", tr_noop("Show TPMS")),
-        self._toggle_json_item("kegmanBattery", tr_noop("Battery voltage")),
-        self._toggle_json_item("ParamDebug", tr_noop("Debug overlay"), enabled=self._debug_enabled),
+        self._toggle_json_item("ShowDebugMessage", tr_noop("Debug overlay"),
+                               tr_noop("Shows the three-line trace debug panel on the onroad screen.")),
+        self._toggle_param_item("DisableUpdates", tr_noop("Disable OTA updates"),
+                                tr_noop("Prevents the updater from downloading and applying openpilot updates.")),
+        self._toggle_json_item("ShowCarTracking", tr_noop("Show car tracking"),
+                               tr_noop("Enables the custom car tracking flag for UI paths that consume it.")),
+        self._toggle_json_item("tpms", tr_noop("Show TPMS"),
+                               tr_noop("Shows tire pressure values around the driver monitoring icon when TPMS data is available.")),
+        self._toggle_json_item("kegmanBattery", tr_noop("Battery voltage"),
+                               tr_noop("Shows battery voltage in the sidebar status area.")),
         SectionHeader(tr_noop("Kegman Show")),
-        self._toggle_json_item("kegman", tr_noop("HUD overlay")),
-        self._toggle_json_item("kegmanCPU", tr_noop("CPU temperature"), enabled=self._kegman_enabled),
-        self._toggle_json_item("kegmanLag", tr_noop("UI lag"), enabled=self._kegman_enabled),
-        self._toggle_json_item("kegmanGPS", tr_noop("GPS accuracy"), enabled=self._kegman_enabled),
-        self._toggle_json_item("kegmanGPULoad", tr_noop("GPU load"), enabled=self._kegman_enabled),
-        self._toggle_json_item("kegmanAngle", tr_noop("Steering angle"), enabled=self._kegman_enabled),
-        self._toggle_json_item("kegmanEngine", tr_noop("Engine status"), enabled=self._kegman_enabled),
-        self._toggle_json_item("kegmanDistance", tr_noop("Relative distance"), enabled=self._kegman_enabled),
-        self._toggle_json_item("kegmanSpeed", tr_noop("Relative speed"), enabled=self._kegman_enabled),
+        self._toggle_json_item("kegman", tr_noop("HUD overlay"),
+                               tr_noop("Shows the custom Kegman information panel on the onroad screen.")),
+        self._toggle_json_item("kegmanCPU", tr_noop("CPU temperature"),
+                               tr_noop("Adds CPU temperature to the Kegman onroad panel."), enabled=self._kegman_enabled),
+        self._toggle_json_item("kegmanLag", tr_noop("UI lag"),
+                               tr_noop("Adds UI render lag to the Kegman onroad panel."), enabled=self._kegman_enabled),
+        self._toggle_json_item("kegmanGPS", tr_noop("GPS accuracy"),
+                               tr_noop("Adds GPS accuracy information to the Kegman onroad panel."), enabled=self._kegman_enabled),
+        self._toggle_json_item("kegmanGPULoad", tr_noop("GPU load"),
+                               tr_noop("Adds GPU load to the Kegman onroad panel."), enabled=self._kegman_enabled),
+        self._toggle_json_item("kegmanAngle", tr_noop("Steering angle"),
+                               tr_noop("Adds current steering angle to the Kegman onroad panel."), enabled=self._kegman_enabled),
+        self._toggle_json_item("kegmanEngine", tr_noop("Engine status"),
+                               tr_noop("Adds engine or EV status to the Kegman onroad panel."), enabled=self._kegman_enabled),
+        self._toggle_json_item("kegmanDistance", tr_noop("Relative distance"),
+                               tr_noop("Adds lead vehicle distance to the Kegman onroad panel when lead data is available."),
+                               enabled=self._kegman_enabled),
+        self._toggle_json_item("kegmanSpeed", tr_noop("Relative speed"),
+                               tr_noop("Adds lead vehicle relative speed to the Kegman onroad panel when lead data is available."),
+                               enabled=self._kegman_enabled),
       ],
       "Community": [
         SectionHeader(tr_noop("Cruise Settings")),
-        self._number_item("ParamCruiseMode", tr_noop("Cruise mode"), 0, 15, 1),
-        self._number_item("ParamCruiseGap", tr_noop("Cruise gap"), 0, 4, 1, enabled=lambda: int(self._values()["ParamCruiseMode"]) != 0),
-        self._number_item("ParamCurveSpeedLimit", tr_noop("Curve speed adjust"), 30, 100, 5),
-        self._number_item("ParamAutoEngage", tr_noop("Auto cruise engage speed"), 30, 100, 5),
-        self._number_item("ParamAutoLaneChange", tr_noop("Auto lane change delay"), 0, 100, 10),
-        self._number_item("ParamSteerRatio", tr_noop("Steering ratio"), -0.2, 0.2, 0.01),
-        self._number_item("ParamStiffnessFactor", tr_noop("Lateral stiffness factor"), -0.1, 0.1, 0.01),
-        self._number_item("ParamAngleOffsetDeg", tr_noop("Steering angle offset"), -2.0, 2.0, 0.1),
+        self._number_item("ParamCruiseMode", tr_noop("Cruise mode"), 0, 15, 1,
+                          tr_noop("Selects the custom cruise control mode used by supported vehicle code.")),
+        self._number_item("ParamCruiseGap", tr_noop("Cruise gap"), 0, 4, 1,
+                          tr_noop("Sets the custom cruise following gap when a non-zero cruise mode is selected."),
+                          enabled=lambda: int(self._values()["ParamCruiseMode"]) != 0),
+        self._number_item("ParamCurveSpeedLimit", tr_noop("Curve speed adjust"), 30, 100, 5,
+                          tr_noop("Sets the curve speed adjustment percentage used by supported vehicle code.")),
+        self._number_item("ParamAutoEngage", tr_noop("Auto cruise engage speed"), 30, 100, 5,
+                          tr_noop("Sets the speed threshold used for automatic cruise engagement on supported vehicles.")),
+        self._number_item("ParamAutoLaneChange", tr_noop("Auto lane change delay"), 0, 100, 10,
+                          tr_noop("Sets the custom auto lane change delay used by supported vehicles.")),
+        self._number_item("ParamSteerRatio", tr_noop("Steering ratio"), -0.2, 0.2, 0.01,
+                          tr_noop("Applies a small steering ratio adjustment for supported custom lateral tuning.")),
+        self._number_item("ParamStiffnessFactor", tr_noop("Lateral stiffness factor"), -0.1, 0.1, 0.01,
+                          tr_noop("Applies a small lateral stiffness adjustment for supported custom tuning.")),
+        self._number_item("ParamAngleOffsetDeg", tr_noop("Steering angle offset"), -2.0, 2.0, 0.1,
+                          tr_noop("Applies a steering angle offset in degrees for supported custom tuning.")),
         SectionHeader(tr_noop("Screen & Power")),
-        self._number_item("ParamBrightness", tr_noop("Screen brightness"), -20, 5, 1),
-        self._number_item("ParamAutoScreenOff", tr_noop("Screen timeout"), 0, 120, 1),
-        self._toggle_json_item("ParamScreenOffAfterFade", tr_noop("Screen off after fade")),
-        self._number_item("ParamPowerOff", tr_noop("Power off time"), 0, 60, 1),
-        self._number_item("DUAL_CAMERA_VIEW", tr_noop("Dual camera view"), 0, 1, 1),
+        self._number_item("ParamBrightness", tr_noop("Screen brightness"), -20, 5, 1,
+                          tr_noop("Adjusts automatic screen brightness. Negative values dim the screen; positive values brighten it.")),
+        self._number_item("ParamAutoScreenOff", tr_noop("Screen timeout"), 0, 120, 1,
+                          tr_noop("Sets the idle timeout in 10 second steps before the screen fades while ignition is off.")),
+        self._toggle_json_item("ParamScreenOffAfterFade", tr_noop("Screen off after fade"),
+                               tr_noop("Turns the display off after fade-out. If disabled, the display stays at minimum brightness.")),
+        self._number_item("ParamPowerOff", tr_noop("Power off time"), 0, 60, 1,
+                          tr_noop("Sets the delayed power-off timer in minutes after ignition turns off.")),
+        self._number_item("DUAL_CAMERA_VIEW", tr_noop("Dual camera view"), 0, 1, 1,
+                          tr_noop("Shows road and wide camera views side by side when both streams are available.")),
         SectionHeader(tr_noop("Logging")),
         self._logging_toggle_item(),
-        self._selection_item("SelectedCar", tr_noop("Selected car"), self._car_options),
+        self._selection_item("SelectedCar", tr_noop("Selected car"), self._car_options,
+                             tr_noop("Overrides the selected vehicle fingerprint when a supported car option is available.")),
       ],
       "Git": [
-        self._command_item(tr_noop("Fetch All and Prune"), tr_noop("SYNC"), ["bash", "-lc", "git fetch --all --prune && git remote prune origin"], confirm=False),
+        self._command_item(tr_noop("Fetch All and Prune"), tr_noop("SYNC"), ["bash", "-lc", "git fetch --all --prune && git remote prune origin"],
+                           confirm=False, description=tr_noop("Fetches remote branch updates and removes stale remote-tracking branches.")),
         self._update_from_remote_item(),
-        text_item(lambda: tr("Git status"), self._git_update_status_text),
+        text_item(lambda: tr("Git status"), self._git_update_status_text,
+                  description=lambda: tr("Shows the latest custom Git operation status.")),
       ],
       "Model": [
         self._model_selection_item(),
-        text_item(lambda: tr("Compile status"), self._compile_status_text),
+        text_item(lambda: tr("Compile status"), self._compile_status_text,
+                  description=lambda: tr("Shows the current custom model compile state, progress, and last error.")),
         CompileLogPanel(tr_noop("Compile detail"), self._compile_log_lines),
       ],
       "Debug": [
-        self._toggle_json_item("debug1", tr_noop("Debug 1")),
-        self._toggle_json_item("debug2", tr_noop("Debug 2")),
-        self._toggle_json_item("debug3", tr_noop("Debug 3")),
-        self._toggle_json_item("debug4", tr_noop("Debug 4")),
-        self._toggle_json_item("debug5", tr_noop("Debug 5")),
-        self._toggle_json_item("debug6", tr_noop("Debug 6")),
+        self._toggle_json_item("debug1", tr_noop("Debug 1"), tr_noop("Enables custom debug flag 1 for supported vehicle or UI code.")),
+        self._toggle_json_item("debug2", tr_noop("Debug 2"), tr_noop("Enables custom debug flag 2 for supported vehicle or UI code.")),
+        self._toggle_json_item("debug3", tr_noop("Debug 3"), tr_noop("Enables custom debug flag 3 for supported vehicle or UI code.")),
+        self._toggle_json_item("debug4", tr_noop("Debug 4"), tr_noop("Enables custom debug flag 4 for supported vehicle or UI code.")),
+        self._toggle_json_item("debug5", tr_noop("Debug 5"), tr_noop("Enables custom debug flag 5 for supported vehicle or UI code.")),
+        self._toggle_json_item("debug6", tr_noop("Debug 6"), tr_noop("Enables custom debug flag 6 for supported vehicle or UI code.")),
       ],
       "Navigation": [
-        self._toggle_param_item("UseExternalNaviRoutes", tr_noop("Use external navi routes")),
-        self._cycle_param_int_item("ExternalNaviType", tr_noop("External navi type"), EXTERNAL_NAVI_OPTIONS),
-        self._text_edit_item("MapboxToken", tr_noop("Mapbox token")),
+        self._toggle_param_item("UseExternalNaviRoutes", tr_noop("Use external navi routes"),
+                                tr_noop("Allows navigation to use routes from an external navigation provider.")),
+        self._cycle_param_int_item("ExternalNaviType", tr_noop("External navi type"), EXTERNAL_NAVI_OPTIONS,
+                                   tr_noop("Selects the external navigation provider type.")),
+        self._text_edit_item("MapboxToken", tr_noop("Mapbox token"),
+                             tr_noop("Sets the Mapbox access token used by map and navigation features.")),
       ],
     }
     self._scrollers = {name: Scroller(items, line_separator=True, spacing=0) for name, items in self._sections.items()}
@@ -336,9 +372,6 @@ class CustomSettingsLayout(Widget):
   def _save_value(self, key: str, value: int | float | bool) -> None:
     write_custom_params({key: value}, self._params)
     ui_state.custom_publisher.update(force=True)
-
-  def _debug_enabled(self) -> bool:
-    return bool(self._values()["ShowDebugMessage"])
 
   def _kegman_enabled(self) -> bool:
     values = self._values()
@@ -356,6 +389,7 @@ class CustomSettingsLayout(Widget):
     min_value: int | float,
     max_value: int | float,
     step_size: int | float,
+    description: str | None = None,
     enabled: bool | Callable[[], bool] = True,
   ):
     decimals = self._decimals(step_size)
@@ -379,7 +413,7 @@ class CustomSettingsLayout(Widget):
 
     action = StepperAction(current_value, lambda: step(-1), lambda: step(1))
     action.set_enabled(enabled)
-    return ListItem(title=lambda: tr(title), action_item=action)
+    return ListItem(title=lambda: tr(title), description=(lambda: tr(description)) if description else None, action_item=action)
 
   def _cycle_item(self, key: str, title: str, options: list[str], convert: Callable[[str], int | float]):
     def current_value() -> str:
@@ -406,17 +440,19 @@ class CustomSettingsLayout(Widget):
   def _cycle_float_item(self, key: str, title: str, options: list[str]):
     return self._cycle_item(key, title, options, float)
 
-  def _toggle_json_item(self, key: str, title: str, enabled: bool | Callable[[], bool] = True):
+  def _toggle_json_item(self, key: str, title: str, description: str | None = None, enabled: bool | Callable[[], bool] = True):
     return toggle_item(
       lambda: tr(title),
+      description=(lambda: tr(description)) if description else None,
       initial_state=bool(self._values()[key]),
       callback=lambda state, k=key: self._save_value(k, bool(state)),
       enabled=enabled,
     )
 
-  def _toggle_param_item(self, key: str, title: str):
+  def _toggle_param_item(self, key: str, title: str, description: str | None = None):
     return toggle_item(
       lambda: tr(title),
+      description=(lambda: tr(description)) if description else None,
       initial_state=self._params.get_bool(key),
       callback=lambda state, k=key: self._params.put_bool(k, bool(state)),
     )
@@ -433,11 +469,12 @@ class CustomSettingsLayout(Widget):
 
     return toggle_item(
       lambda: tr(tr_noop("Enable logging")),
+      description=lambda: tr("Enables route logging and upload-related logger processes when logging is allowed."),
       initial_state=logging_enabled(),
       callback=set_logging_enabled,
     )
 
-  def _cycle_param_int_item(self, key: str, title: str, options: list[str]):
+  def _cycle_param_int_item(self, key: str, title: str, options: list[str], description: str | None = None):
     def current_value() -> str:
       raw = self._param_text(key)
       return raw if raw in options else options[0]
@@ -451,9 +488,9 @@ class CustomSettingsLayout(Widget):
       self._params.put(key, options[next_idx])
 
     action = StepperAction(current_value, lambda: step(-1), lambda: step(1))
-    return ListItem(title=lambda: tr(title), action_item=action)
+    return ListItem(title=lambda: tr(title), description=(lambda: tr(description)) if description else None, action_item=action)
 
-  def _command_item(self, title: str, button_text: str, command: list[str], confirm: bool):
+  def _command_item(self, title: str, button_text: str, command: list[str], confirm: bool, description: str | None = None):
     def run() -> None:
       def worker() -> None:
         self._set_git_status(STATUS_RUNNING)
@@ -473,7 +510,8 @@ class CustomSettingsLayout(Widget):
       dialog = ConfirmDialog(tr("Are you sure?"), tr(button_text), callback=lambda result: run() if result == DialogResult.CONFIRM else None)
       gui_app.push_widget(dialog)
 
-    return button_item(lambda: tr(title), lambda: tr(button_text), callback=callback)
+    return button_item(lambda: tr(title), lambda: tr(button_text),
+                       description=(lambda: tr(description)) if description else None, callback=callback)
 
   def _update_from_remote_item(self):
     def callback() -> None:
@@ -520,7 +558,9 @@ class CustomSettingsLayout(Widget):
       dialog = ConfirmDialog(content, tr("Update"), callback=lambda result: run() if result == DialogResult.CONFIRM else None)
       gui_app.push_widget(dialog)
 
-    return button_item(lambda: tr("Update from Remote"), lambda: tr("UPDATE"), callback=callback)
+    return button_item(lambda: tr("Update from Remote"), lambda: tr("UPDATE"),
+                       description=lambda: tr("Fetches the configured origin branch and resets this checkout to match it."),
+                       callback=callback)
 
   def _set_git_status(self, status: str, error: str = "") -> None:
     self._params.put(GIT_STATUS_KEY, status)
@@ -539,8 +579,10 @@ class CustomSettingsLayout(Widget):
       return f"{tr('Failed')}: {error}".strip(": ")
     return tr("Idle")
 
-  def _text_edit_item(self, key: str, title: str):
-    item = button_item(lambda: tr(title), lambda: tr("EDIT"), callback=lambda k=key, t=title: self._show_keyboard(k, t))
+  def _text_edit_item(self, key: str, title: str, description: str | None = None):
+    item = button_item(lambda: tr(title), lambda: tr("EDIT"),
+                       description=(lambda: tr(description)) if description else None,
+                       callback=lambda k=key, t=title: self._show_keyboard(k, t))
     item.action_item.set_value(lambda k=key: self._param_text(k))
     return item
 
@@ -560,10 +602,11 @@ class CustomSettingsLayout(Widget):
       return ""
     return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
 
-  def _selection_item(self, key: str, title: str, options_fn: Callable[[], list[str]]):
+  def _selection_item(self, key: str, title: str, options_fn: Callable[[], list[str]], description: str | None = None):
     item = button_item(
       lambda: tr(title),
       lambda: tr("CHANGE"),
+      description=(lambda: tr(description)) if description else None,
       callback=lambda k=key, t=title, fn=options_fn: self._show_selection(k, t, fn()),
     )
     item.action_item.set_value(lambda k=key: self._param_text(k))
@@ -573,6 +616,7 @@ class CustomSettingsLayout(Widget):
     item = button_item(
       lambda: tr("Active model"),
       self._model_button_text,
+      description=lambda: tr("Selects and compiles the active driving model. Retry appears after a failed compile."),
       callback=self._handle_model_button,
       enabled=lambda: self._compile_status() != STATUS_RUNNING,
     )

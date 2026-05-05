@@ -97,6 +97,9 @@ def read_custom_params(params: Params | None = None) -> dict[str, int | float | 
       values[key] = _coerce_like_default(key, loaded[key])
   if "kegmanGPS" not in loaded and "kegmanGPU" in loaded:
     values["kegmanGPS"] = _coerce_like_default("kegmanGPS", loaded["kegmanGPU"])
+  if "ShowDebugMessage" not in loaded and "ParamDebug" in loaded:
+    values["ShowDebugMessage"] = _coerce_like_default("ShowDebugMessage", loaded["ParamDebug"])
+  values["ParamDebug"] = bool(values["ShowDebugMessage"])
   return values
 
 
@@ -108,6 +111,10 @@ def write_custom_params(values: Mapping[str, int | float | bool], params: Params
   for key, value in values.items():
     if key in merged:
       merged[key] = _coerce_like_default(key, value)
+  if "ShowDebugMessage" in values:
+    merged["ParamDebug"] = bool(merged["ShowDebugMessage"])
+  elif "ParamDebug" in values:
+    merged["ShowDebugMessage"] = bool(merged["ParamDebug"])
   params.put(CUSTOM_PARAM_KEY, json.dumps(merged, separators=(",", ":"), sort_keys=True))
 
 
@@ -157,7 +164,7 @@ class CustomPublisher:
     user_interface.showDebugMessage = int(values["ShowDebugMessage"])
     user_interface.showCarTracking = int(values["ShowCarTracking"])
     user_interface.tpms = int(values["tpms"])
-    user_interface.debug = int(values["ParamDebug"])
+    user_interface.debug = int(values["ShowDebugMessage"])
     user_interface.kegman = int(values["kegman"])
     user_interface.kegmanCPU = int(values["kegmanCPU"])
     user_interface.kegmanBattery = int(values["kegmanBattery"])

@@ -17,6 +17,7 @@ from opendbc.car.carlog import carlog
 from opendbc.car.fw_versions import ObdCallback
 from opendbc.car.car_helpers import get_car, interfaces
 from opendbc.car.interfaces import CarInterfaceBase, RadarInterfaceBase
+import opendbc.custom.loger as trace1
 from openpilot.selfdrive.pandad import can_capnp_to_list, can_list_to_can_capnp
 from openpilot.selfdrive.car.cruise import VCruiseHelper
 
@@ -207,6 +208,10 @@ class Car:
     self.pm.send('carOutput', co_send)
 
     # kick off controlsd step while we actuate the latest carControl packet
+    CS.carSCustom.alertTextMsg1 = str(trace1.global_alertTextMsg1)
+    CS.carSCustom.alertTextMsg2 = str(trace1.global_alertTextMsg2)
+    CS.carSCustom.alertTextMsg3 = str(trace1.global_alertTextMsg3)
+
     cs_send = messaging.new_message('carState')
     cs_send.valid = CS.canValid
     cs_send.carState = CS
