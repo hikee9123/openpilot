@@ -11,6 +11,7 @@ from openpilot.selfdrive.ui.mici.onroad.hud_renderer import HudRenderer
 from openpilot.selfdrive.ui.mici.onroad.model_renderer import ModelRenderer
 from openpilot.selfdrive.ui.mici.onroad.confidence_ball import ConfidenceBall
 from openpilot.selfdrive.ui.mici.onroad.cameraview import CameraView
+from openpilot.selfdrive.ui.onroad.car_tracking_renderer import CarTrackingRenderer
 from openpilot.selfdrive.ui.onroad.kegman_renderer import KegmanRenderer
 from openpilot.selfdrive.ui.onroad.trace_renderer import TraceRenderer
 from openpilot.system.ui.lib.application import FontWeight, gui_app, MousePos, MouseEvent
@@ -152,6 +153,7 @@ class AugmentedRoadView(CameraView):
     self._model_renderer = ModelRenderer()
     self._hud_renderer = HudRenderer()
     self._kegman_renderer = KegmanRenderer()
+    self._car_tracking_renderer = CarTrackingRenderer()
     self._trace_renderer = TraceRenderer()
     self._alert_renderer = AlertRenderer()
     self._driver_state_renderer = DriverStateRenderer()
@@ -240,6 +242,7 @@ class AugmentedRoadView(CameraView):
     self._alert_renderer.render(self._content_rect)
     self._hud_renderer.render(self._content_rect)
     self._kegman_renderer.render(self._content_rect)
+    self._car_tracking_renderer.render(self._content_rect)
     self._trace_renderer.render(self._content_rect)
 
     # Draw fake rounded border

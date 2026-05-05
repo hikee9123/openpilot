@@ -43,6 +43,13 @@ DEFAULT_MODEL_NAME = "1.Stock_Model"
 DEFAULT_MODEL_NAMES = {DEFAULT_MODEL_NAME, "1.default", "7.Current_Model", "7.Current_0.11_6a7d09ad"}
 
 EXTERNAL_NAVI_OPTIONS = ["0", "1", "2"]
+CAR_TRACKING_DESCRIPTION = tr_noop(
+  "Shows a separate CAR TRACKING panel on the onroad screen.<br>"
+  "Lead 1 / Lead 2: Shows radar lead distance, relative speed, and model probability when radarState lead data is valid.<br>"
+  "SCC: Shows stock SCC lead distance and current gap from carState.carSCustom when supported vehicle CAN data is available.<br>"
+  "If no lead data is available, the panel still appears and displays none so you can confirm the feature is enabled.<br>"
+  "This is a visual/debug overlay only; it does not change longitudinal control, radar matching, or cruise behavior."
+)
 CRUISE_MODE_DESCRIPTION = tr_noop(
   "0: Disabled. Custom cruise button control is not used.<br>"
   "1-15: Enabled. Current code treats all non-zero values the same; higher numbers are reserved for future modes.<br>"
@@ -279,7 +286,7 @@ class CustomSettingsLayout(Widget):
         self._toggle_param_item("DisableUpdates", tr_noop("Disable OTA updates"),
                                 tr_noop("Prevents the updater from downloading and applying openpilot updates.")),
         self._toggle_json_item("ShowCarTracking", tr_noop("Show car tracking"),
-                               tr_noop("Enables the custom car tracking flag for UI paths that consume it.")),
+                               CAR_TRACKING_DESCRIPTION),
         self._toggle_json_item("tpms", tr_noop("Show TPMS"),
                                tr_noop("Shows tire pressure values around the driver monitoring icon when TPMS data is available.")),
         self._toggle_json_item("kegmanBattery", tr_noop("Battery voltage"),
