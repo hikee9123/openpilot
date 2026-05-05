@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 import threading
@@ -343,13 +344,18 @@ class CustomSettingsLayout(Widget):
     )
 
   def _logging_toggle_item(self):
+    def logging_enabled() -> bool:
+      enable_logging = self._params.get("EnableLogging")
+      enabled = True if enable_logging is None else self._params.get_bool("EnableLogging")
+      return enabled and not self._params.get_bool("DisableLogging")
+
     def set_logging_enabled(state: bool) -> None:
       self._params.put_bool("EnableLogging", bool(state))
       self._params.put_bool("DisableLogging", not bool(state))
 
     return toggle_item(
       lambda: tr(tr_noop("Enable logging")),
-      initial_state=not self._params.get_bool("DisableLogging"),
+      initial_state=logging_enabled(),
       callback=set_logging_enabled,
     )
 
@@ -592,16 +598,33 @@ class CustomSettingsLayout(Widget):
 
   def _car_options(self) -> list[str]:
     options: list[str] = []
+
+    def add_options(car_names) -> None:
+      for car_name in car_names:
+        option = str(car_name)
+        if option and option not in options:
+          options.append(option)
+
+    try:
+      add_options(ui_state.sm["carState"].carSCustom.supportedCars)
+    except Exception:
+      pass
+
+    if options:
+      custom_params = read_custom_param_map(self._params)
+      custom_params["SupportCars"] = options
+      self._params.put("CustomParam", json.dumps(custom_params, separators=(",", ":"), sort_keys=True))
+
     support_cars = read_custom_param_map(self._params).get("SupportCars", [])
     if isinstance(support_cars, list):
-      options.extend(str(car_name) for car_name in support_cars if car_name)
+      add_options(support_cars)
 
     cp_bytes = self._params.get("CarParamsPersistent")
     if cp_bytes is not None:
       try:
         cp = messaging.log_from_bytes(cp_bytes, car.CarParams)
         if cp.carFingerprint:
-          options.append(cp.carFingerprint)
+          add_options([cp.carFingerprint])
       except Exception:
         pass
 

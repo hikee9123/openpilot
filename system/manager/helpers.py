@@ -50,12 +50,22 @@ def write_onroad_params(started, params):
   params.put_bool("IsOffroad", not started)
 
 
+def logging_enabled(params: Params) -> bool:
+  enable_logging = params.get("EnableLogging")
+  enabled = True if enable_logging is None else params.get_bool("EnableLogging")
+  return enabled and not params.get_bool("DisableLogging")
+
+
 def save_bootlog():
+  params = Params()
+  if not logging_enabled(params):
+    return
+
   # copy current params
   tmp = tempfile.mkdtemp()
-  params_dirname = pathlib.Path(Params().get_param_path()).name
+  params_dirname = pathlib.Path(params.get_param_path()).name
   params_dir = os.path.join(tmp, params_dirname)
-  shutil.copytree(Params().get_param_path(), params_dir, dirs_exist_ok=True)
+  shutil.copytree(params.get_param_path(), params_dir, dirs_exist_ok=True)
 
   def fn(tmpdir):
     env = os.environ.copy()
