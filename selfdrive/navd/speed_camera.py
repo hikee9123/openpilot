@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
-DB_VERSION = 1
+DB_VERSION = 2
 PUBLIC_DATA_PK = "15028200"
 PUBLIC_DATA_BASE_URL = "https://www.data.go.kr"
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -42,6 +42,7 @@ FIELD_ALIASES = {
   "lon": ("경도", "LONGITUDE", "lon", "lng", "longitude"),
   "camera_type": ("단속구분", "단속유형", "REGLT_SE", "camera_type", "type"),
   "speed_limit": ("제한속도", "제한속도(km/h)", "LMTT_VE", "speed_limit"),
+  "region": ("시도명", "시도", "CTPRVN_NM", "SIDO_NM", "region", "sido"),
   "road_name": ("도로노선명", "소재지도로명주소", "도로명", "ROAD_ROUTE_NM", "RDNMADR", "road_name"),
   "place": ("설치장소", "소재지지번주소", "ITLPC", "LNMADR", "place"),
   "direction": ("도로노선방향", "방향", "ROAD_ROUTE_DRC", "direction"),
@@ -49,6 +50,48 @@ FIELD_ALIASES = {
   "section_length_m": ("과속단속구간길이", "과속단속구간길이(m)", "OVRSPD_REGLT_SCTN_LT", "section_length_m"),
   "school_zone": ("보호구역구분", "PRTCAREA_TYPE", "school_zone"),
   "updated_at": ("데이터기준일자", "최종수정일", "REFERENCE_DATE", "updated_at"),
+}
+
+REGION_ALIASES = {
+  "강원": "강원특별자치도",
+  "강원도": "강원특별자치도",
+  "강원특별자치도": "강원특별자치도",
+  "경기": "경기도",
+  "경기도": "경기도",
+  "경남": "경상남도",
+  "경상남도": "경상남도",
+  "경북": "경상북도",
+  "경상북도": "경상북도",
+  "광주": "광주광역시",
+  "광주광역시": "광주광역시",
+  "대구": "대구광역시",
+  "대구광역시": "대구광역시",
+  "대전": "대전광역시",
+  "대전광역시": "대전광역시",
+  "부산": "부산광역시",
+  "부산광역시": "부산광역시",
+  "서울": "서울특별시",
+  "서울시": "서울특별시",
+  "서울특별시": "서울특별시",
+  "세종": "세종특별자치시",
+  "세종시": "세종특별자치시",
+  "세종특별자치시": "세종특별자치시",
+  "울산": "울산광역시",
+  "울산광역시": "울산광역시",
+  "인천": "인천광역시",
+  "인천광역시": "인천광역시",
+  "전남": "전라남도",
+  "전라남도": "전라남도",
+  "전북": "전북특별자치도",
+  "전라북도": "전북특별자치도",
+  "전북특별자치도": "전북특별자치도",
+  "제주": "제주특별자치도",
+  "제주도": "제주특별자치도",
+  "제주특별자치도": "제주특별자치도",
+  "충남": "충청남도",
+  "충청남도": "충청남도",
+  "충북": "충청북도",
+  "충청북도": "충청북도",
 }
 
 
@@ -88,6 +131,23 @@ def _parse_int(value: str) -> int:
   return int(parsed) if parsed is not None else 0
 
 
+def _normalize_region(value: str) -> str:
+  token = value.strip().split()[0] if value else ""
+  return REGION_ALIASES.get(token, "")
+
+
+def _extract_region(row: dict[str, str]) -> str:
+  direct_region = _normalize_region(_first(row, "region"))
+  if direct_region:
+    return direct_region
+
+  for field in ("road_name", "place"):
+    region = _normalize_region(_first(row, field))
+    if region:
+      return region
+  return "미분류"
+
+
 def _read_csv_rows(csv_path: Path) -> list[dict[str, str]]:
   for encoding in ("utf-8-sig", "cp949", "euc-kr"):
     try:
@@ -112,6 +172,7 @@ def init_db(conn: sqlite3.Connection) -> None:
       lon REAL NOT NULL,
       camera_type TEXT NOT NULL,
       speed_limit INTEGER NOT NULL,
+      region TEXT NOT NULL,
       road_name TEXT NOT NULL,
       place TEXT NOT NULL,
       direction TEXT NOT NULL,
@@ -122,7 +183,15 @@ def init_db(conn: sqlite3.Connection) -> None:
     );
 
     CREATE INDEX IF NOT EXISTS idx_speed_cameras_lat_lon ON speed_cameras(lat, lon);
+
+    CREATE TABLE IF NOT EXISTS speed_camera_region_counts (
+      region TEXT PRIMARY KEY,
+      count INTEGER NOT NULL
+    );
   """)
+  columns = {row[1] for row in conn.execute("PRAGMA table_info(speed_cameras)")}
+  if "region" not in columns:
+    conn.execute("ALTER TABLE speed_cameras ADD COLUMN region TEXT NOT NULL DEFAULT ''")
   conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("version", str(DB_VERSION)))
   conn.commit()
 
@@ -148,17 +217,19 @@ def create_database_from_csv(csv_path: Path = DEFAULT_CSV_PATH, db_path: Path = 
       updated_at = _first(row, "updated_at")
       if updated_at > source_updated_at:
         source_updated_at = updated_at
+      region = _extract_region(row)
       conn.execute("""
         INSERT OR REPLACE INTO speed_cameras(
-          id, lat, lon, camera_type, speed_limit, road_name, place, direction,
+          id, lat, lon, camera_type, speed_limit, region, road_name, place, direction,
           section_type, section_length_m, school_zone, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       """, (
         camera_id,
         lat,
         lon,
         _first(row, "camera_type"),
         _parse_int(_first(row, "speed_limit")),
+        region,
         _first(row, "road_name"),
         _first(row, "place"),
         _first(row, "direction"),
@@ -169,6 +240,14 @@ def create_database_from_csv(csv_path: Path = DEFAULT_CSV_PATH, db_path: Path = 
       ))
       inserted += 1
 
+    conn.execute("DELETE FROM speed_camera_region_counts")
+    conn.execute("""
+      INSERT INTO speed_camera_region_counts(region, count)
+      SELECT region, COUNT(*)
+      FROM speed_cameras
+      GROUP BY region
+      ORDER BY region
+    """)
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("source_updated_at", source_updated_at))
     conn.commit()
     return conn.execute("SELECT COUNT(*) FROM speed_cameras").fetchone()[0]
@@ -191,6 +270,31 @@ def database_data_date(db_path: Path = DEFAULT_DB_PATH) -> str:
       return str(row[0] or "")
     except sqlite3.Error:
       return ""
+
+
+def database_region_counts(db_path: Path = DEFAULT_DB_PATH) -> list[tuple[str, int]]:
+  if not db_path.exists():
+    return []
+
+  with sqlite3.connect(db_path) as conn:
+    try:
+      rows = conn.execute("""
+        SELECT region, count
+        FROM speed_camera_region_counts
+        ORDER BY count DESC, region
+      """).fetchall()
+      return [(str(region), int(count)) for region, count in rows]
+    except sqlite3.Error:
+      try:
+        rows = conn.execute("""
+          SELECT region, COUNT(*)
+          FROM speed_cameras
+          GROUP BY region
+          ORDER BY COUNT(*) DESC, region
+        """).fetchall()
+        return [(str(region or "미분류"), int(count)) for region, count in rows]
+      except sqlite3.Error:
+        return []
 
 
 def _fetch_data_go_json(path: str, params: dict, timeout: int = DATA_GO_KR_TIMEOUT_SECONDS):

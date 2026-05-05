@@ -5,6 +5,7 @@ from openpilot.selfdrive.navd.speed_camera import (
   camera_type_code,
   create_database_from_csv,
   database_data_date,
+  database_region_counts,
   direction_bearing_deg,
   download_public_speed_camera_csv,
   find_lead_camera,
@@ -91,6 +92,26 @@ def test_public_data_portal_column_codes(tmp_path: Path) -> None:
   assert camera.speed_limit == 40
   assert camera.camera_type == "01"
   assert database_data_date(db_path) == "2026-01-29"
+
+
+def test_region_counts_from_address(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  csv_path.write_text(
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,소재지도로명주소,소재지지번주소\n"
+    "A1,37.001,127.0,속도위반,80,서울특별시 강남구 테헤란로,\n"
+    "A2,36.999,127.0,속도위반,60,서울시 서초구 반포대로,\n"
+    "A3,35.001,128.0,속도위반,50,,경상남도 창원시 성산구\n"
+    "A4,35.002,128.0,속도위반,50,,주소없음\n",
+    encoding="utf-8-sig",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 4
+  assert database_region_counts(db_path) == [
+    ("서울특별시", 2),
+    ("경상남도", 1),
+    ("미분류", 1),
+  ]
 
 
 def test_download_public_speed_camera_csv(tmp_path: Path, monkeypatch) -> None:

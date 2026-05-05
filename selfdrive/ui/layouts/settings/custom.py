@@ -11,7 +11,11 @@ from cereal import car, messaging
 
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
-from openpilot.selfdrive.navd.speed_camera import DEFAULT_DB_PATH as SPEED_CAMERA_DB_PATH, database_data_date
+from openpilot.selfdrive.navd.speed_camera import (
+  DEFAULT_DB_PATH as SPEED_CAMERA_DB_PATH,
+  database_data_date,
+  database_region_counts,
+)
 from openpilot.selfdrive.ui.custom import read_custom_param_map, read_custom_params, write_custom_params
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.hardware import PC
@@ -390,6 +394,8 @@ class CustomSettingsLayout(Widget):
                   description=lambda: tr("Shows download and import progress for the speed camera DB update.")),
         text_item(lambda: tr("Speed camera data date"), self._speed_camera_data_date_text,
                   description=lambda: tr("Shows the public data reference date stored in the local speed camera DB.")),
+        text_item(lambda: tr("Speed camera regions"), self._speed_camera_regions_text,
+                  description=lambda: tr("Shows the saved speed camera count by region.")),
         SectionHeader(tr_noop("Speed camera tuning")),
         self._number_item("SpeedCameraLookaheadDistance", tr_noop("Camera search distance"), 500, 3000, 100,
                           description=tr_noop("Sets how far ahead, in meters, the speed camera lookup searches."), unit="m"),
@@ -688,6 +694,16 @@ class CustomSettingsLayout(Widget):
   def _speed_camera_data_date_text(self) -> str:
     data_date = self._param_text(SPEED_CAMERA_DATA_DATE_KEY) or database_data_date(SPEED_CAMERA_DB_PATH)
     return data_date or "--"
+
+  def _speed_camera_regions_text(self) -> str:
+    region_counts = database_region_counts(SPEED_CAMERA_DB_PATH)
+    if not region_counts:
+      return "--"
+
+    region_total = len(region_counts)
+    top_regions = ", ".join(f"{region} {count}" for region, count in region_counts[:3])
+    suffix = "..." if region_total > 3 else ""
+    return f"{region_total} regions: {top_regions}{suffix}"
 
   def _speed_camera_status_text(self) -> str:
     status = self._speed_camera_update_status()

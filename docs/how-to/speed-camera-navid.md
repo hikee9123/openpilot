@@ -28,8 +28,9 @@ selfdrive/navd/data/speed_cameras.csv
 selfdrive/navd/data/speed_cameras.sqlite3
 ```
 
-The `selfdrive/navd/data` directory is used as runtime data storage and ignores
-generated CSV/SQLite files in git.
+The `selfdrive/navd/data` directory is used as runtime data storage. The generated
+CSV stays ignored in git, while the bundled `speed_cameras.sqlite3` can be updated
+and committed when a fresh default DB is needed.
 
 You can override the data directory with:
 
@@ -46,7 +47,8 @@ You can also download the official public data portal CSV and import it in one s
 On device, the same flow is available from `Custom > Navigation > Speed camera DB`.
 The button downloads the national public dataset, writes `speed_cameras.csv`, and
 replaces the local SQLite DB used by `navid`. The Navigation menu also shows the
-current update status, progress percentage, and public data reference date.
+current update status, progress percentage, public data reference date, and a
+summary of saved camera counts by region.
 
 You can override paths:
 
