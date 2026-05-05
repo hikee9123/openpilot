@@ -11,6 +11,9 @@ LEAD_LANE_BOUNDARY_MARGIN = 0.25
 LEAD_MAX_DISTANCE = 120.0
 LEAD_MIN_DISTANCE = 0.75
 LEAD_LANES = ("EGO", "LEFT", "RIGHT")
+CAMERA_LEAD_PROB_MIN = 0.35
+RADAR_TO_CAMERA = 1.52
+FUSION_YREL_THRESHOLD = 1.5
 
 
 @dataclass
@@ -24,6 +27,7 @@ class TrackedLead:
   radar: bool = True
   radarTrackId: int = -1
   status: bool = True
+  source: str = "RADAR"
 
 
 def interp_y(xs, ys, x: float) -> float | None:
@@ -72,12 +76,22 @@ def lane_label_from_model(model: Any, d_rel: float, y_rel: float) -> str:
 def select_lane_leads(live_tracks: Any | None, model: Any, radar_state: Any | None) -> list[TrackedLead | None]:
   selected: dict[str, TrackedLead | None] = {lane: None for lane in LEAD_LANES}
 
+  leads: list[TrackedLead] = []
+  camera_leads = _camera_leads_from_model(model)
+
   if live_tracks is not None:
+    radar_leads = []
     for point in live_tracks.points:
       lead = _lead_from_track_point(point)
       if lead is None:
         continue
-      _select_lead(selected, lane_label_from_model(model, lead.dRel, lead.yRel), lead)
+      radar_leads.append(lead)
+    leads = _fuse_radar_and_camera_leads(radar_leads, camera_leads)
+  else:
+    leads = camera_leads
+
+  for lead in leads:
+    _select_lead(selected, lane_label_from_model(model, lead.dRel, lead.yRel), lead)
 
   if not any(selected.values()) and radar_state is not None:
     for lead_data in (radar_state.leadOne, radar_state.leadTwo):
@@ -87,6 +101,49 @@ def select_lane_leads(live_tracks: Any | None, model: Any, radar_state: Any | No
       _select_lead(selected, lane_label_from_model(model, lead.dRel, lead.yRel), lead)
 
   return [selected[lane] for lane in LEAD_LANES]
+
+
+def _camera_leads_from_model(model: Any) -> list[TrackedLead]:
+  model_v_ego = float(model.velocity.x[0]) if len(model.velocity.x) else 0.0
+  leads: list[TrackedLead] = []
+
+  for lead_data in model.leadsV3:
+    lead = _lead_from_model_lead(lead_data, model_v_ego)
+    if lead is not None:
+      leads.append(lead)
+
+  return leads
+
+
+def _fuse_radar_and_camera_leads(radar_leads: list[TrackedLead], camera_leads: list[TrackedLead]) -> list[TrackedLead]:
+  fused_leads: list[TrackedLead] = []
+  matched_camera_indices: set[int] = set()
+
+  for radar_lead in radar_leads:
+    best_idx = -1
+    best_score = float("inf")
+    for idx, camera_lead in enumerate(camera_leads):
+      if idx in matched_camera_indices:
+        continue
+      if not _leads_match(radar_lead, camera_lead):
+        continue
+
+      score = abs(radar_lead.dRel - camera_lead.dRel) + abs(radar_lead.yRel - camera_lead.yRel) * 2.0
+      if score < best_score:
+        best_idx = idx
+        best_score = score
+
+    if best_idx >= 0:
+      matched_camera_indices.add(best_idx)
+      fused_leads.append(_fused_lead(radar_lead, camera_leads[best_idx]))
+    else:
+      fused_leads.append(radar_lead)
+
+  for idx, camera_lead in enumerate(camera_leads):
+    if idx not in matched_camera_indices:
+      fused_leads.append(camera_lead)
+
+  return fused_leads
 
 
 def _lead_from_track_point(point: Any) -> TrackedLead | None:
@@ -107,6 +164,32 @@ def _lead_from_track_point(point: Any) -> TrackedLead | None:
     measured=bool(point.measured),
     radar=True,
     radarTrackId=int(point.trackId),
+    source="RADAR",
+  )
+
+
+def _lead_from_model_lead(lead_data: Any, model_v_ego: float) -> TrackedLead | None:
+  prob = float(lead_data.prob)
+  if prob < CAMERA_LEAD_PROB_MIN or len(lead_data.x) == 0 or len(lead_data.y) == 0 or len(lead_data.v) == 0:
+    return None
+
+  d_rel = float(lead_data.x[0]) - RADAR_TO_CAMERA
+  y_rel = -float(lead_data.y[0])
+  v_rel = float(lead_data.v[0]) - model_v_ego
+  if not (math.isfinite(d_rel) and math.isfinite(y_rel) and math.isfinite(v_rel)):
+    return None
+  if d_rel < LEAD_MIN_DISTANCE or d_rel > LEAD_MAX_DISTANCE:
+    return None
+
+  a_rel = float(lead_data.a[0]) if len(lead_data.a) and math.isfinite(float(lead_data.a[0])) else 0.0
+  return TrackedLead(
+    dRel=d_rel,
+    yRel=y_rel,
+    vRel=v_rel,
+    aRel=a_rel,
+    modelProb=prob,
+    radar=False,
+    source="CAMERA",
   )
 
 
@@ -122,6 +205,29 @@ def _lead_from_radar_state_lead(lead_data: Any) -> TrackedLead | None:
     modelProb=float(getattr(lead_data, "modelProb", 0.0)),
     radar=bool(getattr(lead_data, "radar", False)),
     radarTrackId=int(getattr(lead_data, "radarTrackId", -1)),
+    source="RADAR" if bool(getattr(lead_data, "radar", False)) else "CAMERA",
+  )
+
+
+def _leads_match(radar_lead: TrackedLead, camera_lead: TrackedLead) -> bool:
+  d_threshold = max(5.0, camera_lead.dRel * 0.25)
+  return (
+    abs(radar_lead.dRel - camera_lead.dRel) <= d_threshold and
+    abs(radar_lead.yRel - camera_lead.yRel) <= FUSION_YREL_THRESHOLD
+  )
+
+
+def _fused_lead(radar_lead: TrackedLead, camera_lead: TrackedLead) -> TrackedLead:
+  return TrackedLead(
+    dRel=radar_lead.dRel,
+    yRel=radar_lead.yRel,
+    vRel=radar_lead.vRel,
+    aRel=radar_lead.aRel,
+    measured=radar_lead.measured,
+    modelProb=camera_lead.modelProb,
+    radar=True,
+    radarTrackId=radar_lead.radarTrackId,
+    source="FUSED",
   )
 
 
