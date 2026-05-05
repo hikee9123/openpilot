@@ -16,9 +16,9 @@ from openpilot.selfdrive.navd.speed_camera import (
 from openpilot.selfdrive.ui.custom import read_custom_params
 
 
-MIN_GPS_SPEED_MPS = 1.0
 DB_RETRY_SECONDS = 60.0
 LOOKUP_INTERVAL_SECONDS = 0.5
+KPH_TO_MPS = 1000.0 / 3600.0
 
 
 def _clip(value: float, min_value: float, max_value: float) -> float:
@@ -38,6 +38,7 @@ def _speed_camera_tuning() -> dict[str, float]:
     "camera_direction_angle_deg": _clip(float(values.get("SpeedCameraDirectionAngle", 60)), 30.0, 90.0),
     "passing_distance_m": _clip(float(values.get("SpeedCameraPassingDistance", 30)), 10.0, 80.0),
     "passed_ignore_seconds": _clip(float(values.get("SpeedCameraPassedIgnoreSeconds", 8)), 3.0, 30.0),
+    "min_gps_speed_mps": _clip(float(values.get("SpeedCameraMinGpsSpeed", 3)), 0.0, 10.0) * KPH_TO_MPS,
   }
 
 
@@ -131,7 +132,7 @@ def main() -> None:
       continue
 
     gps = _select_gps(sm)
-    if gps is None or gps.speed < MIN_GPS_SPEED_MPS:
+    if gps is None or gps.speed < tuning["min_gps_speed_mps"]:
       active_camera_id = None
       active_camera = None
       _send_inactive(pm)

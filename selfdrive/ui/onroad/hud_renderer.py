@@ -195,10 +195,10 @@ class HudRenderer(Widget):
     if not self.camera_alert_active:
       return
 
-    width = UI_CONFIG.button_size
+    width = UI_CONFIG.set_speed_width_metric if ui_state.is_metric else UI_CONFIG.set_speed_width_imperial
     height = 86
-    x = rect.x + rect.width - UI_CONFIG.border_size - width
-    y = rect.y + UI_CONFIG.border_size + UI_CONFIG.button_size + 16
+    x = rect.x + 60 + (UI_CONFIG.set_speed_width_imperial - width) // 2
+    y = rect.y + 45 + UI_CONFIG.set_speed_height + 16
     alert_rect = rl.Rectangle(x, y, width, height)
 
     rl.draw_rectangle_rounded(alert_rect, 0.28, 10, COLORS.BLACK_TRANSLUCENT)
@@ -218,7 +218,7 @@ class HudRenderer(Widget):
     rl.draw_text_ex(
       self._font_semi_bold,
       "CAM",
-      rl.Vector2(x + 104, y + 14),
+      rl.Vector2(x + width - 88, y + 14),
       34,
       0,
       COLORS.SPEED_CAMERA,

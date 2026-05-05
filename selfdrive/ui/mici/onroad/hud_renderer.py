@@ -292,8 +292,8 @@ class HudRenderer(Widget):
 
     width = 172
     height = 70
-    x = rect.x + rect.width - width - 28
-    y = rect.y + 30
+    x = rect.x
+    y = rect.y + 176
     alpha = 0.9
     alert_rect = rl.Rectangle(x, y, width, height)
 

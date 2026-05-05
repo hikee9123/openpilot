@@ -26,6 +26,7 @@ DEFAULT_CUSTOM_PARAMS: dict[str, int | float | bool] = {
   "SpeedCameraDirectionAngle": 60,
   "SpeedCameraPassingDistance": 30,
   "SpeedCameraPassedIgnoreSeconds": 8,
+  "SpeedCameraMinGpsSpeed": 3,
   "ParamAutoScreenOff": 8,
   "ParamScreenOffAfterFade": True,
   "ParamBrightness": -12,

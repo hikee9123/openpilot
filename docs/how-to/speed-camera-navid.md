@@ -126,6 +126,7 @@ Camera search angle: 35deg
 Camera direction angle: 60deg
 Camera passing distance: 30m
 Camera ignore time: 8s
+Minimum GPS speed: 3km/h
 ```
 
 Suggested starting points:

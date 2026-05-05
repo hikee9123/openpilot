@@ -397,6 +397,8 @@ class CustomSettingsLayout(Widget):
                           description=tr_noop("Sets the distance, in meters, used to mark a camera as passed."), unit="m"),
         self._number_item("SpeedCameraPassedIgnoreSeconds", tr_noop("Camera ignore time"), 3, 30, 1,
                           description=tr_noop("Sets how long, in seconds, a passed camera is hidden from repeated alerts."), unit="s"),
+        self._number_item("SpeedCameraMinGpsSpeed", tr_noop("Minimum GPS speed"), 0, 10, 1,
+                          description=tr_noop("Sets the minimum vehicle speed, in km/h, required before speed camera lookup runs."), unit="km/h"),
         self._toggle_param_item("UseExternalNaviRoutes", tr_noop("Use external navi routes"),
                                 tr_noop("Allows navigation to use routes from an external navigation provider.")),
         self._cycle_param_int_item("ExternalNaviType", tr_noop("External navi type"), EXTERNAL_NAVI_OPTIONS,
