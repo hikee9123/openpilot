@@ -55,6 +55,8 @@ class Colors:
   BRAKE_HARD = rl.Color(255, 0, 0, 255)
   GAS = rl.Color(255, 255, 0, 255)
   SPEED_CAMERA = rl.Color(255, 198, 77, 255)
+  SPEED_SIGN_RED = rl.Color(210, 32, 42, 255)
+  SPEED_SIGN_TEXT = rl.Color(18, 18, 18, 255)
 
 
 UI_CONFIG = UIConfig()
@@ -196,7 +198,7 @@ class HudRenderer(Widget):
       return
 
     width = UI_CONFIG.set_speed_width_metric if ui_state.is_metric else UI_CONFIG.set_speed_width_imperial
-    height = 86
+    height = 146
     x = rect.x + 60 + (UI_CONFIG.set_speed_width_imperial - width) // 2
     y = rect.y + 45 + UI_CONFIG.set_speed_height + 16
     alert_rect = rl.Rectangle(x, y, width, height)
@@ -207,30 +209,34 @@ class HudRenderer(Widget):
     limit_text = str(self.camera_limit_speed) if self.camera_limit_speed > 0 else "--"
     distance_text = self._format_distance(self.camera_distance_m)
 
-    rl.draw_text_ex(
-      self._font_bold,
-      limit_text,
-      rl.Vector2(x + 18, y + 2),
-      60,
-      0,
-      COLORS.WHITE,
-    )
-    rl.draw_text_ex(
-      self._font_semi_bold,
-      "CAM",
-      rl.Vector2(x + width - 88, y + 14),
-      34,
-      0,
-      COLORS.SPEED_CAMERA,
-    )
+    sign_radius = 42
+    sign_center_x = x + width / 2
+    sign_center_y = y + 52
+    self._draw_speed_limit_sign(sign_center_x, sign_center_y, sign_radius, limit_text)
+
     distance_size = measure_text_cached(self._font_medium, distance_text, 30)
     rl.draw_text_ex(
       self._font_medium,
       distance_text,
-      rl.Vector2(x + width - distance_size.x - 18, y + 52),
+      rl.Vector2(x + (width - distance_size.x) / 2, y + 105),
       30,
       0,
       COLORS.WHITE_TRANSLUCENT,
+    )
+
+  def _draw_speed_limit_sign(self, center_x: float, center_y: float, radius: int, limit_text: str) -> None:
+    rl.draw_circle(int(center_x), int(center_y), radius, COLORS.SPEED_SIGN_RED)
+    rl.draw_circle(int(center_x), int(center_y), radius - 8, COLORS.WHITE)
+
+    font_size = 44 if len(limit_text) <= 2 else 34
+    text_size = measure_text_cached(self._font_bold, limit_text, font_size)
+    rl.draw_text_ex(
+      self._font_bold,
+      limit_text,
+      rl.Vector2(center_x - text_size.x / 2, center_y - text_size.y / 2),
+      font_size,
+      0,
+      COLORS.SPEED_SIGN_TEXT,
     )
 
   def _format_distance(self, distance_m: int) -> str:
