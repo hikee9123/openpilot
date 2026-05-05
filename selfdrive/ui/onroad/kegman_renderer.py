@@ -238,9 +238,9 @@ class KegmanRenderer(Widget):
       f"{cpu_temp:.1f}",
       "C",
       f"CPU {cpu_usage:.1f}%",
-      self._threshold_color(cpu_usage, 90, 60),
-      self._threshold_color(cpu_temp, 92, 80),
-      self._threshold_color(cpu_usage, 90, 60),
+      self._threshold_color(cpu_temp, 90, 60),
+      self._threshold_color(cpu_usage, 92, 80),
+      self._threshold_color(cpu_temp, 90, 60),
     )
 
 
@@ -279,9 +279,9 @@ class KegmanRenderer(Widget):
       f"{gpu_temp:.1f}",
       "C",
       f"GPU {gpu_usage:.1f}%",
-      self._threshold_color(gpu_usage, 90, 60),
-      self._threshold_color(gpu_temp, 92, 80),
-      self._threshold_color(gpu_usage, 90, 60),
+      self._threshold_color(gpu_temp, 90, 60),
+      self._threshold_color(gpu_usage, 92, 80),
+      self._threshold_color(gpu_temp, 90, 60),
     )
 
   def _steering_angle_measure(self) -> KegmanMeasure:
