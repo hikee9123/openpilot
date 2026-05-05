@@ -218,9 +218,16 @@ class HudRenderer(Widget):
 
   def _mix_color(self, c0: rl.Color, c1: rl.Color, ratio: float) -> rl.Color:
     ratio = min(1.0, max(0.0, ratio))
+    r0, g0, b0, a0 = self._rgba(c0)
+    r1, g1, b1, a1 = self._rgba(c1)
     return rl.Color(
-      round(c0.r + (c1.r - c0.r) * ratio),
-      round(c0.g + (c1.g - c0.g) * ratio),
-      round(c0.b + (c1.b - c0.b) * ratio),
-      round(c0.a + (c1.a - c0.a) * ratio),
+      round(r0 + (r1 - r0) * ratio),
+      round(g0 + (g1 - g0) * ratio),
+      round(b0 + (b1 - b0) * ratio),
+      round(a0 + (a1 - a0) * ratio),
     )
+
+  def _rgba(self, color: rl.Color) -> tuple[int, int, int, int]:
+    if hasattr(color, "r"):
+      return int(color.r), int(color.g), int(color.b), int(color.a)
+    return int(color[0]), int(color[1]), int(color[2]), int(color[3])
