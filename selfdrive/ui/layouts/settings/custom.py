@@ -197,7 +197,7 @@ class CustomSettingsLayout(Widget):
         self._toggle_json_item("tpms", tr_noop("Show TPMS"), enabled=self._debug_enabled),
         self._toggle_json_item("ParamDebug", tr_noop("Debug overlay"), enabled=self._debug_enabled),
         SectionHeader(tr_noop("Kegman Show")),
-        self._toggle_json_item("kegman", tr_noop("HUD overlay"), enabled=self._debug_enabled),
+        self._toggle_json_item("kegman", tr_noop("HUD overlay")),
         self._toggle_json_item("kegmanCPU", tr_noop("CPU temperature"), enabled=self._kegman_enabled),
         self._toggle_json_item("kegmanLag", tr_noop("UI lag"), enabled=self._kegman_enabled),
         self._toggle_json_item("kegmanBattery", tr_noop("Battery voltage"), enabled=self._kegman_enabled),
@@ -263,7 +263,7 @@ class CustomSettingsLayout(Widget):
 
   def _kegman_enabled(self) -> bool:
     values = self._values()
-    return bool(values["ShowDebugMessage"] and values["kegman"])
+    return bool(values["kegman"])
 
   @staticmethod
   def _decimals(step: int | float) -> int:

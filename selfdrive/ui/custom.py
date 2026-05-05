@@ -149,7 +149,7 @@ class CustomPublisher:
     user_interface.showCarTracking = int(values["ShowCarTracking"])
     user_interface.tpms = int(values["tpms"])
     user_interface.debug = int(values["ParamDebug"])
-    user_interface.kegman = int(values["kegman"] and values["ShowDebugMessage"])
+    user_interface.kegman = int(values["kegman"])
     user_interface.kegmanCPU = int(values["kegmanCPU"])
     user_interface.kegmanBattery = int(values["kegmanBattery"])
     user_interface.kegmanGPU = int(values["kegmanGPU"])

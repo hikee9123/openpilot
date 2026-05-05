@@ -139,16 +139,27 @@ class KegmanRenderer(Widget):
     if not ui_custom.kegman:
       return []
 
+    default_overlay = not any((
+      ui_custom.kegmanCPU,
+      ui_custom.kegmanLag,
+      ui_custom.kegmanBattery,
+      ui_custom.kegmanGPU,
+      ui_custom.kegmanAngle,
+      ui_custom.kegmanDistance,
+      ui_custom.kegmanSpeed,
+      ui_custom.kegmanEngine,
+    ))
+
     measures: list[KegmanMeasure] = []
-    if ui_custom.kegmanCPU:
+    if ui_custom.kegmanCPU or default_overlay:
       measures.append(self._cpu_measure())
-    if ui_custom.kegmanLag:
+    if ui_custom.kegmanLag or default_overlay:
       measures.append(self._lag_measure())
-    if ui_custom.kegmanBattery:
+    if ui_custom.kegmanBattery or default_overlay:
       measures.append(self._battery_measure())
-    if ui_custom.kegmanGPU:
+    if ui_custom.kegmanGPU or default_overlay:
       measures.append(self._gps_measure())
-    if ui_custom.kegmanAngle:
+    if ui_custom.kegmanAngle or default_overlay:
       measures.append(self._steering_angle_measure())
     if ui_custom.kegmanDistance:
       measures.append(self._lead_distance_measure())
