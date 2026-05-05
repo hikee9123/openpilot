@@ -69,7 +69,7 @@ struct UICustom @0xda96579883444c35 {
     kegman @5 :Int16;
     kegmanCPU @6 :Int16;
     kegmanBattery @7 :Int16;
-    kegmanGPU @8 :Int16;
+    kegmanGPS @8 :Int16;
     kegmanAngle @9 :Int16;
     kegmanEngine @10 :Int16;
     kegmanDistance @11 :Int16;

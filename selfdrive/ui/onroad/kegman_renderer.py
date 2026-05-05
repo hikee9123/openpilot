@@ -157,27 +157,27 @@ class KegmanRenderer(Widget):
 
     default_overlay = not any((
       ui_custom.kegmanCPU,
-      ui_custom.kegmanLag,
-      ui_custom.kegmanBattery,
-      ui_custom.kegmanGPU,
+      ui_custom.kegmanGPS,
       ui_custom.kegmanGPULoad,
+      ui_custom.kegmanBattery,
       ui_custom.kegmanAngle,
       ui_custom.kegmanDistance,
       ui_custom.kegmanSpeed,
       ui_custom.kegmanEngine,
+      ui_custom.kegmanLag,
     ))
 
     measures: list[KegmanMeasure] = []
     if ui_custom.kegmanCPU or default_overlay:
       measures.append(self._cpu_measure())
-    if ui_custom.kegmanLag or default_overlay:
-      measures.append(self._lag_measure())
-    if ui_custom.kegmanBattery or default_overlay:
-      measures.append(self._battery_measure())
-    if ui_custom.kegmanGPU or default_overlay:
+    if ui_custom.kegmanGPS or default_overlay:
       measures.append(self._gps_measure())
     if ui_custom.kegmanGPULoad or default_overlay:
       measures.append(self._gpu_measure())
+
+    if ui_custom.kegmanBattery or default_overlay:
+      measures.append(self._battery_measure())
+
     if ui_custom.kegmanAngle or default_overlay:
       measures.append(self._steering_angle_measure())
     if ui_custom.kegmanDistance:
@@ -186,6 +186,10 @@ class KegmanRenderer(Widget):
       measures.append(self._lead_speed_measure())
     if ui_custom.kegmanEngine:
       measures.append(self._engine_measure())
+
+    if ui_custom.kegmanLag or default_overlay:
+      measures.append(self._lag_measure())
+
     return measures
 
   def _draw_tpms_overlay(self, rect: rl.Rectangle) -> None:
@@ -274,9 +278,9 @@ class KegmanRenderer(Widget):
     if gpu_temp > 120:
       gpu_temp = 0.0
     return KegmanMeasure(
-      str(gpu_usage),
-      "%",
-      f"GPU {gpu_temp:.1f}C",
+      str(gpu_temp),
+      "C",
+      f"GPU {gpu_usage:.1f}%",
       self._threshold_color(gpu_usage, 90, 60),
       self._threshold_color(gpu_temp, 92, 80),
       self._threshold_color(gpu_usage, 90, 60),

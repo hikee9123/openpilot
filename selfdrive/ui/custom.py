@@ -28,7 +28,7 @@ DEFAULT_CUSTOM_PARAMS: dict[str, int | float | bool] = {
   "kegman": False,
   "kegmanCPU": False,
   "kegmanBattery": False,
-  "kegmanGPU": False,
+  "kegmanGPS": False,
   "kegmanGPULoad": False,
   "kegmanAngle": False,
   "kegmanEngine": False,
@@ -94,6 +94,8 @@ def read_custom_params(params: Params | None = None) -> dict[str, int | float | 
   for key in values:
     if key in loaded:
       values[key] = _coerce_like_default(key, loaded[key])
+  if "kegmanGPS" not in loaded and "kegmanGPU" in loaded:
+    values["kegmanGPS"] = _coerce_like_default("kegmanGPS", loaded["kegmanGPU"])
   return values
 
 
@@ -158,7 +160,7 @@ class CustomPublisher:
     user_interface.kegman = int(values["kegman"])
     user_interface.kegmanCPU = int(values["kegmanCPU"])
     user_interface.kegmanBattery = int(values["kegmanBattery"])
-    user_interface.kegmanGPU = int(values["kegmanGPU"])
+    user_interface.kegmanGPS = int(values["kegmanGPS"])
     user_interface.kegmanGPULoad = int(values["kegmanGPULoad"])
     user_interface.kegmanAngle = int(values["kegmanAngle"])
     user_interface.kegmanEngine = int(values["kegmanEngine"])

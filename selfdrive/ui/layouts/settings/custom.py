@@ -210,7 +210,7 @@ class CustomSettingsLayout(Widget):
         self._toggle_json_item("kegmanCPU", tr_noop("CPU temperature"), enabled=self._kegman_enabled),
         self._toggle_json_item("kegmanLag", tr_noop("UI lag"), enabled=self._kegman_enabled),
         self._toggle_json_item("kegmanBattery", tr_noop("Battery voltage"), enabled=self._kegman_enabled),
-        self._toggle_json_item("kegmanGPU", tr_noop("GPS accuracy"), enabled=self._kegman_enabled),
+        self._toggle_json_item("kegmanGPS", tr_noop("GPS accuracy"), enabled=self._kegman_enabled),
         self._toggle_json_item("kegmanGPULoad", tr_noop("GPU load"), enabled=self._kegman_enabled),
         self._toggle_json_item("kegmanAngle", tr_noop("Steering angle"), enabled=self._kegman_enabled),
         self._toggle_json_item("kegmanEngine", tr_noop("Engine status"), enabled=self._kegman_enabled),
