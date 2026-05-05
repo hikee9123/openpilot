@@ -44,6 +44,8 @@ class AugmentedRoadView(CameraView):
     self._matrix_cache_key = (0, 0.0, 0.0, stream_type)
     self._cached_matrix: np.ndarray | None = None
     self._content_rect = rl.Rectangle()
+    self._dual_camera_view = CameraView("camerad", WIDE_CAM)
+    self._dual_camera_view._set_placeholder_color(BORDER_COLORS[UIStatus.DISENGAGED])
 
     self.model_renderer = ModelRenderer()
     self._hud_renderer = HudRenderer()
@@ -53,6 +55,11 @@ class AugmentedRoadView(CameraView):
 
     # debug
     self._pm = messaging.PubMaster(['uiDebug'])
+
+  def close(self) -> None:
+    if hasattr(self, "_dual_camera_view"):
+      self._dual_camera_view.close()
+    super().close()
 
   def _render(self, rect):
     # Only render when system is started to avoid invalid data access
@@ -72,6 +79,16 @@ class AugmentedRoadView(CameraView):
       rect.width - 2 * UI_BORDER_SIZE,
       rect.height - 2 * UI_BORDER_SIZE,
     )
+    auxiliary_camera_rect: rl.Rectangle | None = None
+    if int(ui_state.custom_params["DUAL_CAMERA_VIEW"]):
+      gap = UI_BORDER_SIZE
+      camera_width = (self._content_rect.width - gap) / 2
+      auxiliary_camera_rect = rl.Rectangle(self._content_rect.x, self._content_rect.y, camera_width, self._content_rect.height)
+      self._content_rect = rl.Rectangle(auxiliary_camera_rect.x + auxiliary_camera_rect.width + gap,
+                                        self._content_rect.y, camera_width, self._content_rect.height)
+
+    if auxiliary_camera_rect is not None:
+      self._dual_camera_view.render(auxiliary_camera_rect)
 
     # Enable scissor mode to clip all rendering within content rectangle boundaries
     # This creates a rendering viewport that prevents graphics from drawing outside the border
@@ -83,7 +100,7 @@ class AugmentedRoadView(CameraView):
     )
 
     # Render the base camera view
-    super()._render(rect)
+    super()._render(self._content_rect if auxiliary_camera_rect is not None else rect)
 
     # Draw all UI overlays
     self.model_renderer.render(self._content_rect)
@@ -123,7 +140,9 @@ class AugmentedRoadView(CameraView):
     rl.draw_rectangle_rounded_lines_ex(border_rect, border_roundness, 10, UI_BORDER_SIZE, border_color)
 
   def _switch_stream_if_needed(self, sm):
-    if sm['selfdriveState'].experimentalMode and WIDE_CAM in self.available_streams:
+    if int(ui_state.custom_params["DUAL_CAMERA_VIEW"]):
+      target = ROAD_CAM
+    elif sm['selfdriveState'].experimentalMode and WIDE_CAM in self.available_streams:
       v_ego = sm['carState'].vEgo
       if v_ego < WIDE_CAM_MAX_SPEED:
         target = WIDE_CAM

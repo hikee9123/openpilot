@@ -223,7 +223,7 @@ class CustomSettingsLayout(Widget):
         self._number_item("ParamPowerOff", tr_noop("Power off time"), 0, 60, 1),
         self._number_item("DUAL_CAMERA_VIEW", tr_noop("Dual camera view"), 0, 1, 1),
         SectionHeader(tr_noop("Logging")),
-        self._toggle_param_item("EnableLogging", tr_noop("Enable logging")),
+        self._logging_toggle_item(),
         self._selection_item("SelectedCar", tr_noop("Selected car"), self._car_options),
       ],
       "Git": [
@@ -340,6 +340,17 @@ class CustomSettingsLayout(Widget):
       lambda: tr(title),
       initial_state=self._params.get_bool(key),
       callback=lambda state, k=key: self._params.put_bool(k, bool(state)),
+    )
+
+  def _logging_toggle_item(self):
+    def set_logging_enabled(state: bool) -> None:
+      self._params.put_bool("EnableLogging", bool(state))
+      self._params.put_bool("DisableLogging", not bool(state))
+
+    return toggle_item(
+      lambda: tr(tr_noop("Enable logging")),
+      initial_state=not self._params.get_bool("DisableLogging"),
+      callback=set_logging_enabled,
     )
 
   def _cycle_param_int_item(self, key: str, title: str, options: list[str]):

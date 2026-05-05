@@ -8,13 +8,14 @@ from cereal import messaging, car, log
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
-from openpilot.selfdrive.ui.custom import AutoPowerOffController, CustomPublisher
+from openpilot.selfdrive.ui.custom import AutoPowerOffController, CustomPublisher, read_custom_params
 from openpilot.selfdrive.ui.lib.prime_state import PrimeState
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.hardware import HARDWARE, PC
 
 BACKLIGHT_OFFROAD = 65 if HARDWARE.get_device_type() == "mici" else 50
 PARAM_UPDATE_TIME = 5.0
+CUSTOM_PARAM_UPDATE_TIME = 1.0
 
 
 class UIStatus(Enum):
@@ -66,6 +67,8 @@ class UIState:
 
     self.prime_state = PrimeState()
     # #custom start: publish custom UI tuning state
+    self.custom_params = read_custom_params(self.params)
+    self._custom_param_update_time: float = -CUSTOM_PARAM_UPDATE_TIME
     self.custom_publisher = CustomPublisher(self.params)
     self.auto_power_off = AutoPowerOffController(self.params)
     # #custom end
@@ -124,6 +127,9 @@ class UIState:
     if time.monotonic() - self._param_update_time >= PARAM_UPDATE_TIME:
       self.update_params()
     # #custom start: publish custom UI tuning state
+    if time.monotonic() - self._custom_param_update_time >= CUSTOM_PARAM_UPDATE_TIME:
+      self.custom_params = read_custom_params(self.params)
+      self._custom_param_update_time = time.monotonic()
     self.custom_publisher.update()
     self.auto_power_off.update(self.started, self.ignition, self.sm["carState"].vEgo)
     # #custom end
@@ -230,15 +236,18 @@ class Device:
     self._reset_interactive_timeout()
 
   @property
-  def interactive_timeout(self) -> int:
+  def interactive_timeout(self) -> int | None:
     if self._override_interactive_timeout is not None:
       return self._override_interactive_timeout
 
-    ignition_timeout = 10 if gui_app.big_ui() else 5
-    return ignition_timeout if ui_state.ignition else 30
+    timeout_steps = int(ui_state.custom_params["ParamAutoScreenOff"])
+    if timeout_steps <= 0:
+      return None
+    return timeout_steps * 10
 
   def _reset_interactive_timeout(self) -> None:
-    self._interaction_time = time.monotonic() + self.interactive_timeout
+    timeout = self.interactive_timeout
+    self._interaction_time = float("inf") if timeout is None else time.monotonic() + timeout
 
   def add_interactive_timeout_callback(self, callback: Callable):
     self._interactive_timeout_callbacks.append(callback)
@@ -269,6 +278,11 @@ class Device:
         clipped_brightness = ((clipped_brightness + 16.0) / 116.0) ** 3.0
 
       clipped_brightness = float(np.interp(clipped_brightness, [0, 1], [30, 100]))
+
+    brightness_offset = int(ui_state.custom_params["ParamBrightness"])
+    if brightness_offset != 0:
+      brightness_scale = min(max(1.0 + brightness_offset * 0.05, 0.2), 2.0)
+      clipped_brightness = min(max(clipped_brightness * brightness_scale, 1.0), 100.0)
 
     brightness = round(self._brightness_filter.update(clipped_brightness))
     if not self._awake:

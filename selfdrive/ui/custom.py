@@ -145,6 +145,8 @@ class CustomPublisher:
     community.steerRatio = float(values["ParamSteerRatio"])
     community.stiffnessFactor = float(values["ParamStiffnessFactor"])
     community.angleOffsetDeg = float(values["ParamAngleOffsetDeg"])
+    community.autoEngage = int(values["ParamAutoEngage"])
+    community.autoLaneChange = int(values["ParamAutoLaneChange"])
 
     user_interface = custom.userInterface
     user_interface.cmdIdx = self._cmd_idx

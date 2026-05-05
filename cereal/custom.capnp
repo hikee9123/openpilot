@@ -56,6 +56,8 @@ struct UICustom @0xda96579883444c35 {
     steerRatio @4 :Float32;
     stiffnessFactor @5 :Float32;
     angleOffsetDeg @6 :Float32;
+    autoEngage @7 :Int16;
+    autoLaneChange @8 :Int16;
   }
 
   struct UserInterface {

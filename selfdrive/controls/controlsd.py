@@ -38,7 +38,8 @@ class Controls:
 
     self.sm = messaging.SubMaster(['liveDelay', 'liveParameters', 'liveTorqueParameters', 'modelV2', 'selfdriveState',
                                    'liveCalibration', 'livePose', 'longitudinalPlan', 'lateralManeuverPlan', 'carState', 'carOutput',
-                                   'driverMonitoringState', 'onroadEvents', 'driverAssistance'], poll='selfdriveState')
+                                   'driverMonitoringState', 'onroadEvents', 'driverAssistance', 'uICustom'],
+                                  poll='selfdriveState', ignore_avg_freq=['uICustom'])
     self.pm = messaging.PubMaster(['carControl', 'controlsState'])
 
     self.steer_limited_by_safety = False
@@ -47,6 +48,9 @@ class Controls:
 
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
+    self.sr_scale = 1.0
+    self.x_scale = 1.0
+    self.angle_offset_deg = 0.0
 
     self.LoC = LongControl(self.CP)
     self.VM = VehicleModel(self.CP)
@@ -57,6 +61,12 @@ class Controls:
       self.LaC = LatControlPID(self.CP, self.CI, DT_CTRL)
     elif self.CP.lateralTuning.which() == 'torque':
       self.LaC = LatControlTorque(self.CP, self.CI, DT_CTRL)
+
+  @staticmethod
+  def to_scale(value: float) -> float:
+    if not math.isfinite(value):
+      return 1.0
+    return 1.0 + value if -0.5 <= value <= 0.5 else value
 
   def update(self):
     self.sm.update(15)
@@ -69,13 +79,21 @@ class Controls:
   def state_control(self):
     CS = self.sm['carState']
 
+    if self.sm.updated['uICustom']:
+      community = self.sm['uICustom'].community
+      self.sr_scale = self.to_scale(float(community.steerRatio))
+      self.x_scale = self.to_scale(float(community.stiffnessFactor))
+      self.angle_offset_deg = float(community.angleOffsetDeg)
+
     # Update VehicleModel
     lp = self.sm['liveParameters']
-    x = max(lp.stiffnessFactor, 0.1)
-    sr = max(lp.steerRatio, 0.1)
+    x = max(lp.stiffnessFactor, 0.1) * self.x_scale
+    sr = max(lp.steerRatio, 0.1) * self.sr_scale
+    x = min(max(x, 0.50), 1.5)
+    sr = min(max(sr, 12.0), 20.0)
     self.VM.update_params(x, sr)
 
-    steer_angle_without_offset = math.radians(CS.steeringAngleDeg - lp.angleOffsetDeg)
+    steer_angle_without_offset = math.radians(CS.steeringAngleDeg - (lp.angleOffsetDeg + self.angle_offset_deg))
     self.curvature = -self.VM.calc_curvature(steer_angle_without_offset, CS.vEgo, lp.roll)
 
     # Update Torque Params
