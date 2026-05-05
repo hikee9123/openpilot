@@ -388,15 +388,15 @@ class CustomSettingsLayout(Widget):
                   description=lambda: tr("Shows download and import progress for the speed camera DB update.")),
         SectionHeader(tr_noop("Speed camera tuning")),
         self._number_item("SpeedCameraLookaheadDistance", tr_noop("Camera search distance"), 500, 3000, 100,
-                          tr_noop("Sets how far ahead, in meters, the speed camera lookup searches.")),
+                          description=tr_noop("Sets how far ahead, in meters, the speed camera lookup searches."), unit="m"),
         self._number_item("SpeedCameraLookaheadAngle", tr_noop("Camera search angle"), 15, 60, 5,
-                          tr_noop("Sets the allowed angle from the current driving heading to a candidate camera.")),
+                          description=tr_noop("Sets the allowed angle from the current driving heading to a candidate camera."), unit="deg"),
         self._number_item("SpeedCameraDirectionAngle", tr_noop("Camera direction angle"), 30, 90, 5,
-                          tr_noop("Sets the allowed difference between the public DB road direction and current driving heading.")),
+                          description=tr_noop("Sets the allowed difference between the public DB road direction and current driving heading."), unit="deg"),
         self._number_item("SpeedCameraPassingDistance", tr_noop("Camera passing distance"), 10, 80, 5,
-                          tr_noop("Sets the distance, in meters, used to mark a camera as passed.")),
+                          description=tr_noop("Sets the distance, in meters, used to mark a camera as passed."), unit="m"),
         self._number_item("SpeedCameraPassedIgnoreSeconds", tr_noop("Camera ignore time"), 3, 30, 1,
-                          tr_noop("Sets how long, in seconds, a passed camera is hidden from repeated alerts.")),
+                          description=tr_noop("Sets how long, in seconds, a passed camera is hidden from repeated alerts."), unit="s"),
         self._toggle_param_item("UseExternalNaviRoutes", tr_noop("Use external navi routes"),
                                 tr_noop("Allows navigation to use routes from an external navigation provider.")),
         self._cycle_param_int_item("ExternalNaviType", tr_noop("External navi type"), EXTERNAL_NAVI_OPTIONS,
@@ -431,6 +431,7 @@ class CustomSettingsLayout(Widget):
     max_value: int | float,
     step_size: int | float,
     description: str | None = None,
+    unit: str = "",
     enabled: bool | Callable[[], bool] = True,
   ):
     decimals = self._decimals(step_size)
@@ -441,7 +442,8 @@ class CustomSettingsLayout(Widget):
 
     def current_value() -> str:
       value = current_numeric()
-      return f"{float(value):.{decimals}f}" if decimals else str(int(value))
+      value_text = f"{float(value):.{decimals}f}" if decimals else str(int(value))
+      return f"{value_text}{unit}" if unit else value_text
 
     def step(delta: int) -> None:
       next_value = current_numeric() + delta * step_size
