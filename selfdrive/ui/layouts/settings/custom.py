@@ -43,6 +43,13 @@ DEFAULT_MODEL_NAME = "1.Stock_Model"
 DEFAULT_MODEL_NAMES = {DEFAULT_MODEL_NAME, "1.default", "7.Current_Model", "7.Current_0.11_6a7d09ad"}
 
 EXTERNAL_NAVI_OPTIONS = ["0", "1", "2"]
+CRUISE_MODE_DESCRIPTION = tr_noop(
+  "0: Disabled. Custom cruise button control is not used.<br>"
+  "1-15: Enabled. Current code treats all non-zero values the same; higher numbers are reserved for future modes.<br>"
+  "When enabled on supported Hyundai stock SCC paths, openpilot simulates RES/SET button presses to move the vehicle cruise set speed toward the planned speed. "
+  "It is inactive when openpilot longitudinal control is enabled, when ACC is off, while braking, or while another cruise button is pressed. "
+  "If Cruise gap matches the vehicle gap, the target follows longitudinalPlan speed; otherwise it holds the current custom set speed."
+)
 STATUS_IDLE = "idle"
 STATUS_RUNNING = "running"
 STATUS_SUCCESS = "success"
@@ -302,7 +309,7 @@ class CustomSettingsLayout(Widget):
       "Community": [
         SectionHeader(tr_noop("Cruise Settings")),
         self._number_item("ParamCruiseMode", tr_noop("Cruise mode"), 0, 15, 1,
-                          tr_noop("Selects the custom cruise control mode used by supported vehicle code.")),
+                          CRUISE_MODE_DESCRIPTION),
         self._number_item("ParamCruiseGap", tr_noop("Cruise gap"), 0, 4, 1,
                           tr_noop("Sets the custom cruise following gap when a non-zero cruise mode is selected."),
                           enabled=lambda: int(self._values()["ParamCruiseMode"]) != 0),
