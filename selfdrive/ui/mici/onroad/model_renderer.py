@@ -15,6 +15,14 @@ from openpilot.system.ui.widgets import Widget
 CLIP_MARGIN = 500
 MIN_DRAW_DISTANCE = 10.0
 MAX_DRAW_DISTANCE = 100.0
+LEAD_EGO_LANE_YREL = 1.2
+LEAD_LANE_LINE_PROB_MIN = 0.25
+LEAD_LANE_BOUNDARY_MARGIN = 0.25
+LEAD_TRACKING_MIN_ALPHA = 150
+LEAD_EGO_COLOR = rl.Color(218, 202, 37, 255)
+LEAD_LEFT_COLOR = rl.Color(70, 160, 255, 255)
+LEAD_RIGHT_COLOR = rl.Color(80, 220, 130, 255)
+LEAD_DANGER_COLOR = rl.Color(255, 70, 70, 255)
 
 THROTTLE_COLORS = [
   rl.Color(13, 248, 122, 102),   # HSLF(148/360, 0.94, 0.51, 0.4)
@@ -46,6 +54,8 @@ class LeadVehicle:
   glow: list[float] = field(default_factory=list)
   chevron: list[float] = field(default_factory=list)
   fill_alpha: int = 0
+  glow_color: rl.Color = field(default_factory=lambda: LEAD_EGO_COLOR)
+  chevron_color: rl.Color = field(default_factory=lambda: rl.Color(201, 34, 49, 0))
 
 
 class ModelRenderer(Widget):
@@ -135,7 +145,7 @@ class ModelRenderer(Widget):
 
       self._update_model(lead_one, path_x_array)
       if render_lead_indicator:
-        self._update_leads(radar_state, path_x_array)
+        self._update_leads(radar_state, path_x_array, show_car_tracking)
       self._transform_dirty = False
 
     # Draw elements (hide when disengaged)
@@ -160,7 +170,7 @@ class ModelRenderer(Widget):
     self._road_edge_stds = np.array(model.roadEdgeStds, dtype=np.float32)
     self._acceleration_x = np.array(model.acceleration.x, dtype=np.float32)
 
-  def _update_leads(self, radar_state, path_x_array):
+  def _update_leads(self, radar_state, path_x_array, show_car_tracking):
     """Update positions of lead vehicles"""
     self._lead_vehicles = [LeadVehicle(), LeadVehicle()]
     leads = [radar_state.leadOne, radar_state.leadTwo]
@@ -174,7 +184,7 @@ class ModelRenderer(Widget):
         z = self._path.raw_points[idx, 2] if idx < len(self._path.raw_points) else 0.0
         point = self._map_to_screen(d_rel, -y_rel, z + self._path_offset_z)
         if point:
-          self._lead_vehicles[i] = self._update_lead_vehicle(d_rel, v_rel, point, self._rect)
+          self._lead_vehicles[i] = self._update_lead_vehicle(d_rel, y_rel, v_rel, point, self._rect, show_car_tracking)
 
   def _update_model(self, lead, path_x_array):
     """Update model visualization data based on model message"""
@@ -259,7 +269,7 @@ class ModelRenderer(Widget):
     self._exp_gradient.colors = segment_colors
     self._exp_gradient.stops = gradient_stops
 
-  def _update_lead_vehicle(self, d_rel, v_rel, point, rect):
+  def _update_lead_vehicle(self, d_rel, y_rel, v_rel, point, rect, show_car_tracking):
     speed_buff, lead_buff = 10.0, 40.0
 
     # Calculate fill alpha
@@ -281,7 +291,12 @@ class ModelRenderer(Widget):
     glow = [(x + (sz * 1.35) + g_xo, y + sz + g_yo), (x, y - g_yo), (x - (sz * 1.35) - g_xo, y + sz + g_yo)]
     chevron = [(x + (sz * 1.25), y + sz), (x, y), (x - (sz * 1.25), y + sz)]
 
-    return LeadVehicle(glow=glow, chevron=chevron, fill_alpha=int(fill_alpha))
+    marker_alpha = max(int(fill_alpha), LEAD_TRACKING_MIN_ALPHA if show_car_tracking else 0)
+    marker_color = LEAD_DANGER_COLOR if d_rel < 8 or v_rel < -5 else self._lead_lane_color(d_rel, y_rel)
+    glow_color = rl.Color(marker_color.r, marker_color.g, marker_color.b, max(80, min(190, marker_alpha)))
+    chevron_color = rl.Color(marker_color.r, marker_color.g, marker_color.b, marker_alpha)
+
+    return LeadVehicle(glow=glow, chevron=chevron, fill_alpha=marker_alpha, glow_color=glow_color, chevron_color=chevron_color)
 
   def _get_ll_color(self, prob: float, adjacent: bool, left: bool):
     alpha = np.clip(prob, 0.0, 0.7)
@@ -365,8 +380,39 @@ class ModelRenderer(Widget):
       if not lead.glow or not lead.chevron:
         continue
 
-      rl.draw_triangle_fan(lead.glow, len(lead.glow), rl.Color(218, 202, 37, 255))
-      rl.draw_triangle_fan(lead.chevron, len(lead.chevron), rl.Color(201, 34, 49, lead.fill_alpha))
+      rl.draw_triangle_fan(lead.glow, len(lead.glow), lead.glow_color)
+      rl.draw_triangle_fan(lead.chevron, len(lead.chevron), lead.chevron_color)
+
+  def _lead_lane_color(self, d_rel: float, y_rel: float) -> rl.Color:
+    lane_offset = self._lead_lane_offset(d_rel, y_rel)
+    if abs(lane_offset) <= LEAD_EGO_LANE_YREL:
+      return LEAD_EGO_COLOR
+    return LEAD_LEFT_COLOR if lane_offset > 0 else LEAD_RIGHT_COLOR
+
+  def _lead_lane_offset(self, d_rel: float, y_rel: float) -> float:
+    path_y = self._interp_model_y(self._path.raw_points, d_rel)
+    center_y = path_y if path_y is not None else 0.0
+
+    if len(self._lane_lines) > 2 and min(self._lane_line_probs[1], self._lane_line_probs[2]) >= LEAD_LANE_LINE_PROB_MIN:
+      left_y = self._interp_model_y(self._lane_lines[1].raw_points, d_rel)
+      right_y = self._interp_model_y(self._lane_lines[2].raw_points, d_rel)
+      if left_y is not None and right_y is not None:
+        lane_min = min(left_y, right_y) - LEAD_LANE_BOUNDARY_MARGIN
+        lane_max = max(left_y, right_y) + LEAD_LANE_BOUNDARY_MARGIN
+        if lane_min <= y_rel <= lane_max:
+          return 0.0
+
+    return y_rel - center_y
+
+  @staticmethod
+  def _interp_model_y(points: np.ndarray, x: float) -> float | None:
+    if points.shape[0] == 0:
+      return None
+    xs = points[:, 0]
+    ys = points[:, 1]
+    if xs.shape[0] == 0:
+      return None
+    return float(np.interp(x, xs, ys))
 
   @staticmethod
   def _get_path_length_idx(pos_x_array: np.ndarray, path_height: float) -> int:
