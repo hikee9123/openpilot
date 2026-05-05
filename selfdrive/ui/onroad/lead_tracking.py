@@ -14,6 +14,11 @@ LEAD_LANES = ("EGO", "LEFT", "RIGHT")
 CAMERA_LEAD_PROB_MIN = 0.35
 RADAR_TO_CAMERA = 1.52
 FUSION_YREL_THRESHOLD = 1.5
+SOURCE_PRIORITY = {
+  "FUSED": 0,
+  "CAMERA": 1,
+  "RADAR": 2,
+}
 
 
 @dataclass
@@ -235,5 +240,9 @@ def _select_lead(selected: dict[str, TrackedLead | None], lane: str, lead: Track
   if lane not in selected:
     return
   current = selected[lane]
-  if current is None or lead.dRel < current.dRel:
+  if current is None or _lead_choice_key(lead) < _lead_choice_key(current):
     selected[lane] = lead
+
+
+def _lead_choice_key(lead: TrackedLead) -> tuple[int, float]:
+  return (SOURCE_PRIORITY.get(lead.source, SOURCE_PRIORITY["RADAR"]), lead.dRel)

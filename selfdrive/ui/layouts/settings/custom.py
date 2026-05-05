@@ -46,6 +46,7 @@ EXTERNAL_NAVI_OPTIONS = ["0", "1", "2"]
 CAR_TRACKING_DESCRIPTION = tr_noop(
   "Shows a separate CAR TRACKING panel on the onroad screen.<br>"
   "EGO / LEFT / RIGHT: Fuses liveTracks radar points with modelV2 leadsV3 camera candidates, then selects the nearest lead in each lane.<br>"
+  "If multiple candidates are in the same lane, one candidate is selected by source priority: FUSED, CAMERA, then RADAR. Ties use the nearest distance.<br>"
   "EGO uses modelV2 path/laneLines at the lead distance when available, so curved roads follow the model lane shape. If lane lines are weak, it falls back to the path center and radarState yRel side offset.<br>"
   "The lead triangle uses the same classification: yellow for EGO, blue for LEFT, green for RIGHT, and red for close or fast-closing leads.<br>"
   "Source shows RADAR#, CAMERA, or FUSED when radar and camera candidates match. If both are unavailable, it falls back to radarState leadOne/leadTwo.<br>"
