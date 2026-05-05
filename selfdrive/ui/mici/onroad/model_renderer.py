@@ -120,7 +120,8 @@ class ModelRenderer(Widget):
     model = sm['modelV2']
     radar_state = sm['radarState'] if sm.valid['radarState'] else None
     lead_one = radar_state.leadOne if radar_state else None
-    render_lead_indicator = self._longitudinal_control and radar_state is not None
+    show_car_tracking = bool(sm["uICustom"].userInterface.showCarTracking)
+    render_lead_indicator = (self._longitudinal_control or show_car_tracking) and radar_state is not None
 
     # Update model data when needed
     model_updated = sm.updated['modelV2']
@@ -142,8 +143,8 @@ class ModelRenderer(Widget):
       self._draw_lane_lines()
       self._draw_path(sm)
 
-    # if render_lead_indicator and radar_state:
-    #   self._draw_lead_indicator()
+    if render_lead_indicator and radar_state:
+      self._draw_lead_indicator()
 
   def _update_raw_points(self, model):
     """Update raw 3D points from model data"""

@@ -45,7 +45,8 @@ DEFAULT_MODEL_NAMES = {DEFAULT_MODEL_NAME, "1.default", "7.Current_Model", "7.Cu
 EXTERNAL_NAVI_OPTIONS = ["0", "1", "2"]
 CAR_TRACKING_DESCRIPTION = tr_noop(
   "Shows a separate CAR TRACKING panel on the onroad screen.<br>"
-  "Lead 1 / Lead 2: Shows radar lead distance, relative speed, and model probability when radarState lead data is valid.<br>"
+  "Lead 1 / Lead 2: Shows lead distance, relative speed, model probability, and source when radarState lead data is valid.<br>"
+  "RADAR means the lead is backed by a radar track. CAMERA means it is vision/model-only. RADAR# shows the radar track id when available.<br>"
   "SCC: Shows stock SCC lead distance and current gap from carState.carSCustom when supported vehicle CAN data is available.<br>"
   "If no lead data is available, the panel still appears and displays none so you can confirm the feature is enabled.<br>"
   "This is a visual/debug overlay only; it does not change longitudinal control, radar matching, or cruise behavior."

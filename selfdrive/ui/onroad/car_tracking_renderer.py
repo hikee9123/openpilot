@@ -88,7 +88,10 @@ class CarTrackingRenderer(Widget):
     speed_unit = "km/h" if ui_state.is_metric else "mph"
     speed = lead.vRel * (CV.MS_TO_KPH if ui_state.is_metric else CV.MS_TO_MPH)
     prob = max(0.0, min(100.0, float(getattr(lead, "modelProb", 0.0)) * 100.0))
-    text = f"Lead {idx}: {lead.dRel:.0f}m  {speed:+.1f}{speed_unit}  p{prob:.0f}%"
+    source = "RADAR" if bool(getattr(lead, "radar", False)) else "CAMERA"
+    track_id = int(getattr(lead, "radarTrackId", -1))
+    source_text = f"{source}#{track_id}" if track_id >= 0 else source
+    text = f"Lead {idx}: {lead.dRel:.0f}m  {speed:+.1f}{speed_unit}  p{prob:.0f}%  {source_text}"
     return (text, self._lead_color(lead.dRel, lead.vRel))
 
   def _lead_color(self, distance: float, rel_speed: float) -> rl.Color:
