@@ -3,6 +3,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from openpilot.common.file_chunker import get_chunk_name, get_manifest_path
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 from openpilot.system.camerad.cameras.nv12_info import get_nv12_info
@@ -38,7 +39,22 @@ class CompileConfig:
 
 # #custom start: ActiveModelName bundle selection
 def compiled_artifact_exists(path: Path) -> bool:
-  return path.exists() or Path(f"{path}.chunkmanifest").exists()
+  if path.is_file():
+    return True
+
+  manifest_path = Path(get_manifest_path(str(path)))
+  if not manifest_path.is_file():
+    return False
+
+  try:
+    num_chunks = int(manifest_path.read_text().strip())
+  except (OSError, ValueError):
+    return False
+
+  if num_chunks <= 0:
+    return False
+
+  return all(Path(get_chunk_name(str(path), i, num_chunks)).is_file() for i in range(num_chunks))
 
 
 def selected_model_dir(cam_w: int, cam_h: int) -> Path:

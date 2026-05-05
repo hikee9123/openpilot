@@ -4,6 +4,7 @@ import json
 import os
 import platform
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -14,6 +15,13 @@ for env_key in ("DEBUG", "BEAM", "NOOPT"):
   except ValueError:
     os.environ.pop(env_key, None)
 
+MODELD_DIR = Path(__file__).resolve().parent
+REPO_ROOT = MODELD_DIR.parents[1]
+TINYGRAD_DIR = REPO_ROOT / "tinygrad_repo"
+for import_path in (str(REPO_ROOT), str(TINYGRAD_DIR)):
+  if import_path not in sys.path:
+    sys.path.insert(0, import_path)
+
 from tinygrad import Device
 
 from openpilot.common.file_chunker import chunk_file, get_chunk_paths
@@ -22,11 +30,10 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.common.transformations.camera import _ar_ox_fisheye, _os_fisheye
 from openpilot.common.transformations.model import MEDMODEL_INPUT_SIZE
 from openpilot.selfdrive.modeld.constants import ModelConstants
-from openpilot.selfdrive.modeld.helpers import CompileConfig
+from openpilot.selfdrive.modeld.helpers import CompileConfig, compiled_artifact_exists
 
 
 # #custom start: compile selected supercombo bundle for current modeld
-MODELD_DIR = Path(__file__).resolve().parent
 MODELS_DIR = MODELD_DIR / "models"
 SUPERCOMBOS_DIR = MODELS_DIR / "supercombos"
 COMPILED_FLAGS_PATH = MODELS_DIR / "tg_compiled_flags.json"
@@ -129,7 +136,7 @@ def ensure_metadata(model_dir: Path, env: dict[str, str]) -> None:
     if not onnx.exists():
       raise FileNotFoundError(onnx)
     if not metadata.exists() or onnx.stat().st_mtime >= metadata.stat().st_mtime:
-      run(["python3", str(MODELD_DIR / "get_model_metadata.py"), str(onnx)], env)
+      run([sys.executable, str(MODELD_DIR / "get_model_metadata.py"), str(onnx)], env)
 
 
 def compile_bundle(model_dir: Path, env: dict[str, str]) -> None:
@@ -142,14 +149,13 @@ def compile_bundle(model_dir: Path, env: dict[str, str]) -> None:
       cfg = CompileConfig(cam_w, cam_h, prepare_only, "driving_", model_dir)
       pkl_path = Path(cfg.pkl_path)
       chunk_targets = get_chunk_paths(str(pkl_path), estimate_pickle_max_size(onnx_size))
-      manifest = Path(chunk_targets[0])
 
-      if manifest.exists():
-        cloudlog.warning(f"[custom model_make] already compiled: {manifest}")
+      if compiled_artifact_exists(pkl_path):
+        cloudlog.warning(f"[custom model_make] already compiled: {pkl_path}")
         continue
 
       run([
-        "python3", str(MODELD_DIR / "compile_modeld.py"),
+        sys.executable, str(MODELD_DIR / "compile_modeld.py"),
         "--model-size", f"{model_w}x{model_h}",
         "--nv12", ",".join(str(x) for x in cfg.nv12),
         "--vision-onnx", str(model_dir / "driving_vision.onnx"),
@@ -173,7 +179,10 @@ def main() -> None:
 
   env = os.environ.copy()
   env["PYTHONUNBUFFERED"] = "1"
-  env["PYTHONPATH"] = env.get("PYTHONPATH", "")
+  python_paths = [str(REPO_ROOT), str(TINYGRAD_DIR)]
+  if env.get("PYTHONPATH"):
+    python_paths.append(env["PYTHONPATH"])
+  env["PYTHONPATH"] = os.pathsep.join(python_paths)
   for flag in tinygrad_flags().split():
     key, value = flag.split("=", 1)
     env[key] = value

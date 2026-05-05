@@ -1,4 +1,5 @@
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -560,7 +561,7 @@ class CustomSettingsLayout(Widget):
 
     def worker() -> None:
       with open(COMPILE_LOG_PATH, "w") as log_file:
-        result = subprocess.run(["python3", "model_make.py", "--model", model_name], cwd=MODELD_DIR,
+        result = subprocess.run([sys.executable, "model_make.py", "--model", model_name], cwd=MODELD_DIR,
                                 stdout=log_file, stderr=subprocess.STDOUT, text=True, check=False)
       status = self._param_text(COMPILE_STATUS_KEY)
       if result.returncode == 0 and status == STATUS_RUNNING:
@@ -592,10 +593,6 @@ class CustomSettingsLayout(Widget):
           options.append(cp.carFingerprint)
       except Exception:
         pass
-
-    selected = self._param_text("SelectedCar")
-    if selected and selected not in options:
-      options.insert(0, selected)
 
     return options or ["MOCK"]
 
