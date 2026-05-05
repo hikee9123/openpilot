@@ -114,6 +114,14 @@ def test_region_counts_from_address(tmp_path: Path) -> None:
   ]
 
 
+def test_database_summary_helpers_handle_unopenable_path(tmp_path: Path) -> None:
+  db_path = tmp_path / "not_a_database.sqlite3"
+  db_path.mkdir()
+
+  assert database_data_date(db_path) == ""
+  assert database_region_counts(db_path) == []
+
+
 def test_download_public_speed_camera_csv(tmp_path: Path, monkeypatch) -> None:
   def fake_fetch(path: str, params: dict, timeout: int = speed_camera.DATA_GO_KR_TIMEOUT_SECONDS):
     if path.endswith("columList.json"):

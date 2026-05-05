@@ -632,9 +632,17 @@ class CustomSettingsLayout(Widget):
         self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_RUNNING)
         self._params.put(SPEED_CAMERA_ERROR_KEY, "")
         self._params.put(SPEED_CAMERA_PROGRESS_KEY, 0)
-        clear_log(SPEED_CAMERA_LOG_PATH)
+        try:
+          clear_log(SPEED_CAMERA_LOG_PATH)
+        except OSError as e:
+          self._set_speed_camera_failed(f"log open failed: {e}")
+          return
 
-        result = run_logged([sys.executable, "tools/scripts/update_speed_cameras.py"], REPO_ROOT, SPEED_CAMERA_LOG_PATH)
+        try:
+          result = run_logged([sys.executable, "tools/scripts/update_speed_cameras.py"], REPO_ROOT, SPEED_CAMERA_LOG_PATH)
+        except OSError as e:
+          self._set_speed_camera_failed(f"update start failed: {e}")
+          return
         if result.returncode != 0:
           self._set_speed_camera_failed(f"exit code {result.returncode}")
           return

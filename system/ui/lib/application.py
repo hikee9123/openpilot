@@ -107,9 +107,20 @@ class FontWeight(StrEnum):
   DISPLAY = "Inter-Bold.fnt"
 
 
-def font_fallback(font: rl.Font) -> rl.Font:
-  """Fall back to unifont for languages that require it."""
-  if multilang.requires_unifont():
+def _text_requires_unifont(text: str) -> bool:
+  return any(
+    "\u1100" <= char <= "\u11ff" or
+    "\u3130" <= char <= "\u318f" or
+    "\uac00" <= char <= "\ud7af" or
+    "\u3040" <= char <= "\u30ff" or
+    "\u3400" <= char <= "\u9fff"
+    for char in text
+  )
+
+
+def font_fallback(font: rl.Font, text: str = "") -> rl.Font:
+  """Fall back to unifont for CJK text or languages that require it."""
+  if multilang.requires_unifont() or _text_requires_unifont(text):
     return gui_app.font(FontWeight.UNIFONT)
   return font
 
@@ -702,7 +713,7 @@ class GuiApplication:
       rl._orig_draw_text_ex = rl.draw_text_ex
 
     def _draw_text_ex_scaled(font, text, position, font_size, spacing, tint):
-      font = font_fallback(font)
+      font = font_fallback(font, text)
       return rl._orig_draw_text_ex(font, text, position, font_size * FONT_SCALE, spacing, tint)
 
     rl.draw_text_ex = _draw_text_ex_scaled

@@ -6,6 +6,7 @@ import os
 import sqlite3
 import time
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlencode
@@ -200,7 +201,7 @@ def create_database_from_csv(csv_path: Path = DEFAULT_CSV_PATH, db_path: Path = 
   rows = _read_csv_rows(csv_path)
   db_path.parent.mkdir(parents=True, exist_ok=True)
 
-  with sqlite3.connect(db_path) as conn:
+  with closing(sqlite3.connect(db_path)) as conn:
     init_db(conn)
     conn.execute("DELETE FROM speed_cameras")
 
@@ -254,10 +255,18 @@ def create_database_from_csv(csv_path: Path = DEFAULT_CSV_PATH, db_path: Path = 
 
 
 def database_data_date(db_path: Path = DEFAULT_DB_PATH) -> str:
-  if not db_path.exists():
+  try:
+    if not db_path.exists():
+      return ""
+  except OSError:
     return ""
 
-  with sqlite3.connect(db_path) as conn:
+  try:
+    conn = sqlite3.connect(db_path)
+  except sqlite3.Error:
+    return ""
+
+  with closing(conn):
     try:
       row = conn.execute("SELECT value FROM metadata WHERE key = ?", ("source_updated_at",)).fetchone()
       if row and row[0]:
@@ -273,10 +282,18 @@ def database_data_date(db_path: Path = DEFAULT_DB_PATH) -> str:
 
 
 def database_region_counts(db_path: Path = DEFAULT_DB_PATH) -> list[tuple[str, int]]:
-  if not db_path.exists():
+  try:
+    if not db_path.exists():
+      return []
+  except OSError:
     return []
 
-  with sqlite3.connect(db_path) as conn:
+  try:
+    conn = sqlite3.connect(db_path)
+  except sqlite3.Error:
+    return []
+
+  with closing(conn):
     try:
       rows = conn.execute("""
         SELECT region, count
@@ -467,7 +484,7 @@ def find_lead_camera(
   ignored_ids = ignored_ids or set()
   lat_min, lat_max, lon_min, lon_max = _bounding_box(lat, lon, max_distance_m)
 
-  with sqlite3.connect(db_path) as conn:
+  with closing(sqlite3.connect(db_path)) as conn:
     conn.row_factory = sqlite3.Row
     rows = conn.execute("""
       SELECT * FROM speed_cameras
