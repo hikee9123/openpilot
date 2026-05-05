@@ -11,6 +11,7 @@ LANGUAGES_FILE = TRANSLATIONS_DIR / "languages.json"
 
 GLYPH_PADDING = 6
 EXTRA_CHARS = "–‑✓×°§•X⚙✕◀▶✔⌫⇧␣○●↳çêüñ–‑✓×°§•€£¥"
+EXTRA_UNIFONT_CHARS = "강광남별북산역울천충특"
 UNIFONT_LANGUAGES = {"th", "zh-CHT", "zh-CHS", "ko", "ja"}
 
 
@@ -23,7 +24,7 @@ def _languages():
 
 def _char_sets():
   base = set(map(chr, range(32, 127))) | set(EXTRA_CHARS)
-  unifont = set(base)
+  unifont = set(base) | set(EXTRA_UNIFONT_CHARS)
 
   for language, code in _languages().items():
     unifont.update(language)

@@ -125,6 +125,10 @@ COMPILE_LOG_PADDING = 26
 COMPILE_LOG_BG = rl.Color(23, 23, 23, 255)
 COMPILE_LOG_BORDER = rl.Color(96, 96, 96, 255)
 COMPILE_LOG_TEXT = rl.Color(190, 190, 190, 255)
+SPEED_CAMERA_REGION_PANEL_HEIGHT = 360
+SPEED_CAMERA_REGION_FONT_SIZE = 22
+SPEED_CAMERA_REGION_LINE_HEIGHT = 32
+SPEED_CAMERA_REGION_PADDING = 20
 
 
 def run_logged(command: list[str], cwd: Path, log_path: str) -> subprocess.CompletedProcess:
@@ -284,6 +288,71 @@ class CompileLogPanel(Widget):
     return (text.rstrip() + ellipsis) if text else ellipsis
 
 
+class SpeedCameraRegionsPanel(Widget):
+  def __init__(self, region_counts_callback: Callable[[], list[tuple[str, int]]]):
+    super().__init__()
+    self._region_counts_callback = region_counts_callback
+    self._font = gui_app.font(FontWeight.NORMAL)
+    self.set_rect(rl.Rectangle(0, 0, 0, SPEED_CAMERA_REGION_PANEL_HEIGHT))
+
+  def set_parent_rect(self, parent_rect: rl.Rectangle) -> None:
+    super().set_parent_rect(parent_rect)
+    self._rect.width = parent_rect.width
+
+  def _render(self, rect: rl.Rectangle):
+    panel_rect = rl.Rectangle(
+      rect.x + SPEED_CAMERA_REGION_PADDING,
+      rect.y + SPEED_CAMERA_REGION_PADDING / 2,
+      rect.width - SPEED_CAMERA_REGION_PADDING * 2,
+      rect.height - SPEED_CAMERA_REGION_PADDING,
+    )
+    rl.draw_rectangle_rounded(panel_rect, 0.04, 8, COMPILE_LOG_BG)
+    rl.draw_rectangle_rounded_lines_ex(panel_rect, 0.04, 8, 2, COMPILE_LOG_BORDER)
+
+    region_counts = self._region_counts_callback()
+    if not region_counts:
+      self._draw_text("--", rl.Vector2(panel_rect.x + SPEED_CAMERA_REGION_PADDING, panel_rect.y + SPEED_CAMERA_REGION_PADDING))
+      return
+
+    content_x = panel_rect.x + SPEED_CAMERA_REGION_PADDING
+    content_y = panel_rect.y + SPEED_CAMERA_REGION_PADDING
+    content_w = panel_rect.width - SPEED_CAMERA_REGION_PADDING * 2
+    content_h = panel_rect.height - SPEED_CAMERA_REGION_PADDING * 2
+    max_rows = max(1, int(content_h // SPEED_CAMERA_REGION_LINE_HEIGHT))
+    column_count = 2
+    column_gap = 38
+    column_width = (content_w - column_gap) / column_count
+    value_width = 90
+    name_width = column_width - value_width - 14
+
+    visible_counts = region_counts[:max_rows * column_count]
+    rows_per_column = (len(visible_counts) + column_count - 1) // column_count
+
+    for idx, (region, count) in enumerate(visible_counts):
+      col = idx // rows_per_column
+      row = idx % rows_per_column
+      x = content_x + col * (column_width + column_gap)
+      y = content_y + row * SPEED_CAMERA_REGION_LINE_HEIGHT
+      region_text = self._truncate(str(region), name_width)
+      count_text = str(count)
+      self._draw_text(region_text, rl.Vector2(x, y))
+
+      count_size = measure_text_cached(self._font, count_text, SPEED_CAMERA_REGION_FONT_SIZE)
+      self._draw_text(count_text, rl.Vector2(x + column_width - count_size.x, y))
+
+  def _draw_text(self, text: str, pos: rl.Vector2) -> None:
+    rl.draw_text_ex(self._font, text, pos, SPEED_CAMERA_REGION_FONT_SIZE, 0, COMPILE_LOG_TEXT)
+
+  def _truncate(self, text: str, max_width: float) -> str:
+    if measure_text_cached(self._font, text, SPEED_CAMERA_REGION_FONT_SIZE).x <= max_width:
+      return text
+
+    ellipsis = "..."
+    while text and measure_text_cached(self._font, text + ellipsis, SPEED_CAMERA_REGION_FONT_SIZE).x > max_width:
+      text = text[:-1]
+    return (text.rstrip() + ellipsis) if text else ellipsis
+
+
 class CustomSettingsLayout(Widget):
   def __init__(self):
     super().__init__()
@@ -292,6 +361,8 @@ class CustomSettingsLayout(Widget):
     self._last_compile_status_check = -COMPILE_STATUS_CHECK_INTERVAL
     self._last_compile_log_check = -COMPILE_LOG_CACHE_INTERVAL
     self._compile_log_tail = ""
+    self._speed_camera_region_cache_loaded = False
+    self._speed_camera_region_counts_cache: list[tuple[str, int]] = []
     self._current_tab = "UI"
     self._tab_rects: dict[str, rl.Rectangle] = {}
     self._tab_font = gui_app.font(FontWeight.MEDIUM)
@@ -396,6 +467,7 @@ class CustomSettingsLayout(Widget):
                   description=lambda: tr("Shows the public data reference date stored in the local speed camera DB.")),
         text_item(lambda: tr("Speed camera regions"), self._speed_camera_regions_text,
                   description=lambda: tr("Shows the saved speed camera count by region.")),
+        SpeedCameraRegionsPanel(self._speed_camera_region_counts),
         SectionHeader(tr_noop("Speed camera tuning")),
         self._number_item("SpeedCameraLookaheadDistance", tr_noop("Camera search distance"), 500, 3000, 100,
                           description=tr_noop("Sets how far ahead, in meters, the speed camera lookup searches."), unit="m"),
@@ -653,6 +725,7 @@ class CustomSettingsLayout(Widget):
         data_date = database_data_date(SPEED_CAMERA_DB_PATH)
         if data_date:
           self._params.put(SPEED_CAMERA_DATA_DATE_KEY, data_date)
+        self._refresh_speed_camera_region_counts(force=True)
         self._params.put(SPEED_CAMERA_UPDATED_AT_KEY, time.strftime("%Y-%m-%d %H:%M"))
         self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_SUCCESS)
         self._params.put(SPEED_CAMERA_ERROR_KEY, "")
@@ -703,15 +776,22 @@ class CustomSettingsLayout(Widget):
     data_date = self._param_text(SPEED_CAMERA_DATA_DATE_KEY) or database_data_date(SPEED_CAMERA_DB_PATH)
     return data_date or "--"
 
+  def _refresh_speed_camera_region_counts(self, force: bool = False) -> None:
+    if force or not self._speed_camera_region_cache_loaded:
+      self._speed_camera_region_counts_cache = database_region_counts(SPEED_CAMERA_DB_PATH)
+      self._speed_camera_region_cache_loaded = True
+
+  def _speed_camera_region_counts(self) -> list[tuple[str, int]]:
+    return self._speed_camera_region_counts_cache
+
   def _speed_camera_regions_text(self) -> str:
-    region_counts = database_region_counts(SPEED_CAMERA_DB_PATH)
+    region_counts = self._speed_camera_region_counts()
     if not region_counts:
       return "--"
 
     region_total = len(region_counts)
-    top_regions = ", ".join(f"{region} {count}" for region, count in region_counts[:3])
-    suffix = "..." if region_total > 3 else ""
-    return f"{region_total} regions: {top_regions}{suffix}"
+    camera_total = sum(count for _, count in region_counts)
+    return f"{region_total} regions / {camera_total}"
 
   def _speed_camera_status_text(self) -> str:
     status = self._speed_camera_update_status()
@@ -1023,6 +1103,8 @@ class CustomSettingsLayout(Widget):
 
   def show_event(self):
     super().show_event()
+    if self._current_tab == "Navigation":
+      self._refresh_speed_camera_region_counts()
     self._scrollers[self._current_tab].show_event()
 
   def hide_event(self):
@@ -1066,6 +1148,8 @@ class CustomSettingsLayout(Widget):
         if name != self._current_tab:
           self._scrollers[self._current_tab].hide_event()
           self._current_tab = name
+          if self._current_tab == "Navigation":
+            self._refresh_speed_camera_region_counts()
           self._scrollers[self._current_tab].show_event()
         return
 # #custom end
