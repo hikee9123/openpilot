@@ -50,6 +50,7 @@ class Colors:
   HEADER_GRADIENT_START = rl.Color(0, 0, 0, 114)
   HEADER_GRADIENT_END = rl.BLANK
   BRAKE_LIGHT = rl.Color(201, 34, 49, 100)
+  BRAKE_LIGHT_GLOW = rl.Color(201, 34, 49, 70)
   BRAKE_SOFT = rl.Color(255, 34, 0, 255)
   BRAKE_HARD = rl.Color(255, 0, 0, 255)
   GAS = rl.Color(255, 255, 0, 255)
@@ -69,6 +70,7 @@ class HudRenderer(Widget):
     self.set_speed: float = SET_SPEED_NA
     self.speed: float = 0.0
     self.speed_color: rl.Color = COLORS.WHITE
+    self.brake_lights: bool = False
     self.v_ego_cluster_seen: bool = False
 
     self._font_semi_bold: rl.Font = gui_app.font(FontWeight.SEMI_BOLD)
@@ -85,6 +87,7 @@ class HudRenderer(Widget):
       self.set_speed = SET_SPEED_NA
       self.speed = 0.0
       self.speed_color = COLORS.WHITE
+      self.brake_lights = False
       return
 
     controls_state = sm['controlsState']
@@ -105,6 +108,7 @@ class HudRenderer(Widget):
     v_ego = v_ego_cluster if self.v_ego_cluster_seen else car_state.vEgo
     speed_conversion = CV.MS_TO_KPH if ui_state.is_metric else CV.MS_TO_MPH
     self.speed = max(0.0, v_ego * speed_conversion)
+    self.brake_lights = bool(getattr(car_state, "brakeLightsDEPRECATED", False))
     self.speed_color = self._speed_color(car_state)
 
   def _render(self, rect: rl.Rectangle) -> None:
@@ -185,6 +189,27 @@ class HudRenderer(Widget):
     unit_text_size = measure_text_cached(self._font_medium, unit_text, FONT_SIZES.speed_unit)
     unit_pos = rl.Vector2(rect.x + rect.width / 2 - unit_text_size.x / 2, 290 - unit_text_size.y / 2)
     rl.draw_text_ex(self._font_medium, unit_text, unit_pos, FONT_SIZES.speed_unit, 0, COLORS.WHITE_TRANSLUCENT)
+    self._draw_brake_light_indicator(rect, unit_text_size)
+
+  def _draw_brake_light_indicator(self, rect: rl.Rectangle, unit_text_size: rl.Vector2) -> None:
+    if not self.brake_lights:
+      return
+
+    center_x = rect.x + rect.width / 2
+    center_y = 290
+    lamp_width = 46
+    lamp_height = 20
+    lamp_gap = 28
+    glow_padding = 8
+    left_x = center_x - unit_text_size.x / 2 - lamp_gap - lamp_width
+    right_x = center_x + unit_text_size.x / 2 + lamp_gap
+    y = center_y - lamp_height / 2 + 1
+
+    for x in (left_x, right_x):
+      glow_rect = rl.Rectangle(x - glow_padding, y - glow_padding, lamp_width + glow_padding * 2, lamp_height + glow_padding * 2)
+      lamp_rect = rl.Rectangle(x, y, lamp_width, lamp_height)
+      rl.draw_rectangle_rounded(glow_rect, 0.8, 10, COLORS.BRAKE_LIGHT_GLOW)
+      rl.draw_rectangle_rounded(lamp_rect, 0.75, 10, COLORS.BRAKE_HARD)
 
   def _speed_color(self, car_state) -> rl.Color:
     car_state_custom = getattr(car_state, "carSCustom", None)
