@@ -15,4 +15,4 @@
   url = ../../hikee9123/teleoprtc
 [submodule "tinygrad"]
   path = tinygrad_repo
-  url = https://github.com/tinygrad/tinygrad.git
+  url = ../../hikee9123/tinygrad.git
