@@ -4,8 +4,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from openpilot.common.file_chunker import get_chunk_name, get_manifest_path
-from openpilot.common.params import Params
-from openpilot.common.swaglog import cloudlog
 from openpilot.system.camerad.cameras.nv12_info import get_nv12_info
 
 MODELS_DIR = Path(__file__).resolve().parent / 'models'
@@ -58,6 +56,9 @@ def compiled_artifact_exists(path: Path) -> bool:
 
 
 def selected_model_dir(cam_w: int, cam_h: int) -> Path:
+  from openpilot.common.params import Params
+  from openpilot.common.swaglog import cloudlog
+
   raw_name = Params().get("ActiveModelName")
   if raw_name is None:
     return MODELS_DIR
