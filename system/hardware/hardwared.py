@@ -142,6 +142,8 @@ def hw_state_thread(end_event, hw_queue):
           pass
 
         prev_hw_state = hw_state
+      except FileNotFoundError:
+        pass
       except Exception:
         cloudlog.exception("Error getting hardware state")
 
