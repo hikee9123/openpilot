@@ -4,6 +4,7 @@ import json
 import math
 import os
 import sqlite3
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlencode
@@ -13,24 +14,24 @@ from urllib.request import Request, urlopen
 DB_VERSION = 1
 PUBLIC_DATA_PK = "15028200"
 PUBLIC_DATA_BASE_URL = "https://www.data.go.kr"
+DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data"
 
 
-def _default_persist_root() -> Path:
+def _default_data_root() -> Path:
   if "SPEED_CAMERA_ROOT" in os.environ:
     return Path(os.environ["SPEED_CAMERA_ROOT"])
-  if Path("/persist").exists():
-    return Path("/persist")
-  return Path.home() / ".comma" / "persist"
+  return DEFAULT_DATA_DIR
 
 
-DEFAULT_DB_PATH = _default_persist_root() / "speed_cameras.sqlite3"
-DEFAULT_CSV_PATH = _default_persist_root() / "speed_cameras.csv"
+DEFAULT_DB_PATH = _default_data_root() / "speed_cameras.sqlite3"
+DEFAULT_CSV_PATH = _default_data_root() / "speed_cameras.csv"
 
 LOOKAHEAD_DISTANCE_M = 2500.0
 LOOKAHEAD_ANGLE_DEG = 45.0
 CAMERA_DIRECTION_ANGLE_DEG = 70.0
 EARTH_RADIUS_M = 6371000.0
 DATA_GO_KR_TIMEOUT_SECONDS = 30
+DATA_GO_KR_RETRY_COUNT = 3
 DATA_GO_KR_USER_AGENT = "Mozilla/5.0 (openpilot speed camera updater)"
 
 
@@ -170,8 +171,14 @@ def create_database_from_csv(csv_path: Path = DEFAULT_CSV_PATH, db_path: Path = 
 def _fetch_data_go_json(path: str, params: dict, timeout: int = DATA_GO_KR_TIMEOUT_SECONDS):
   url = f"{PUBLIC_DATA_BASE_URL}{path}?{urlencode(params, doseq=True)}"
   request = Request(url, headers={"User-Agent": DATA_GO_KR_USER_AGENT, "Accept": "application/json"})
-  with urlopen(request, timeout=timeout) as response:
-    return json.loads(response.read().decode("utf-8"))
+  for attempt in range(DATA_GO_KR_RETRY_COUNT):
+    try:
+      with urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+    except OSError:
+      if attempt == DATA_GO_KR_RETRY_COUNT - 1:
+        raise
+      time.sleep(1.0 + attempt)
 
 
 def download_public_speed_camera_csv(

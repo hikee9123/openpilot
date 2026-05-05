@@ -21,16 +21,20 @@ Copy the CSV to the device or PC, then import it:
 .venv/bin/python tools/scripts/import_speed_cameras.py --csv /path/to/speed_cameras.csv
 ```
 
-Default output path:
+Default output paths:
 
 ```text
-/persist/speed_cameras.sqlite3
+selfdrive/navd/data/speed_cameras.csv
+selfdrive/navd/data/speed_cameras.sqlite3
 ```
 
-On PC, if `/persist` does not exist, the fallback is:
+The `selfdrive/navd/data` directory is used as runtime data storage and ignores
+generated CSV/SQLite files in git.
+
+You can override the data directory with:
 
 ```text
-~/.comma/persist/speed_cameras.sqlite3
+SPEED_CAMERA_ROOT=/persist
 ```
 
 You can also download the official public data portal CSV and import it in one step:
@@ -48,7 +52,7 @@ You can override paths:
 ```bash
 .venv/bin/python tools/scripts/import_speed_cameras.py \
   --csv /path/to/speed_cameras.csv \
-  --db /persist/speed_cameras.sqlite3
+  --db selfdrive/navd/data/speed_cameras.sqlite3
 ```
 
 ## 3. Check a known location
