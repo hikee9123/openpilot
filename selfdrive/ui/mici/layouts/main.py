@@ -140,6 +140,7 @@ class MiciMainLayout(Scroller):
       self._scroll_to(self._home_layout)
 
   def _on_bookmark_clicked(self):
+    ui_state.auto_power_off.disarm()
     user_bookmark = messaging.new_message('bookmarkButton')
     user_bookmark.valid = True
     self._pm.send('bookmarkButton', user_bookmark)

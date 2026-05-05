@@ -37,6 +37,10 @@ class Colors:
   METRIC_BORDER = rl.Color(255, 255, 255, 85)
   BUTTON_NORMAL = rl.WHITE
   BUTTON_PRESSED = rl.Color(255, 255, 255, 166)
+  AUTO_POWER_OFF_ARMED = rl.Color(255, 255, 0, 150)
+  AUTO_POWER_OFF_COUNTDOWN = rl.Color(255, 225, 0, 255)
+  AUTO_POWER_OFF_CRITICAL = rl.Color(255, 85, 0, 255)
+  COUNTDOWN_BG = rl.Color(0, 0, 0, 180)
 
 
 NETWORK_TYPES = {
@@ -142,10 +146,14 @@ class Sidebar(Widget):
       self._panda_status.update(tr_noop("VEHICLE"), tr_noop("ONLINE"), Colors.GOOD)
 
   def _handle_mouse_release(self, mouse_pos: MousePos):
+    home_clicked = rl.check_collision_point_rec(mouse_pos, HOME_BTN)
+    if home_clicked:
+      ui_state.auto_power_off.disarm()
+
     if rl.check_collision_point_rec(mouse_pos, SETTINGS_BTN):
       if self._on_settings_click:
         self._on_settings_click()
-    elif rl.check_collision_point_rec(mouse_pos, HOME_BTN) and ui_state.started:
+    elif home_clicked and ui_state.started:
       if self._on_flag_click:
         self._on_flag_click()
     elif self._recording_audio and rl.check_collision_point_rec(mouse_pos, self._mic_indicator_rect):
@@ -167,6 +175,7 @@ class Sidebar(Widget):
 
     tint = Colors.BUTTON_PRESSED if (ui_state.started and flag_pressed) else Colors.BUTTON_NORMAL
     rl.draw_texture_ex(button_img, rl.Vector2(HOME_BTN.x, HOME_BTN.y), 0.0, 1.0, tint)
+    self._draw_auto_power_off_status()
 
     # Microphone button
     if self._recording_audio:
@@ -178,6 +187,32 @@ class Sidebar(Widget):
       rl.draw_rectangle_rounded(self._mic_indicator_rect, 1, 10, bg_color)
       rl.draw_texture_ex(self._mic_img, rl.Vector2(self._mic_indicator_rect.x + (self._mic_indicator_rect.width - self._mic_img.width) / 2,
                          self._mic_indicator_rect.y + (self._mic_indicator_rect.height - self._mic_img.height) / 2), 0.0, 1.0, Colors.WHITE)
+
+  def _draw_auto_power_off_status(self):
+    if not ui_state.auto_power_off.armed:
+      return
+
+    center = rl.Vector2(HOME_BTN.x + HOME_BTN.width / 2, HOME_BTN.y + HOME_BTN.height / 2)
+    radius = HOME_BTN.width / 2
+    rl.draw_circle(int(center.x), int(center.y), int(radius), Colors.AUTO_POWER_OFF_ARMED)
+
+    remaining = ui_state.auto_power_off.remaining_seconds
+    progress = ui_state.auto_power_off.countdown_progress
+    if remaining is None or progress is None:
+      return
+
+    countdown_color = Colors.AUTO_POWER_OFF_CRITICAL if remaining <= 5 else Colors.AUTO_POWER_OFF_COUNTDOWN
+    rl.draw_ring(center, radius - 12, radius, -90.0, -90.0 + 360.0 * progress, 72, countdown_color)
+
+    text = f"{remaining}s"
+    font_size = 54 if remaining < 100 else 44
+    text_size = measure_text_cached(self._font_bold, text, font_size)
+    text_bg = rl.Rectangle(center.x - text_size.x / 2 - 14, center.y - text_size.y / 2 - 8,
+                           text_size.x + 28, text_size.y + 16)
+    rl.draw_rectangle_rounded(text_bg, 0.35, 10, Colors.COUNTDOWN_BG)
+    rl.draw_text_ex(self._font_bold, text,
+                    rl.Vector2(center.x - text_size.x / 2, center.y - text_size.y / 2),
+                    font_size, 0, Colors.WHITE)
 
   def _draw_network_indicator(self, rect: rl.Rectangle):
     # Signal strength dots

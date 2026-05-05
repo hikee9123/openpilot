@@ -1,4 +1,5 @@
 import json
+import math
 import time
 from collections.abc import Mapping
 
@@ -172,12 +173,41 @@ class AutoPowerOffController:
     self._armed = False
     self._ignition_off_since: float | None = None
     self._last_update = -POWER_OFF_UPDATE_INTERVAL
+    self._power_off_delay = 0
+
+  @property
+  def armed(self) -> bool:
+    return self._armed and self._power_off_delay > 0
+
+  @property
+  def remaining_seconds(self) -> int | None:
+    if not self._armed or self._ignition_off_since is None or self._power_off_delay <= 0:
+      return None
+    remaining = self._power_off_delay - (time.monotonic() - self._ignition_off_since)
+    return max(0, math.ceil(remaining))
+
+  @property
+  def countdown_progress(self) -> float | None:
+    if not self._armed or self._ignition_off_since is None or self._power_off_delay <= 0:
+      return None
+    elapsed = time.monotonic() - self._ignition_off_since
+    return max(0.0, min(1.0, elapsed / self._power_off_delay))
+
+  def disarm(self) -> None:
+    self._armed = False
+    self._ignition_off_since = None
+    self._power_off_delay = 0
 
   def update(self, started: bool, ignition: bool, v_ego: float, now: float | None = None) -> None:
     now = time.monotonic() if now is None else now
     if now - self._last_update < POWER_OFF_UPDATE_INTERVAL:
       return
     self._last_update = now
+    self._power_off_delay = int(read_custom_params(self.params)["ParamPowerOff"])
+
+    if self._power_off_delay <= 0:
+      self.disarm()
+      return
 
     if started:
       self._ignition_off_since = None
@@ -189,8 +219,7 @@ class AutoPowerOffController:
       self._ignition_off_since = None
       return
 
-    power_off_delay = int(read_custom_params(self.params)["ParamPowerOff"])
-    if power_off_delay <= 0 or not self._armed:
+    if not self._armed:
       self._ignition_off_since = None
       return
 
@@ -198,8 +227,9 @@ class AutoPowerOffController:
       self._ignition_off_since = now
       return
 
-    if now - self._ignition_off_since > power_off_delay:
+    if now - self._ignition_off_since > self._power_off_delay:
       self._armed = False
       self._ignition_off_since = None
+      self._power_off_delay = 0
       self.params.put_bool("DoShutdown", True)
 # #custom end

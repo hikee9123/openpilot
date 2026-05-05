@@ -107,6 +107,7 @@ class MainLayout(Widget):
     self.open_settings(PanelType.DEVICE)
 
   def _on_bookmark_clicked(self):
+    ui_state.auto_power_off.disarm()
     user_bookmark = messaging.new_message('bookmarkButton')
     user_bookmark.valid = True
     self._pm.send('bookmarkButton', user_bookmark)
