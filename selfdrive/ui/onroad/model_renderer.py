@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
 from openpilot.selfdrive.locationd.calibrationd import HEIGHT_INIT
+from openpilot.selfdrive.ui.onroad.lead_tracking import select_lane_leads
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.shader_polygon import draw_polygon, Gradient
@@ -114,13 +115,16 @@ class ModelRenderer(Widget):
 
     model = sm['modelV2']
     radar_state = sm['radarState'] if sm.valid['radarState'] else None
+    live_tracks = sm['liveTracks'] if sm.valid['liveTracks'] else None
     lead_one = radar_state.leadOne if radar_state else None
     show_car_tracking = bool(sm["uICustom"].userInterface.showCarTracking)
-    render_lead_indicator = (self._longitudinal_control or show_car_tracking) and radar_state is not None
+    render_lead_indicator = (self._longitudinal_control and radar_state is not None) or (
+      show_car_tracking and (radar_state is not None or live_tracks is not None)
+    )
 
     # Update model data when needed
     model_updated = sm.updated['modelV2']
-    if model_updated or sm.updated['radarState'] or self._transform_dirty:
+    if model_updated or sm.updated['radarState'] or sm.updated['liveTracks'] or self._transform_dirty:
       if model_updated:
         self._update_raw_points(model)
 
@@ -130,7 +134,8 @@ class ModelRenderer(Widget):
 
       self._update_model(lead_one, path_x_array)
       if render_lead_indicator:
-        self._update_leads(radar_state, path_x_array, show_car_tracking)
+        leads = select_lane_leads(live_tracks, model, radar_state) if show_car_tracking else [radar_state.leadOne, radar_state.leadTwo]
+        self._update_leads(leads, path_x_array, show_car_tracking)
       self._transform_dirty = False
 
     # Draw elements
@@ -154,10 +159,9 @@ class ModelRenderer(Widget):
     self._road_edge_stds = np.array(model.roadEdgeStds, dtype=np.float32)
     self._acceleration_x = np.array(model.acceleration.x, dtype=np.float32)
 
-  def _update_leads(self, radar_state, path_x_array, show_car_tracking):
+  def _update_leads(self, leads, path_x_array, show_car_tracking):
     """Update positions of lead vehicles"""
-    self._lead_vehicles = [LeadVehicle(), LeadVehicle()]
-    leads = [radar_state.leadOne, radar_state.leadTwo]
+    self._lead_vehicles = [LeadVehicle() for _ in leads]
 
     for i, lead_data in enumerate(leads):
       if lead_data and lead_data.status:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pyray as rl
 
 from openpilot.common.constants import CV
+from openpilot.selfdrive.ui.onroad.lead_tracking import LEAD_LANES, select_lane_leads
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import FontWeight, gui_app
 from openpilot.system.ui.lib.text_measure import measure_text_cached
@@ -16,9 +17,6 @@ BASE_PADDING_Y = 18
 BASE_TITLE_FONT_SIZE = 28
 BASE_LINE_FONT_SIZE = 31
 BASE_LINE_HEIGHT = 38
-LEAD_EGO_LANE_YREL = 1.2
-LEAD_LANE_LINE_PROB_MIN = 0.25
-LEAD_LANE_BOUNDARY_MARGIN = 0.25
 PANEL_BG = rl.Color(0, 0, 0, 115)
 PANEL_BORDER = rl.Color(255, 255, 255, 80)
 TITLE_COLOR = rl.Color(255, 255, 255, 210)
@@ -72,8 +70,9 @@ class CarTrackingRenderer(Widget):
   def _tracking_rows(self) -> list[tuple[str, rl.Color]]:
     sm = ui_state.sm
     radar_state = sm["radarState"] if sm.valid["radarState"] else None
-    leads = [radar_state.leadOne, radar_state.leadTwo] if radar_state is not None else [None, None]
-    rows = [self._lead_row(idx + 1, lead) for idx, lead in enumerate(leads)]
+    live_tracks = sm["liveTracks"] if sm.valid["liveTracks"] else None
+    leads = select_lane_leads(live_tracks, sm["modelV2"], radar_state)
+    rows = [self._lead_row(lane, lead) for lane, lead in zip(LEAD_LANES, leads, strict=True)]
 
     custom = sm["carState"].carSCustom
     scc_distance = float(custom.leadDistance)
@@ -84,9 +83,9 @@ class CarTrackingRenderer(Widget):
       rows.append((f"SCC none  GAP {gap}", DIM_COLOR))
     return rows
 
-  def _lead_row(self, idx: int, lead) -> tuple[str, rl.Color]:
+  def _lead_row(self, lane: str, lead) -> tuple[str, rl.Color]:
     if lead is None or not lead.status:
-      return (f"Lead {idx}: none", DIM_COLOR)
+      return (f"{lane}: none", DIM_COLOR)
 
     speed_unit = "km/h" if ui_state.is_metric else "mph"
     speed = lead.vRel * (CV.MS_TO_KPH if ui_state.is_metric else CV.MS_TO_MPH)
@@ -94,8 +93,7 @@ class CarTrackingRenderer(Widget):
     source = "RADAR" if bool(getattr(lead, "radar", False)) else "CAMERA"
     track_id = int(getattr(lead, "radarTrackId", -1))
     source_text = f"{source}#{track_id}" if track_id >= 0 else source
-    lane_text = self._lane_label(float(lead.dRel), float(getattr(lead, "yRel", 0.0)))
-    text = f"Lead {idx}: {lane_text}  {lead.dRel:.0f}m  {speed:+.1f}{speed_unit}  p{prob:.0f}%  {source_text}"
+    text = f"{lane}: {lead.dRel:.0f}m  {speed:+.1f}{speed_unit}  p{prob:.0f}%  {source_text}"
     return (text, self._lead_color(lead.dRel, lead.vRel))
 
   def _lead_color(self, distance: float, rel_speed: float) -> rl.Color:
@@ -111,47 +109,6 @@ class CarTrackingRenderer(Widget):
     if distance < 18:
       return WARN_COLOR
     return TEXT_COLOR
-
-  def _lane_label(self, d_rel: float, y_rel: float) -> str:
-    lane_offset = self._lane_offset(d_rel, y_rel)
-    if abs(lane_offset) <= LEAD_EGO_LANE_YREL:
-      return "EGO"
-    return "LEFT" if lane_offset > 0 else "RIGHT"
-
-  def _lane_offset(self, d_rel: float, y_rel: float) -> float:
-    model = ui_state.sm["modelV2"]
-    center_y = self._interp_y(model.position.x, model.position.y, d_rel)
-    center_y = center_y if center_y is not None else 0.0
-
-    if len(model.laneLines) > 2 and len(model.laneLineProbs) > 2:
-      if min(float(model.laneLineProbs[1]), float(model.laneLineProbs[2])) >= LEAD_LANE_LINE_PROB_MIN:
-        left_y = self._interp_y(model.laneLines[1].x, model.laneLines[1].y, d_rel)
-        right_y = self._interp_y(model.laneLines[2].x, model.laneLines[2].y, d_rel)
-        if left_y is not None and right_y is not None:
-          lane_min = min(left_y, right_y) - LEAD_LANE_BOUNDARY_MARGIN
-          lane_max = max(left_y, right_y) + LEAD_LANE_BOUNDARY_MARGIN
-          if lane_min <= y_rel <= lane_max:
-            return 0.0
-
-    return y_rel - center_y
-
-  def _interp_y(self, xs, ys, x: float) -> float | None:
-    count = min(len(xs), len(ys))
-    if count == 0:
-      return None
-
-    if x <= xs[0]:
-      return float(ys[0])
-
-    for i in range(1, count):
-      x0, x1 = float(xs[i - 1]), float(xs[i])
-      if x <= x1:
-        y0, y1 = float(ys[i - 1]), float(ys[i])
-        if x1 == x0:
-          return y1
-        return y0 + (y1 - y0) * ((x - x0) / (x1 - x0))
-
-    return float(ys[count - 1])
 
   def _ellipsize(self, text: str, max_width: float, font_size: int) -> str:
     if measure_text_cached(self._text_font, text, font_size).x <= max_width:
