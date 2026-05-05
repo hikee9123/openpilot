@@ -193,7 +193,7 @@ class HudRenderer(Widget):
     brake_pressed = bool(getattr(car_state, "brakePressed", False))
     gas_value = max(0.0, float(getattr(car_state, "gasDEPRECATED", 0.0))) * 100.0
     if bool(getattr(car_state, "gasPressed", False)):
-      gas_value = max(gas_value, 5.0)
+      gas_value = max(gas_value, 20.0)
 
     if brake_pos > 0:
       if brake_lights:
@@ -204,7 +204,7 @@ class HudRenderer(Widget):
     if brake_pressed:
       return COLORS.BRAKE_HARD
     if gas_value > 0:
-      return self._interp_color(gas_value, 5.0, 60.0, 60.0, COLORS.WHITE, COLORS.GAS, COLORS.GAS)
+      return self._interp_color(gas_value, 0.0, 60.0, 60.0, COLORS.WHITE, COLORS.GAS, COLORS.GAS)
     return COLORS.WHITE
 
   def _interp_color(self, value: float, x0: float, x1: float, x2: float, c0: rl.Color, c1: rl.Color, c2: rl.Color) -> rl.Color:
