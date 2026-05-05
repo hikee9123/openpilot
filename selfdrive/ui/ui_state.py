@@ -18,6 +18,13 @@ BACKLIGHT_OFFROAD = 65 if HARDWARE.get_device_type() == "mici" else 50
 PARAM_UPDATE_TIME = 5.0
 CUSTOM_PARAM_UPDATE_TIME = 1.0
 CAMERA_SIM = PC and os.getenv("CAM_SIM", "").lower() in ("road", "webcam")
+DISPLAY_FADE_IN_SECONDS = 1.0
+DISPLAY_FADE_OUT_SECONDS = 60.0
+DISPLAY_DIM_MIN_SECONDS = 1.0
+DISPLAY_DIM_MAX_SECONDS = 2.0
+DISPLAY_DIM_START = 0.30
+DISPLAY_DIM_END = 0.10
+DISPLAY_DIM_MIN_BRIGHTNESS = 5.0
 
 
 class UIStatus(Enum):
@@ -226,11 +233,17 @@ class Device:
     self._interactive_timeout_callbacks: list[Callable] = []
     self._prev_timed_out = False
     self._awake: bool = True
+    self._cmd_awake: bool = True
 
     self._offroad_brightness: int = BACKLIGHT_OFFROAD
     self._last_brightness: int = 0
     self._brightness_filter = FirstOrderFilter(BACKLIGHT_OFFROAD, 10.00, 1 / gui_app.target_fps)
     self._brightness_thread: threading.Thread | None = None
+    self._fade_active = False
+    self._fade_start = 0.0
+    self._fade_duration = 0.0
+    self._fade_from = 0.0
+    self._fade_to = 0.0
 
   @property
   def awake(self) -> bool:
@@ -263,8 +276,8 @@ class Device:
     if self._interaction_time <= 0:
       self._reset_interactive_timeout()
 
-    self._update_brightness()
     self._update_wakefulness()
+    self._update_brightness()
 
   def set_offroad_brightness(self, brightness: int | None):
     if brightness is None:
@@ -290,9 +303,9 @@ class Device:
       brightness_scale = min(max(1.0 + brightness_offset * 0.05, 0.2), 2.0)
       clipped_brightness = min(max(clipped_brightness * brightness_scale, 1.0), 100.0)
 
-    brightness = round(self._brightness_filter.update(clipped_brightness))
-    if not self._awake:
-      brightness = 0
+    clipped_brightness = self._apply_idle_dim(clipped_brightness)
+    filtered_brightness = round(self._brightness_filter.update(clipped_brightness))
+    brightness = self._fade_brightness(filtered_brightness)
 
     if brightness != self._last_brightness:
       if self._brightness_thread is None or not self._brightness_thread.is_alive():
@@ -300,12 +313,65 @@ class Device:
         self._brightness_thread.start()
         self._last_brightness = brightness
 
+  def _apply_idle_dim(self, brightness: float) -> float:
+    timeout = self.interactive_timeout
+    if timeout is None or timeout <= 0 or ui_state.ignition or PC:
+      return brightness
+
+    remaining = self._interaction_time - time.monotonic()
+    dim_window = min(DISPLAY_DIM_MAX_SECONDS, max(DISPLAY_DIM_MIN_SECONDS, timeout / 5.0))
+    if remaining > dim_window:
+      return brightness
+
+    progress = min(max((dim_window - remaining) / dim_window, 0.0), 1.0)
+    dim_scale = DISPLAY_DIM_START + (DISPLAY_DIM_END - DISPLAY_DIM_START) * progress
+    return min(brightness, max(DISPLAY_DIM_MIN_BRIGHTNESS, brightness * dim_scale))
+
+  def _fade_brightness(self, target: int) -> int:
+    if not self._cmd_awake and not self._fade_active:
+      return self._sleep_brightness_target()
+
+    if not self._fade_active:
+      return target
+
+    if self._cmd_awake:
+      self._fade_to = float(target)
+
+    elapsed = time.monotonic() - self._fade_start
+    progress = min(max(elapsed / max(self._fade_duration, 1e-3), 0.0), 1.0)
+    eased = progress * progress * (3.0 - 2.0 * progress)
+    brightness = round(self._fade_from + (self._fade_to - self._fade_from) * eased)
+
+    if progress >= 1.0:
+      self._fade_active = False
+      brightness = round(self._fade_to)
+      if not self._cmd_awake and self._screen_off_after_fade():
+        self._set_display_awake(False)
+
+    return min(max(brightness, 0), 100)
+
+  def _start_brightness_fade(self, on: bool) -> None:
+    self._fade_active = True
+    self._fade_start = time.monotonic()
+    self._fade_duration = DISPLAY_FADE_IN_SECONDS if on else DISPLAY_FADE_OUT_SECONDS
+    self._fade_from = float(self._last_brightness)
+    self._fade_to = self._fade_from if on else self._sleep_brightness_target()
+
+    if on:
+      self._set_display_awake(True)
+
+  def _screen_off_after_fade(self) -> bool:
+    return bool(ui_state.custom_params["ParamScreenOffAfterFade"])
+
+  def _sleep_brightness_target(self) -> int:
+    return 0 if self._screen_off_after_fade() else round(DISPLAY_DIM_MIN_BRIGHTNESS)
+
   def _update_wakefulness(self):
     # Handle interactive timeout
     ignition_just_turned_off = not ui_state.ignition and self._ignition
     self._ignition = ui_state.ignition
 
-    if ignition_just_turned_off or any(ev.left_down for ev in gui_app.mouse_events):
+    if ignition_just_turned_off or self._has_wake_input():
       self._reset_interactive_timeout()
 
     interaction_timeout = time.monotonic() > self._interaction_time
@@ -317,6 +383,16 @@ class Device:
     self._set_awake(ui_state.ignition or not interaction_timeout or PC)
 
   def _set_awake(self, on: bool):
+    if on != self._cmd_awake:
+      self._cmd_awake = on
+      self._start_brightness_fade(on)
+
+  def _has_wake_input(self) -> bool:
+    if any(ev.left_down for ev in gui_app.mouse_events):
+      return True
+    return any(button.type == car.CarState.ButtonEvent.Type.cancel for button in ui_state.sm["carState"].buttonEvents)
+
+  def _set_display_awake(self, on: bool):
     if on != self._awake:
       self._awake = on
       cloudlog.debug(f"setting display power {int(on)}")

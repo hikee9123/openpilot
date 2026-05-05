@@ -230,6 +230,7 @@ class CustomSettingsLayout(Widget):
         SectionHeader(tr_noop("Screen & Power")),
         self._number_item("ParamBrightness", tr_noop("Screen brightness"), -20, 5, 1),
         self._number_item("ParamAutoScreenOff", tr_noop("Screen timeout"), 0, 120, 1),
+        self._toggle_json_item("ParamScreenOffAfterFade", tr_noop("Screen off after fade")),
         self._number_item("ParamPowerOff", tr_noop("Power off time"), 0, 60, 1),
         self._number_item("DUAL_CAMERA_VIEW", tr_noop("Dual camera view"), 0, 1, 1),
         SectionHeader(tr_noop("Logging")),

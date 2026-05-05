@@ -22,6 +22,7 @@ DEFAULT_CUSTOM_PARAMS: dict[str, int | float | bool] = {
   "ParamStiffnessFactor": 0.0,
   "ParamAngleOffsetDeg": 0.0,
   "ParamAutoScreenOff": 8,
+  "ParamScreenOffAfterFade": True,
   "ParamBrightness": -12,
   "ParamPowerOff": 15,
   "DUAL_CAMERA_VIEW": 0,
