@@ -8,9 +8,17 @@ import signal
 import subprocess
 import tempfile
 import threading
+import time
 
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
+
+CUSTOM_MODEL_COMPILE_STATUS = "CustomModelCompileStatus"
+CUSTOM_MODEL_COMPILE_NAME = "CustomModelCompileName"
+CUSTOM_MODEL_COMPILE_FINISHED_AT = "CustomModelCompileFinishedAt"
+CUSTOM_MODEL_COMPILE_ERROR = "CustomModelCompileError"
+STATUS_RUNNING = "running"
+STATUS_FAILED = "failed"
 
 def unblock_stdout() -> None:
   # get a non-blocking stdout
@@ -48,6 +56,20 @@ def unblock_stdout() -> None:
 def write_onroad_params(started, params):
   params.put_bool("IsOnroad", started)
   params.put_bool("IsOffroad", not started)
+
+
+def init_custom_model_compile_state(params: Params) -> None:
+  status = params.get(CUSTOM_MODEL_COMPILE_STATUS)
+  status_text = status.decode("utf-8") if isinstance(status, bytes) else str(status or "")
+  if status_text != STATUS_RUNNING:
+    return
+
+  model_name = params.get(CUSTOM_MODEL_COMPILE_NAME)
+  model_name_text = model_name.decode("utf-8") if isinstance(model_name, bytes) else str(model_name or "")
+  params.put(CUSTOM_MODEL_COMPILE_STATUS, STATUS_FAILED)
+  params.put(CUSTOM_MODEL_COMPILE_NAME, model_name_text)
+  params.put(CUSTOM_MODEL_COMPILE_FINISHED_AT, str(int(time.time())))
+  params.put(CUSTOM_MODEL_COMPILE_ERROR, "compile interrupted by device or manager restart")
 
 
 def logging_enabled(params: Params) -> bool:

@@ -51,7 +51,10 @@ COMPILE_NAME_KEY = "CustomModelCompileName"
 COMPILE_STARTED_AT_KEY = "CustomModelCompileStartedAt"
 COMPILE_FINISHED_AT_KEY = "CustomModelCompileFinishedAt"
 COMPILE_ERROR_KEY = "CustomModelCompileError"
-COMPILE_LOG_PATH = "/tmp/openpilot_custom_model_compile.log"
+COMPILE_LOG_PATH = "/data/tmp/openpilot_custom_model_compile.log"
+COMPILE_STATUS_CHECK_INTERVAL = 5.0
+COMPILE_PROCESS_GRACE_SECONDS = 60
+COMPILE_STALE_SECONDS = 2 * 60 * 60
 GIT_STATUS_KEY = "CustomGitUpdateStatus"
 GIT_ERROR_KEY = "CustomGitUpdateError"
 GIT_LOG_PATH = "/tmp/openpilot_git_update.log"
@@ -186,6 +189,7 @@ class CustomSettingsLayout(Widget):
     super().__init__()
     self._params = Params()
     self._dialog: MultiOptionDialog | None = None
+    self._last_compile_status_check = -COMPILE_STATUS_CHECK_INTERVAL
     self._current_tab = "UI"
     self._tab_rects: dict[str, rl.Rectangle] = {}
     self._tab_font = gui_app.font(FontWeight.MEDIUM)
@@ -505,7 +509,64 @@ class CustomSettingsLayout(Widget):
     model_name = self._param_text("ActiveModelName")
     return DEFAULT_MODEL_NAME if not model_name or model_name in DEFAULT_MODEL_NAMES else model_name
 
+  def _set_compile_failed(self, model_name: str, error: str) -> None:
+    self._params.put(COMPILE_STATUS_KEY, STATUS_FAILED)
+    self._params.put(COMPILE_NAME_KEY, model_name)
+    self._params.put(COMPILE_FINISHED_AT_KEY, str(int(time.time())))
+    self._params.put(COMPILE_ERROR_KEY, error[-500:])
+
+  def _set_compile_success(self, model_name: str) -> None:
+    self._params.put(COMPILE_STATUS_KEY, STATUS_SUCCESS)
+    self._params.put(COMPILE_NAME_KEY, model_name)
+    self._params.put(COMPILE_FINISHED_AT_KEY, str(int(time.time())))
+    self._params.put(COMPILE_ERROR_KEY, "")
+
+  def _compile_process_running(self, model_name: str) -> bool | None:
+    proc_dir = Path("/proc")
+    if not proc_dir.is_dir():
+      return None
+
+    process_names = ("model_make.py", "compile_modeld.py", "compile3.py")
+    for path in proc_dir.iterdir():
+      if not path.name.isdigit():
+        continue
+      try:
+        cmdline = (path / "cmdline").read_bytes().replace(b"\x00", b" ").decode("utf-8", "ignore")
+      except OSError:
+        continue
+      if any(process_name in cmdline for process_name in process_names):
+        if not model_name or model_name in cmdline or "compile_modeld.py" in cmdline or "compile3.py" in cmdline:
+          return True
+    return False
+
+  def _refresh_compile_status(self) -> None:
+    status = self._param_text(COMPILE_STATUS_KEY)
+    if status != STATUS_RUNNING:
+      return
+
+    now = time.monotonic()
+    if now - self._last_compile_status_check < COMPILE_STATUS_CHECK_INTERVAL:
+      return
+    self._last_compile_status_check = now
+
+    model_name = self._param_text(COMPILE_NAME_KEY)
+    started_at = self._param_text(COMPILE_STARTED_AT_KEY)
+    try:
+      elapsed = int(time.time()) - int(started_at)
+    except ValueError:
+      self._set_compile_failed(model_name, "compile status was running without a valid start time")
+      return
+
+    if elapsed >= COMPILE_STALE_SECONDS:
+      self._set_compile_failed(model_name, f"compile timed out after {elapsed}s")
+      return
+
+    process_running = self._compile_process_running(model_name)
+    if process_running is False and elapsed >= COMPILE_PROCESS_GRACE_SECONDS:
+      self._set_compile_failed(model_name, "compile process stopped before finishing")
+
   def _compile_status(self) -> str:
+    self._refresh_compile_status()
     return self._param_text(COMPILE_STATUS_KEY) or STATUS_IDLE
 
   def _compile_status_text(self) -> str:
@@ -577,22 +638,35 @@ class CustomSettingsLayout(Widget):
     self._params.put(COMPILE_ERROR_KEY, "")
 
     def worker() -> None:
-      with open(COMPILE_LOG_PATH, "w") as log_file:
-        result = subprocess.run([sys.executable, "model_make.py", "--model", model_name], cwd=MODELD_DIR,
-                                stdout=log_file, stderr=subprocess.STDOUT, text=True, check=False)
+      result: subprocess.CompletedProcess | None = None
+      error = ""
+      try:
+        Path(COMPILE_LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
+        with open(COMPILE_LOG_PATH, "w") as log_file:
+          result = subprocess.run([sys.executable, "model_make.py", "--model", model_name], cwd=MODELD_DIR,
+                                  stdout=log_file, stderr=subprocess.STDOUT, text=True, check=False)
+      except Exception as e:
+        error = f"{type(e).__name__}: {e}"
+        try:
+          with open(COMPILE_LOG_PATH, "a") as log_file:
+            log_file.write(f"\n{error}\n")
+        except OSError:
+          pass
+
       status = self._param_text(COMPILE_STATUS_KEY)
-      if result.returncode == 0 and status == STATUS_RUNNING:
-        self._params.put(COMPILE_STATUS_KEY, STATUS_SUCCESS)
-        self._params.put(COMPILE_FINISHED_AT_KEY, str(int(time.time())))
-      elif result.returncode != 0 and status == STATUS_RUNNING:
+      running_model = self._param_text(COMPILE_NAME_KEY)
+      if status != STATUS_RUNNING or running_model != model_name:
+        return
+
+      if result is not None and result.returncode == 0:
+        self._set_compile_success(model_name)
+      else:
         try:
           with open(COMPILE_LOG_PATH) as log_file:
-            error = log_file.read()[-500:]
+            error = error or log_file.read()[-500:]
         except OSError:
-          error = f"exit code {result.returncode}"
-        self._params.put(COMPILE_STATUS_KEY, STATUS_FAILED)
-        self._params.put(COMPILE_FINISHED_AT_KEY, str(int(time.time())))
-        self._params.put(COMPILE_ERROR_KEY, error)
+          error = error or f"exit code {result.returncode if result is not None else 'unknown'}"
+        self._set_compile_failed(model_name, error)
 
     threading.Thread(target=worker, daemon=True).start()
 
