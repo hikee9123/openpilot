@@ -54,6 +54,7 @@ COMPILE_ERROR_KEY = "CustomModelCompileError"
 COMPILE_PROGRESS_KEY = "CustomModelCompileProgress"
 COMPILE_LOG_PATH = "/data/tmp/openpilot_custom_model_compile.log"
 COMPILE_STATUS_CHECK_INTERVAL = 5.0
+COMPILE_LOG_CACHE_INTERVAL = 2.0
 COMPILE_PROCESS_GRACE_SECONDS = 60
 COMPILE_STALE_SECONDS = 2 * 60 * 60
 GIT_STATUS_KEY = "CustomGitUpdateStatus"
@@ -191,6 +192,8 @@ class CustomSettingsLayout(Widget):
     self._params = Params()
     self._dialog: MultiOptionDialog | None = None
     self._last_compile_status_check = -COMPILE_STATUS_CHECK_INTERVAL
+    self._last_compile_log_check = -COMPILE_LOG_CACHE_INTERVAL
+    self._compile_log_tail = ""
     self._current_tab = "UI"
     self._tab_rects: dict[str, rl.Rectangle] = {}
     self._tab_font = gui_app.font(FontWeight.MEDIUM)
@@ -240,6 +243,7 @@ class CustomSettingsLayout(Widget):
       "Model": [
         self._model_selection_item(),
         text_item(lambda: tr("Compile status"), self._compile_status_text),
+        text_item(lambda: tr("Compile detail"), self._compile_log_tail_text),
       ],
       "Debug": [
         self._toggle_json_item("debug1", tr_noop("Debug 1")),
@@ -599,6 +603,27 @@ class CustomSettingsLayout(Widget):
         error = error[-80:]
       return f"{tr('Failed')} {model_name}: {error}".strip(": ")
     return tr("Idle")
+
+  def _compile_log_tail_text(self) -> str:
+    now = time.monotonic()
+    if now - self._last_compile_log_check < COMPILE_LOG_CACHE_INTERVAL:
+      return self._compile_log_tail
+    self._last_compile_log_check = now
+
+    try:
+      with open(COMPILE_LOG_PATH, encoding="utf-8", errors="replace") as log_file:
+        lines = [line.strip() for line in log_file.readlines()[-80:]]
+    except OSError:
+      self._compile_log_tail = ""
+      return self._compile_log_tail
+
+    for line in reversed(lines):
+      if line:
+        self._compile_log_tail = line[-100:]
+        return self._compile_log_tail
+
+    self._compile_log_tail = ""
+    return self._compile_log_tail
 
   def _model_button_text(self) -> str:
     status = self._compile_status()
