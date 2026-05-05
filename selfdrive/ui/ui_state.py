@@ -43,6 +43,7 @@ class UIState:
         "radarState",
         "deviceState",
         "pandaStates",
+        "peripheralState",
         "carParams",
         "driverMonitoringState",
         "carState",
@@ -52,12 +53,14 @@ class UIState:
         "managerState",
         "selfdriveState",
         "longitudinalPlan",
+        "gpsLocation",
         "gpsLocationExternal",
         "carOutput",
         "carControl",
         "liveParameters",
         "testJoystick",
         "rawAudioData",
+        "uICustom",
       ]
     )
 
