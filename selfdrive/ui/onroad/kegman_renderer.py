@@ -138,7 +138,7 @@ class KegmanRenderer(Widget):
   def _collect_measures(self) -> list[KegmanMeasure]:
     sm = ui_state.sm
     ui_custom = sm["uICustom"].userInterface
-    if not ui_custom.kegman:
+    if not ui_custom.kegman and not ui_custom.tpms:
       return []
 
     default_overlay = not any((
@@ -153,6 +153,10 @@ class KegmanRenderer(Widget):
     ))
 
     measures: list[KegmanMeasure] = []
+    if ui_custom.tpms:
+      measures.extend(self._tpms_measures())
+    if not ui_custom.kegman:
+      return measures
     if ui_custom.kegmanCPU or default_overlay:
       measures.append(self._cpu_measure())
     if ui_custom.kegmanLag or default_overlay:
@@ -170,6 +174,20 @@ class KegmanRenderer(Widget):
     if ui_custom.kegmanEngine:
       measures.append(self._engine_measure())
     return measures
+
+  def _tpms_measures(self) -> list[KegmanMeasure]:
+    tpms = ui_state.sm["carState"].carSCustom.tpms
+    return [
+      self._tpms_measure("FL", tpms.fl),
+      self._tpms_measure("FR", tpms.fr),
+      self._tpms_measure("RL", tpms.rl),
+      self._tpms_measure("RR", tpms.rr),
+    ]
+
+  def _tpms_measure(self, wheel: str, pressure: float) -> KegmanMeasure:
+    if pressure <= 0:
+      return KegmanMeasure("-", "psi", f"{wheel} TPMS", WHITE_DIM)
+    return KegmanMeasure(f"{pressure:.0f}", "psi", f"{wheel} TPMS", self._tpms_color(pressure))
 
   def _cpu_measure(self) -> KegmanMeasure:
     device_state = ui_state.sm["deviceState"]
@@ -289,6 +307,13 @@ class KegmanRenderer(Widget):
     if value > red_threshold:
       return RED
     if value > yellow_threshold:
+      return ORANGE
+    return WHITE
+
+  def _tpms_color(self, pressure: float) -> rl.Color:
+    if pressure < 26 or pressure > 45:
+      return RED
+    if pressure < 30 or pressure > 40:
       return ORANGE
     return WHITE
 

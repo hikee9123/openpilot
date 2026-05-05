@@ -194,7 +194,7 @@ class CustomSettingsLayout(Widget):
         self._toggle_json_item("ShowDebugMessage", tr_noop("Show debug message")),
         self._toggle_param_item("DisableUpdates", tr_noop("Disable OTA updates")),
         self._toggle_json_item("ShowCarTracking", tr_noop("Show car tracking")),
-        self._toggle_json_item("tpms", tr_noop("Show TPMS"), enabled=self._debug_enabled),
+        self._toggle_json_item("tpms", tr_noop("Show TPMS")),
         self._toggle_json_item("ParamDebug", tr_noop("Debug overlay"), enabled=self._debug_enabled),
         SectionHeader(tr_noop("Kegman Show")),
         self._toggle_json_item("kegman", tr_noop("HUD overlay")),
