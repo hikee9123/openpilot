@@ -17,6 +17,12 @@ BASE_ITEM_HEIGHT = 105
 BASE_PANEL_PADDING = 10
 BASE_MARGIN = 30
 BASE_TOP = 250
+TPMS_BASE_X = 75
+TPMS_BASE_Y = 800
+TPMS_BASE_W = 58
+TPMS_BASE_H = 126
+TPMS_BASE_MARGIN = 45
+TPMS_FONT_SIZE = 38
 
 VALUE_FONT_SIZE = 50
 LABEL_FONT_SIZE = 25
@@ -24,6 +30,9 @@ UNIT_FONT_SIZE = 22
 
 WHITE = rl.Color(255, 255, 255, 220)
 WHITE_DIM = rl.Color(255, 255, 255, 170)
+TPMS_WHITE = rl.Color(255, 255, 255, 200)
+TPMS_DIM = rl.Color(125, 125, 125, 200)
+TPMS_LOW = rl.Color(255, 90, 90, 200)
 GREEN = rl.Color(0, 255, 0, 220)
 ORANGE = rl.Color(255, 188, 3, 220)
 RED = rl.Color(255, 0, 0, 220)
@@ -58,6 +67,7 @@ class KegmanRenderer(Widget):
     self._font_value = gui_app.font(FontWeight.BOLD)
     self._font_label = gui_app.font(FontWeight.MEDIUM)
     self._font_unit = gui_app.font(FontWeight.NORMAL)
+    self._font_tpms = gui_app.font(FontWeight.BOLD)
     self._measures: list[KegmanMeasure] = []
 
   def _update_state(self) -> None:
@@ -65,6 +75,10 @@ class KegmanRenderer(Widget):
 
   def _render(self, rect: rl.Rectangle) -> None:
     measures = self._measures[:MAX_ITEMS]
+    ui_custom = ui_state.sm["uICustom"].userInterface
+    if ui_custom.tpms:
+      self._draw_tpms_overlay(rect)
+
     if not measures:
       return
 
@@ -138,7 +152,7 @@ class KegmanRenderer(Widget):
   def _collect_measures(self) -> list[KegmanMeasure]:
     sm = ui_state.sm
     ui_custom = sm["uICustom"].userInterface
-    if not ui_custom.kegman and not ui_custom.tpms:
+    if not ui_custom.kegman:
       return []
 
     default_overlay = not any((
@@ -153,10 +167,6 @@ class KegmanRenderer(Widget):
     ))
 
     measures: list[KegmanMeasure] = []
-    if ui_custom.tpms:
-      measures.extend(self._tpms_measures())
-    if not ui_custom.kegman:
-      return measures
     if ui_custom.kegmanCPU or default_overlay:
       measures.append(self._cpu_measure())
     if ui_custom.kegmanLag or default_overlay:
@@ -175,19 +185,34 @@ class KegmanRenderer(Widget):
       measures.append(self._engine_measure())
     return measures
 
-  def _tpms_measures(self) -> list[KegmanMeasure]:
+  def _draw_tpms_overlay(self, rect: rl.Rectangle) -> None:
     tpms = ui_state.sm["carState"].carSCustom.tpms
-    return [
-      self._tpms_measure("FL", tpms.fl),
-      self._tpms_measure("FR", tpms.fr),
-      self._tpms_measure("RL", tpms.rl),
-      self._tpms_measure("RR", tpms.rr),
-    ]
+    scale = self._tpms_scale(rect)
+    x = rect.x + TPMS_BASE_X * scale
+    y = rect.y + TPMS_BASE_Y * scale
+    w = TPMS_BASE_W * scale
+    h = TPMS_BASE_H * scale
+    margin = TPMS_BASE_MARGIN * scale
+    font_size = max(18, round(TPMS_FONT_SIZE * scale))
 
-  def _tpms_measure(self, wheel: str, pressure: float) -> KegmanMeasure:
-    if pressure <= 0:
-      return KegmanMeasure("-", "psi", f"{wheel} TPMS", WHITE_DIM)
-    return KegmanMeasure(f"{pressure:.0f}", "psi", f"{wheel} TPMS", self._tpms_color(pressure))
+    self._draw_tpms_text(x - margin, y + 10 * scale, self._tpms_text(tpms.fl), self._tpms_color(tpms.fl), font_size, align_right=True)
+    self._draw_tpms_text(x + w + margin, y + 10 * scale, self._tpms_text(tpms.fr), self._tpms_color(tpms.fr), font_size)
+    self._draw_tpms_text(x - margin, y + h + 20 * scale, self._tpms_text(tpms.rl), self._tpms_color(tpms.rl), font_size, align_right=True)
+    self._draw_tpms_text(x + w + margin, y + h + 20 * scale, self._tpms_text(tpms.rr), self._tpms_color(tpms.rr), font_size)
+
+  def _tpms_scale(self, rect: rl.Rectangle) -> float:
+    return min(1.0, max(0.5, rect.width / 1860.0, rect.height / 1080.0))
+
+  def _draw_tpms_text(self, x: float, y: float, text: str, color: rl.Color, font_size: int, align_right: bool = False) -> None:
+    if align_right:
+      text_size = measure_text_cached(self._font_tpms, text, font_size)
+      x -= text_size.x
+    rl.draw_text_ex(self._font_tpms, text, rl.Vector2(x, y), font_size, 0, color)
+
+  def _tpms_text(self, pressure: float) -> str:
+    if pressure < 5 or pressure > 200:
+      return "-"
+    return f"{pressure:.0f}"
 
   def _cpu_measure(self) -> KegmanMeasure:
     device_state = ui_state.sm["deviceState"]
@@ -311,11 +336,11 @@ class KegmanRenderer(Widget):
     return WHITE
 
   def _tpms_color(self, pressure: float) -> rl.Color:
-    if pressure < 26 or pressure > 45:
-      return RED
-    if pressure < 30 or pressure > 40:
-      return ORANGE
-    return WHITE
+    if pressure < 5 or pressure > 60:
+      return TPMS_DIM
+    if pressure < 30:
+      return TPMS_LOW
+    return TPMS_WHITE
 
   def _steering_angle_color(self, angle: float) -> rl.Color:
     abs_angle = abs(angle)
