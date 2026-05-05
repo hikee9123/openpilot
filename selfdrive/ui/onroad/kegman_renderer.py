@@ -170,10 +170,11 @@ class KegmanRenderer(Widget):
     measures: list[KegmanMeasure] = []
     if ui_custom.kegmanCPU or default_overlay:
       measures.append(self._cpu_measure())
-    if ui_custom.kegmanGPS or default_overlay:
-      measures.append(self._gps_measure())
     if ui_custom.kegmanGPULoad or default_overlay:
       measures.append(self._gpu_measure())
+
+    if ui_custom.kegmanGPS or default_overlay:
+      measures.append(self._gps_measure())
 
     if ui_custom.kegmanBattery or default_overlay:
       measures.append(self._battery_measure())
@@ -202,9 +203,9 @@ class KegmanRenderer(Widget):
     margin = TPMS_BASE_MARGIN * scale
     font_size = max(18, round(TPMS_FONT_SIZE * scale))
 
-    self._draw_tpms_text(x - margin, y + 20 * scale, self._tpms_text(tpms.fl), self._tpms_color(tpms.fl), font_size, align_right=True)
+    self._draw_tpms_text((x - margin) + 20, y + 20 * scale, self._tpms_text(tpms.fl), self._tpms_color(tpms.fl), font_size, align_right=True)
     self._draw_tpms_text(x + w + margin, y + 20 * scale, self._tpms_text(tpms.fr), self._tpms_color(tpms.fr), font_size)
-    self._draw_tpms_text(x - margin, y + h + 20 * scale, self._tpms_text(tpms.rl), self._tpms_color(tpms.rl), font_size, align_right=True)
+    self._draw_tpms_text((x - margin) + 20, y + h + 20 * scale, self._tpms_text(tpms.rl), self._tpms_color(tpms.rl), font_size, align_right=True)
     self._draw_tpms_text(x + w + margin, y + h + 20 * scale, self._tpms_text(tpms.rr), self._tpms_color(tpms.rr), font_size)
 
   def _tpms_scale(self, rect: rl.Rectangle) -> float:
@@ -278,7 +279,7 @@ class KegmanRenderer(Widget):
     if gpu_temp > 120:
       gpu_temp = 0.0
     return KegmanMeasure(
-      str(gpu_temp),
+      f"{gpu_temp:.1f}",
       "C",
       f"GPU {gpu_usage:.1f}%",
       self._threshold_color(gpu_usage, 90, 60),
