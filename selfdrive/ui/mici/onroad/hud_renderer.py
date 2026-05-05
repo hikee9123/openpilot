@@ -32,6 +32,8 @@ class FontSizes:
 class Colors:
   WHITE = rl.WHITE
   WHITE_TRANSLUCENT = rl.Color(255, 255, 255, 200)
+  BLACK_TRANSLUCENT = rl.Color(0, 0, 0, 150)
+  SPEED_CAMERA = rl.Color(255, 198, 77, 230)
 
 
 FONT_SIZES = FontSizes()
@@ -54,7 +56,9 @@ class TurnIntent(Widget):
 
   def _render(self, _):
     if self._turn_intent_alpha_filter.x > 1e-2:
-      turn_intent_texture = self._txt_turn_intent_right if self._turn_intent_direction == 1 else self._txt_turn_intent_left
+      turn_intent_texture = (
+        self._txt_turn_intent_right if self._turn_intent_direction == 1 else self._txt_turn_intent_left
+      )
       src_rect = rl.Rectangle(0, 0, turn_intent_texture.width, turn_intent_texture.height)
       dest_rect = rl.Rectangle(self._rect.x + self._rect.width / 2, self._rect.y + self._rect.height / 2,
                                turn_intent_texture.width, turn_intent_texture.height)
@@ -106,6 +110,9 @@ class HudRenderer(Widget):
     self.speed: float = 0.0
     self.v_ego_cluster_seen: bool = False
     self._engaged: bool = False
+    self.camera_alert_active: bool = False
+    self.camera_limit_speed: int = 0
+    self.camera_distance_m: int = 0
 
     self._can_draw_top_icons = True
     self._show_wheel_critical = False
@@ -137,7 +144,7 @@ class HudRenderer(Widget):
 
   def drawing_top_icons(self) -> bool:
     # whether we're drawing any top icons currently
-    return bool(self._set_speed_alpha_filter.x > 1e-2)
+    return bool(self._set_speed_alpha_filter.x > 1e-2 or (self.camera_alert_active and self._can_draw_top_icons))
 
   def _update_state(self) -> None:
     """Update HUD state based on car state and controls state."""
@@ -146,6 +153,7 @@ class HudRenderer(Widget):
       self.is_cruise_set = False
       self.set_speed = SET_SPEED_NA
       self.speed = 0.0
+      self.camera_alert_active = False
       return
 
     controls_state = sm['controlsState']
@@ -168,6 +176,7 @@ class HudRenderer(Widget):
     v_ego = v_ego_cluster if self.v_ego_cluster_seen else car_state.vEgo
     speed_conversion = CV.MS_TO_KPH if ui_state.is_metric else CV.MS_TO_MPH
     self.speed = max(0.0, v_ego * speed_conversion)
+    self._update_camera_alert(sm)
 
   def _render(self, rect: rl.Rectangle) -> None:
     """Render HUD elements to the screen."""
@@ -177,6 +186,7 @@ class HudRenderer(Widget):
     if self.is_cruise_set:
       self._draw_set_speed(rect)
 
+    self._draw_speed_camera_alert(rect)
     self._draw_steering_wheel(rect)
 
   def _draw_steering_wheel(self, rect: rl.Rectangle) -> None:
@@ -217,14 +227,21 @@ class HudRenderer(Widget):
     if self._show_wheel_critical:
       # Draw exclamation point icon
       EXCLAMATION_POINT_SPACING = 10
-      exclamation_pos_x = pos_x - self._txt_exclamation_point.width / 2 + wheel_txt.width / 2 + EXCLAMATION_POINT_SPACING
+      exclamation_pos_x = (
+        pos_x - self._txt_exclamation_point.width / 2 + wheel_txt.width / 2 + EXCLAMATION_POINT_SPACING
+      )
       exclamation_pos_y = pos_y - self._txt_exclamation_point.height / 2
-      rl.draw_texture_ex(self._txt_exclamation_point, rl.Vector2(exclamation_pos_x, exclamation_pos_y), 0.0, 1.0, rl.WHITE)
+      rl.draw_texture_ex(
+        self._txt_exclamation_point, rl.Vector2(exclamation_pos_x, exclamation_pos_y), 0.0, 1.0, rl.WHITE
+      )
 
   def _draw_set_speed(self, rect: rl.Rectangle) -> None:
     """Draw the MAX speed indicator box."""
-    alpha = self._set_speed_alpha_filter.update(0 < rl.get_time() - self._set_speed_changed_time < SET_SPEED_PERSISTENCE and
-                                                self._can_draw_top_icons and self._engaged)
+    alpha = self._set_speed_alpha_filter.update(
+      0 < rl.get_time() - self._set_speed_changed_time < SET_SPEED_PERSISTENCE
+      and self._can_draw_top_icons
+      and self._engaged
+    )
     if alpha < 1e-2:
       return
 
@@ -262,6 +279,60 @@ class HudRenderer(Widget):
       0,
       max_color,
     )
+
+  def _update_camera_alert(self, sm) -> None:
+    nav = sm["naviCustom"].naviData
+    self.camera_alert_active = bool(nav.active and nav.camType != 0 and nav.camLimitSpeedLeftDist > 0)
+    self.camera_limit_speed = int(nav.camLimitSpeed)
+    self.camera_distance_m = int(nav.camLimitSpeedLeftDist)
+
+  def _draw_speed_camera_alert(self, rect: rl.Rectangle) -> None:
+    if not self.camera_alert_active or not self._can_draw_top_icons:
+      return
+
+    width = 172
+    height = 70
+    x = rect.x + rect.width - width - 28
+    y = rect.y + 30
+    alpha = 0.9
+    alert_rect = rl.Rectangle(x, y, width, height)
+
+    rl.draw_rectangle_rounded(alert_rect, 0.30, 10, COLORS.BLACK_TRANSLUCENT)
+    rl.draw_rectangle_rounded_lines_ex(alert_rect, 0.30, 10, 3, COLORS.SPEED_CAMERA)
+
+    limit_text = str(self.camera_limit_speed) if self.camera_limit_speed > 0 else "--"
+    distance_text = self._format_distance(self.camera_distance_m)
+
+    rl.draw_text_ex(
+      self._font_display,
+      limit_text,
+      rl.Vector2(x + 13, y - 3),
+      62,
+      0,
+      rl.Color(255, 255, 255, int(255 * alpha)),
+    )
+    rl.draw_text_ex(
+      self._font_semi_bold,
+      "CAM",
+      rl.Vector2(x + 92, y + 9),
+      28,
+      0,
+      COLORS.SPEED_CAMERA,
+    )
+    distance_size = measure_text_cached(self._font_medium, distance_text, 24)
+    rl.draw_text_ex(
+      self._font_medium,
+      distance_text,
+      rl.Vector2(x + width - distance_size.x - 14, y + 42),
+      24,
+      0,
+      COLORS.WHITE_TRANSLUCENT,
+    )
+
+  def _format_distance(self, distance_m: int) -> str:
+    if distance_m >= 1000:
+      return f"{distance_m / 1000.0:.1f}km"
+    return f"{distance_m}m"
 
   def _draw_current_speed(self, rect: rl.Rectangle) -> None:
     """Draw the current vehicle speed and unit."""

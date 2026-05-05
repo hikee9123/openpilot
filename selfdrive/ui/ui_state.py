@@ -72,6 +72,7 @@ class UIState:
         "testJoystick",
         "rawAudioData",
         "uICustom",
+        "naviCustom",
       ]
     )
 

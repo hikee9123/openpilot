@@ -54,6 +54,7 @@ class Colors:
   BRAKE_SOFT = rl.Color(255, 34, 0, 255)
   BRAKE_HARD = rl.Color(255, 0, 0, 255)
   GAS = rl.Color(255, 255, 0, 255)
+  SPEED_CAMERA = rl.Color(255, 198, 77, 255)
 
 
 UI_CONFIG = UIConfig()
@@ -72,6 +73,9 @@ class HudRenderer(Widget):
     self.speed_color: rl.Color = COLORS.WHITE
     self.brake_lights: bool = False
     self.v_ego_cluster_seen: bool = False
+    self.camera_alert_active: bool = False
+    self.camera_limit_speed: int = 0
+    self.camera_distance_m: int = 0
 
     self._font_semi_bold: rl.Font = gui_app.font(FontWeight.SEMI_BOLD)
     self._font_bold: rl.Font = gui_app.font(FontWeight.BOLD)
@@ -88,6 +92,7 @@ class HudRenderer(Widget):
       self.speed = 0.0
       self.speed_color = COLORS.WHITE
       self.brake_lights = False
+      self.camera_alert_active = False
       return
 
     controls_state = sm['controlsState']
@@ -110,6 +115,7 @@ class HudRenderer(Widget):
     self.speed = max(0.0, v_ego * speed_conversion)
     self.brake_lights = bool(getattr(car_state, "brakeLightsDEPRECATED", False))
     self.speed_color = self._speed_color(car_state)
+    self._update_camera_alert(sm)
 
   def _render(self, rect: rl.Rectangle) -> None:
     """Render HUD elements to the screen."""
@@ -127,6 +133,7 @@ class HudRenderer(Widget):
       self._draw_set_speed(rect)
 
     self._draw_current_speed(rect)
+    self._draw_speed_camera_alert(rect)
 
     button_x = rect.x + rect.width - UI_CONFIG.border_size - UI_CONFIG.button_size
     button_y = rect.y + UI_CONFIG.border_size
@@ -178,6 +185,59 @@ class HudRenderer(Widget):
       set_speed_color,
     )
 
+  def _update_camera_alert(self, sm) -> None:
+    nav = sm["naviCustom"].naviData
+    self.camera_alert_active = bool(nav.active and nav.camType != 0 and nav.camLimitSpeedLeftDist > 0)
+    self.camera_limit_speed = int(nav.camLimitSpeed)
+    self.camera_distance_m = int(nav.camLimitSpeedLeftDist)
+
+  def _draw_speed_camera_alert(self, rect: rl.Rectangle) -> None:
+    if not self.camera_alert_active:
+      return
+
+    width = UI_CONFIG.button_size
+    height = 86
+    x = rect.x + rect.width - UI_CONFIG.border_size - width
+    y = rect.y + UI_CONFIG.border_size + UI_CONFIG.button_size + 16
+    alert_rect = rl.Rectangle(x, y, width, height)
+
+    rl.draw_rectangle_rounded(alert_rect, 0.28, 10, COLORS.BLACK_TRANSLUCENT)
+    rl.draw_rectangle_rounded_lines_ex(alert_rect, 0.28, 10, 4, COLORS.SPEED_CAMERA)
+
+    limit_text = str(self.camera_limit_speed) if self.camera_limit_speed > 0 else "--"
+    distance_text = self._format_distance(self.camera_distance_m)
+
+    rl.draw_text_ex(
+      self._font_bold,
+      limit_text,
+      rl.Vector2(x + 18, y + 2),
+      60,
+      0,
+      COLORS.WHITE,
+    )
+    rl.draw_text_ex(
+      self._font_semi_bold,
+      "CAM",
+      rl.Vector2(x + 104, y + 14),
+      34,
+      0,
+      COLORS.SPEED_CAMERA,
+    )
+    distance_size = measure_text_cached(self._font_medium, distance_text, 30)
+    rl.draw_text_ex(
+      self._font_medium,
+      distance_text,
+      rl.Vector2(x + width - distance_size.x - 18, y + 52),
+      30,
+      0,
+      COLORS.WHITE_TRANSLUCENT,
+    )
+
+  def _format_distance(self, distance_m: int) -> str:
+    if distance_m >= 1000:
+      return f"{distance_m / 1000.0:.1f}km"
+    return f"{distance_m}m"
+
   def _draw_current_speed(self, rect: rl.Rectangle) -> None:
     """Draw the current vehicle speed and unit."""
     speed_text = str(round(self.speed))
@@ -206,7 +266,9 @@ class HudRenderer(Widget):
     y = center_y - lamp_height / 2 + 1
 
     for x in (left_x, right_x):
-      glow_rect = rl.Rectangle(x - glow_padding, y - glow_padding, lamp_width + glow_padding * 2, lamp_height + glow_padding * 2)
+      glow_rect = rl.Rectangle(
+        x - glow_padding, y - glow_padding, lamp_width + glow_padding * 2, lamp_height + glow_padding * 2
+      )
       lamp_rect = rl.Rectangle(x, y, lamp_width, lamp_height)
       rl.draw_rectangle_rounded(glow_rect, 0.8, 10, COLORS.BRAKE_LIGHT_GLOW)
       rl.draw_rectangle_rounded(lamp_rect, 0.75, 10, COLORS.BRAKE_HARD)
@@ -222,8 +284,12 @@ class HudRenderer(Widget):
 
     if brake_pos > 0:
       if brake_lights:
-        return self._interp_color(brake_pos, 0.0, 60.0, 130.0, COLORS.BRAKE_LIGHT, COLORS.BRAKE_SOFT, COLORS.BRAKE_HARD)
-      return self._interp_color(brake_pos, 0.0, 60.0, 130.0, COLORS.WHITE, rl.Color(200, 100, 50, 255), COLORS.BRAKE_HARD)
+        return self._interp_color(
+          brake_pos, 0.0, 60.0, 130.0, COLORS.BRAKE_LIGHT, COLORS.BRAKE_SOFT, COLORS.BRAKE_HARD
+        )
+      return self._interp_color(
+        brake_pos, 0.0, 60.0, 130.0, COLORS.WHITE, rl.Color(200, 100, 50, 255), COLORS.BRAKE_HARD
+      )
     if brake_lights:
       return COLORS.BRAKE_LIGHT
     if brake_pressed:
@@ -232,7 +298,9 @@ class HudRenderer(Widget):
       return self._interp_color(gas_value, 0.0, 60.0, 60.0, COLORS.WHITE, COLORS.GAS, COLORS.GAS)
     return COLORS.WHITE
 
-  def _interp_color(self, value: float, x0: float, x1: float, x2: float, c0: rl.Color, c1: rl.Color, c2: rl.Color) -> rl.Color:
+  def _interp_color(
+    self, value: float, x0: float, x1: float, x2: float, c0: rl.Color, c1: rl.Color, c2: rl.Color
+  ) -> rl.Color:
     if value <= x0:
       return c0
     if value >= x2:
