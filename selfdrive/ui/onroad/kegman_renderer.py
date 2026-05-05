@@ -201,7 +201,7 @@ class KegmanRenderer(Widget):
     w = TPMS_BASE_W * scale
     h = TPMS_BASE_H * scale
     margin = TPMS_BASE_MARGIN * scale
-    font_size = max(18, round(TPMS_FONT_SIZE * scale))
+    font_size = max(40, round(TPMS_FONT_SIZE * scale))
 
     self._draw_tpms_text(x - margin, y + 20 * scale, self._tpms_text(tpms.fl), self._tpms_color(tpms.fl), font_size, align_right=True)
     self._draw_tpms_text(x + w + margin, y + 20 * scale, self._tpms_text(tpms.fr), self._tpms_color(tpms.fr), font_size)
