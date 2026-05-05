@@ -1,5 +1,6 @@
 import pyray as rl
 import numpy as np
+import os
 import time
 import threading
 from collections.abc import Callable
@@ -16,6 +17,7 @@ from openpilot.system.hardware import HARDWARE, PC
 BACKLIGHT_OFFROAD = 65 if HARDWARE.get_device_type() == "mici" else 50
 PARAM_UPDATE_TIME = 5.0
 CUSTOM_PARAM_UPDATE_TIME = 1.0
+CAMERA_SIM = PC and os.getenv("CAM_SIM", "").lower() in ("road", "webcam")
 
 
 class UIStatus(Enum):
@@ -157,7 +159,11 @@ class UIState:
       self.light_sensor = -1
 
     # Update started state
-    self.started = self.sm["deviceState"].started and self.ignition
+    if CAMERA_SIM:
+      self.ignition = True
+      self.started = True
+    else:
+      self.started = self.sm["deviceState"].started and self.ignition
 
     # Update recording audio state
     self.recording_audio = self.params.get_bool("RecordAudio") and self.started

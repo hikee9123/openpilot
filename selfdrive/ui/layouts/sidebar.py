@@ -14,6 +14,11 @@ METRIC_HEIGHT = 126
 METRIC_WIDTH = 240
 METRIC_MARGIN = 30
 FONT_SIZE = 35
+BATTERY_ICON_W = 70
+BATTERY_ICON_H = 34
+BATTERY_CAP_W = 8
+BATTERY_FONT_SIZE = 35
+BATTERY_LABEL_FONT_SIZE = 30
 
 SETTINGS_BTN = rl.Rectangle(50, 35, 200, 117)
 HOME_BTN = rl.Rectangle(60, 860, 180, 180)
@@ -76,6 +81,10 @@ class Sidebar(Widget):
     self._panda_status = MetricData(tr_noop("VEHICLE"), tr_noop("ONLINE"), Colors.GOOD)
     self._connect_status = MetricData(tr_noop("CONNECT"), tr_noop("OFFLINE"), Colors.WARNING)
     self._recording_audio = False
+    self._show_battery_status = False
+    self._battery_voltage = 0.0
+    self._battery_fill = 0.0
+    self._battery_color = Colors.WHITE
 
     self._home_img = gui_app.texture("images/button_home.png", HOME_BTN.width, HOME_BTN.height)
     self._flag_img = gui_app.texture("images/button_flag.png", HOME_BTN.width, HOME_BTN.height)
@@ -102,6 +111,8 @@ class Sidebar(Widget):
 
     self._draw_buttons(rect)
     self._draw_network_indicator(rect)
+    if self._show_battery_status:
+      self._draw_battery_indicator(rect)
     self._draw_metrics(rect)
 
   def _update_state(self):
@@ -116,6 +127,7 @@ class Sidebar(Widget):
     self._update_temperature_status(device_state)
     self._update_connection_status(device_state)
     self._update_panda_status()
+    self._update_battery_status()
 
   def _update_network_status(self, device_state):
     self._net_type = NETWORK_TYPES.get(device_state.networkType.raw, tr_noop("Unknown"))
@@ -144,6 +156,20 @@ class Sidebar(Widget):
       self._panda_status.update(tr_noop("NO"), tr_noop("PANDA"), Colors.DANGER)
     else:
       self._panda_status.update(tr_noop("VEHICLE"), tr_noop("ONLINE"), Colors.GOOD)
+
+  def _update_battery_status(self):
+    self._show_battery_status = bool(ui_state.sm["uICustom"].userInterface.kegmanBattery)
+    self._battery_voltage = ui_state.sm["peripheralState"].voltage * 0.001
+    self._battery_fill = max(0.0, min(1.0, (self._battery_voltage - 11.5) / (12.8 - 11.5)))
+
+    if self._battery_voltage <= 0.0:
+      self._battery_color = Colors.GRAY
+    elif self._battery_voltage < 11.7:
+      self._battery_color = Colors.DANGER
+    elif self._battery_voltage < 12.0 or self._battery_voltage > 14.7:
+      self._battery_color = Colors.WARNING
+    else:
+      self._battery_color = Colors.WHITE
 
   def _handle_mouse_release(self, mouse_pos: MousePos):
     home_clicked = rl.check_collision_point_rec(mouse_pos, HOME_BTN)
@@ -232,8 +258,32 @@ class Sidebar(Widget):
     text_pos = rl.Vector2(rect.x + 58, text_y)
     rl.draw_text_ex(self._font_regular, tr(self._net_type), text_pos, FONT_SIZE, 0, Colors.WHITE)
 
+  def _draw_battery_indicator(self, rect: rl.Rectangle):
+    icon_x = rect.x + 58
+    icon_y = rect.y + 312
+    cap_x = icon_x + BATTERY_ICON_W + 4
+    cap_y = icon_y + (BATTERY_ICON_H - 14) / 2
+
+    icon_rect = rl.Rectangle(icon_x, icon_y, BATTERY_ICON_W, BATTERY_ICON_H)
+    rl.draw_rectangle_rounded_lines_ex(icon_rect, 0.18, 8, 3, self._battery_color)
+    rl.draw_rectangle_rounded(rl.Rectangle(cap_x, cap_y, BATTERY_CAP_W, 14), 0.35, 6, self._battery_color)
+
+    if self._battery_fill > 0.0:
+      fill_w = max(4.0, (BATTERY_ICON_W - 12) * self._battery_fill)
+      fill_rect = rl.Rectangle(icon_x + 6, icon_y + 6, fill_w, BATTERY_ICON_H - 12)
+      rl.draw_rectangle_rounded(fill_rect, 0.18, 8, self._battery_color)
+
+    value = f"{self._battery_voltage:.1f}V" if self._battery_voltage > 0.0 else "--.-V"
+    value_pos = rl.Vector2(icon_x + BATTERY_ICON_W + BATTERY_CAP_W + 26, icon_y - 3)
+    rl.draw_text_ex(self._font_bold, value, value_pos, BATTERY_FONT_SIZE, 0, self._battery_color)
+
+    label_pos = rl.Vector2(icon_x, icon_y + 48)
+    rl.draw_text_ex(self._font_regular, tr("Battery"), label_pos, BATTERY_LABEL_FONT_SIZE, 0, Colors.WHITE)
+
   def _draw_metrics(self, rect: rl.Rectangle):
-    metrics = [(self._temp_status, 338), (self._panda_status, 496), (self._connect_status, 654)]
+    metrics = ([(self._temp_status, 410), (self._panda_status, 568), (self._connect_status, 726)]
+               if self._show_battery_status else
+               [(self._temp_status, 338), (self._panda_status, 496), (self._connect_status, 654)])
 
     for metric, y_offset in metrics:
       self._draw_metric(rect, metric, rect.y + y_offset)

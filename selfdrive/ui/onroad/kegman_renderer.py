@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import pyray as rl
 from cereal import log
 from openpilot.common.constants import CV
+from openpilot.selfdrive.ui import UI_BORDER_SIZE
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import FontWeight, gui_app
 from openpilot.system.ui.lib.text_measure import measure_text_cached
@@ -17,12 +18,10 @@ BASE_ITEM_HEIGHT = 105
 BASE_PANEL_PADDING = 10
 BASE_MARGIN = 30
 BASE_TOP = 250
-TPMS_BASE_X = 75
-TPMS_BASE_Y = 800
-TPMS_BASE_W = 58
-TPMS_BASE_H = 126
-TPMS_BASE_MARGIN = 45
 TPMS_FONT_SIZE = 38
+TPMS_DM_BTN_SIZE = 192
+TPMS_COL_GAP = 80
+TPMS_DM_VERTICAL_GAP = 42
 
 VALUE_FONT_SIZE = 50
 LABEL_FONT_SIZE = 25
@@ -159,7 +158,6 @@ class KegmanRenderer(Widget):
       ui_custom.kegmanCPU,
       ui_custom.kegmanGPS,
       ui_custom.kegmanGPULoad,
-      ui_custom.kegmanBattery,
       ui_custom.kegmanAngle,
       ui_custom.kegmanDistance,
       ui_custom.kegmanSpeed,
@@ -175,9 +173,6 @@ class KegmanRenderer(Widget):
 
     if ui_custom.kegmanGPS or default_overlay:
       measures.append(self._gps_measure())
-
-    if ui_custom.kegmanBattery or default_overlay:
-      measures.append(self._battery_measure())
 
     if ui_custom.kegmanAngle or default_overlay:
       measures.append(self._steering_angle_measure())
@@ -196,17 +191,26 @@ class KegmanRenderer(Widget):
   def _draw_tpms_overlay(self, rect: rl.Rectangle) -> None:
     tpms = ui_state.sm["carState"].carSCustom.tpms
     scale = self._tpms_scale(rect)
-    x = rect.x + TPMS_BASE_X * scale
-    y = rect.y + TPMS_BASE_Y * scale
-    w = TPMS_BASE_W * scale
-    h = TPMS_BASE_H * scale
-    margin = TPMS_BASE_MARGIN * scale
-    font_size = max(40, round(TPMS_FONT_SIZE * scale))
+    font_size = max(34, round(TPMS_FONT_SIZE * scale))
+    col_gap = TPMS_COL_GAP * scale
+    vertical_gap = TPMS_DM_VERTICAL_GAP * scale
 
-    self._draw_tpms_text(x - margin, y + 20 * scale, self._tpms_text(tpms.fl), self._tpms_color(tpms.fl), font_size, align_right=True)
-    self._draw_tpms_text(x + w + margin, y + 20 * scale, self._tpms_text(tpms.fr), self._tpms_color(tpms.fr), font_size)
-    self._draw_tpms_text(x - margin, y + h + 20 * scale, self._tpms_text(tpms.rl), self._tpms_color(tpms.rl), font_size, align_right=True)
-    self._draw_tpms_text(x + w + margin, y + h + 20 * scale, self._tpms_text(tpms.rr), self._tpms_color(tpms.rr), font_size)
+
+    dm_radius = TPMS_DM_BTN_SIZE / 2
+    dm_offset = UI_BORDER_SIZE + dm_radius - 10
+    is_rhd = ui_state.sm["driverMonitoringState"].isRHD
+    dm_x = rect.x + (rect.width - dm_offset if is_rhd else dm_offset)
+    dm_y = rect.y + rect.height - dm_offset
+
+    left_x = dm_x - col_gap
+    right_x = dm_x + col_gap
+    top_y = dm_y - dm_radius - vertical_gap
+    bottom_y = min(dm_y + dm_radius + vertical_gap, rect.y + rect.height - UI_BORDER_SIZE - font_size)
+
+    self._draw_tpms_text(left_x, top_y, self._tpms_text(tpms.fl), self._tpms_color(tpms.fl), font_size)
+    self._draw_tpms_text(right_x, top_y, self._tpms_text(tpms.fr), self._tpms_color(tpms.fr), font_size)
+    self._draw_tpms_text(left_x, bottom_y, self._tpms_text(tpms.rl), self._tpms_color(tpms.rl), font_size)
+    self._draw_tpms_text(right_x, bottom_y, self._tpms_text(tpms.rr), self._tpms_color(tpms.rr), font_size)
 
   def _tpms_scale(self, rect: rl.Rectangle) -> float:
     return min(1.0, max(0.5, rect.width / 1860.0, rect.height / 1080.0))
@@ -248,15 +252,6 @@ class KegmanRenderer(Widget):
     elif cum_lag_ms > 100:
       value_color = RED
     return KegmanMeasure(f"{cum_lag_ms:.0f}", "ms", "Lag", value_color)
-
-  def _battery_measure(self) -> KegmanMeasure:
-    voltage = ui_state.sm["peripheralState"].voltage * 0.001
-    value_color = WHITE
-    if voltage > 14.7 or voltage < 12.0:
-      value_color = ORANGE
-    if voltage < 11.7:
-      value_color = RED
-    return KegmanMeasure(f"{voltage:.1f}", "volt", "battery", value_color)
 
   def _gps_measure(self) -> KegmanMeasure:
     gps_msg = self._gps_message()

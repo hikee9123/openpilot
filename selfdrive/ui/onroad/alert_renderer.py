@@ -1,9 +1,10 @@
 import time
 import pyray as rl
+import os
 from dataclasses import dataclass
 from cereal import messaging, log
 from openpilot.selfdrive.ui.ui_state import ui_state
-from openpilot.system.hardware import TICI
+from openpilot.system.hardware import PC, TICI
 from openpilot.system.ui.lib.application import gui_app, FontWeight
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.lib.text_measure import measure_text_cached
@@ -29,6 +30,7 @@ ALERT_HEIGHTS = {
 
 SELFDRIVE_STATE_TIMEOUT = 5  # Seconds
 SELFDRIVE_UNRESPONSIVE_TIMEOUT = 10  # Seconds
+CAMERA_SIM = PC and os.getenv("CAM_SIM", "").lower() in ("road", "webcam")
 
 # Constants
 ALERT_COLORS = {
@@ -83,6 +85,9 @@ class AlertRenderer(Widget):
 
   def get_alert(self, sm: messaging.SubMaster) -> Alert | None:
     """Generate the current alert based on selfdrive state."""
+    if CAMERA_SIM:
+      return None
+
     ss = sm['selfdriveState']
 
     # Check if selfdriveState messages have stopped arriving

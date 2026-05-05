@@ -32,8 +32,6 @@ class Camera:
       ret, frame = self.cap.read()
       if not ret:
         break
-      # Rotate the frame 180 degrees (flip both axes)
-      frame = cv.flip(frame, -1)
       yuv = Camera.bgr2nv12(frame)
       yield yuv.data.tobytes()
     self.cap.release()
