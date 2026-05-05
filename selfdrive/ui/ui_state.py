@@ -8,7 +8,7 @@ from cereal import messaging, car, log
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
-from openpilot.selfdrive.ui.custom import CustomPublisher
+from openpilot.selfdrive.ui.custom import AutoPowerOffController, CustomPublisher
 from openpilot.selfdrive.ui.lib.prime_state import PrimeState
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.hardware import HARDWARE, PC
@@ -67,6 +67,7 @@ class UIState:
     self.prime_state = PrimeState()
     # #custom start: publish custom UI tuning state
     self.custom_publisher = CustomPublisher(self.params)
+    self.auto_power_off = AutoPowerOffController(self.params)
     # #custom end
 
     # UI Status tracking
@@ -124,6 +125,7 @@ class UIState:
       self.update_params()
     # #custom start: publish custom UI tuning state
     self.custom_publisher.update()
+    self.auto_power_off.update(self.started, self.ignition, self.sm["carState"].vEgo)
     # #custom end
     device.update()
 

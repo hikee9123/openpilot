@@ -8,6 +8,8 @@ from openpilot.common.params import Params
 
 # #custom start: shared custom UI params and publisher
 CUSTOM_PARAM_KEY = "CustomParam"
+POWER_OFF_MIN_SPEED = 10.0
+POWER_OFF_UPDATE_INTERVAL = 1.0
 
 DEFAULT_CUSTOM_PARAMS: dict[str, int | float | bool] = {
   "ParamCruiseMode": 2,
@@ -162,4 +164,42 @@ class CustomPublisher:
     user_interface.brightness = int(values["ParamBrightness"])
 
     self.pm.send("uICustom", msg)
+
+
+class AutoPowerOffController:
+  def __init__(self, params: Params | None = None):
+    self.params = params or Params()
+    self._armed = False
+    self._ignition_off_since: float | None = None
+    self._last_update = -POWER_OFF_UPDATE_INTERVAL
+
+  def update(self, started: bool, ignition: bool, v_ego: float, now: float | None = None) -> None:
+    now = time.monotonic() if now is None else now
+    if now - self._last_update < POWER_OFF_UPDATE_INTERVAL:
+      return
+    self._last_update = now
+
+    if started:
+      self._ignition_off_since = None
+      if v_ego > POWER_OFF_MIN_SPEED:
+        self._armed = True
+      return
+
+    if ignition:
+      self._ignition_off_since = None
+      return
+
+    power_off_delay = int(read_custom_params(self.params)["ParamPowerOff"])
+    if power_off_delay <= 0 or not self._armed:
+      self._ignition_off_since = None
+      return
+
+    if self._ignition_off_since is None:
+      self._ignition_off_since = now
+      return
+
+    if now - self._ignition_off_since > power_off_delay:
+      self._armed = False
+      self._ignition_off_since = None
+      self.params.put_bool("DoShutdown", True)
 # #custom end
