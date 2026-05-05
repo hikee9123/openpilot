@@ -120,17 +120,17 @@ def set_compile_status(status: str, model_name: str, error: str = "") -> None:
   if status == STATUS_RUNNING:
     params.put(COMPILE_STARTED_AT_KEY, str(int(time.time())))
     params.put(COMPILE_FINISHED_AT_KEY, "")
-    params.put(COMPILE_PROGRESS_KEY, "0")
+    params.put(COMPILE_PROGRESS_KEY, 0)
   if status in (STATUS_SUCCESS, STATUS_FAILED):
     params.put(COMPILE_FINISHED_AT_KEY, str(int(time.time())))
     progress = params.get(COMPILE_PROGRESS_KEY)
-    progress_text = progress.decode("utf-8") if isinstance(progress, bytes) else str(progress or "0")
-    params.put(COMPILE_PROGRESS_KEY, "100" if status == STATUS_SUCCESS else progress_text)
+    progress_value = int(progress or 0)
+    params.put(COMPILE_PROGRESS_KEY, 100 if status == STATUS_SUCCESS else progress_value)
   params.put(COMPILE_ERROR_KEY, error[-500:])
 
 
 def set_compile_progress(progress: int) -> None:
-  Params().put(COMPILE_PROGRESS_KEY, str(max(0, min(100, progress))))
+  Params().put(COMPILE_PROGRESS_KEY, max(0, min(100, progress)))
 
 
 def run(command: list[str], env: dict[str, str]) -> None:

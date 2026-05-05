@@ -72,7 +72,7 @@ def init_custom_model_compile_state(params: Params) -> None:
   params.put(CUSTOM_MODEL_COMPILE_FINISHED_AT, str(int(time.time())))
   params.put(CUSTOM_MODEL_COMPILE_ERROR, "compile interrupted by device or manager restart")
   if params.get(CUSTOM_MODEL_COMPILE_PROGRESS) is None:
-    params.put(CUSTOM_MODEL_COMPILE_PROGRESS, "0")
+    params.put(CUSTOM_MODEL_COMPILE_PROGRESS, 0)
 
 
 def logging_enabled(params: Params) -> bool:

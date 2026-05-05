@@ -13,6 +13,7 @@ from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
 from openpilot.selfdrive.ui.custom import read_custom_param_map, read_custom_params, write_custom_params
 from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.system.hardware import PC
 from openpilot.system.ui.lib.application import FontWeight, MousePos, gui_app
 from openpilot.system.ui.lib.multilang import tr, tr_noop
 from openpilot.system.ui.lib.text_measure import measure_text_cached
@@ -52,7 +53,7 @@ COMPILE_STARTED_AT_KEY = "CustomModelCompileStartedAt"
 COMPILE_FINISHED_AT_KEY = "CustomModelCompileFinishedAt"
 COMPILE_ERROR_KEY = "CustomModelCompileError"
 COMPILE_PROGRESS_KEY = "CustomModelCompileProgress"
-COMPILE_LOG_PATH = "/data/tmp/openpilot_custom_model_compile.log"
+COMPILE_LOG_PATH = "/tmp/openpilot_custom_model_compile.log" if PC else "/data/tmp/openpilot_custom_model_compile.log"
 COMPILE_STATUS_CHECK_INTERVAL = 5.0
 COMPILE_LOG_CACHE_INTERVAL = 2.0
 COMPILE_PROCESS_GRACE_SECONDS = 60
@@ -85,6 +86,14 @@ STEPPER_VALUE_COLOR = rl.Color(170, 170, 170, 255)
 SECTION_HEIGHT = 92
 SECTION_FONT_SIZE = 42
 SECTION_BG = rl.Color(58, 58, 58, 255)
+COMPILE_LOG_HEIGHT = 500
+COMPILE_LOG_TITLE_FONT_SIZE = 42
+COMPILE_LOG_FONT_SIZE = 28
+COMPILE_LOG_LINE_HEIGHT = 34
+COMPILE_LOG_PADDING = 26
+COMPILE_LOG_BG = rl.Color(23, 23, 23, 255)
+COMPILE_LOG_BORDER = rl.Color(96, 96, 96, 255)
+COMPILE_LOG_TEXT = rl.Color(190, 190, 190, 255)
 
 
 def run_logged(command: list[str], cwd: Path, log_path: str) -> subprocess.CompletedProcess:
@@ -186,6 +195,64 @@ class SectionHeader(Widget):
     rl.draw_text_ex(self._font, label, text_pos, SECTION_FONT_SIZE, 0, TAB_TEXT)
 
 
+class CompileLogPanel(Widget):
+  def __init__(self, title: str, lines_callback: Callable[[], list[str]]):
+    super().__init__()
+    self._title = title
+    self._lines_callback = lines_callback
+    self._font_regular = gui_app.font(FontWeight.NORMAL)
+    self._font_bold = gui_app.font(FontWeight.MEDIUM)
+    self.set_rect(rl.Rectangle(0, 0, 0, COMPILE_LOG_HEIGHT))
+
+  def set_parent_rect(self, parent_rect: rl.Rectangle) -> None:
+    super().set_parent_rect(parent_rect)
+    self._rect.width = parent_rect.width
+
+  def _render(self, rect: rl.Rectangle):
+    title = tr(self._title)
+    title_size = measure_text_cached(self._font_bold, title, COMPILE_LOG_TITLE_FONT_SIZE)
+    title_y = rect.y + COMPILE_LOG_PADDING
+    rl.draw_text_ex(self._font_bold, title, rl.Vector2(rect.x + COMPILE_LOG_PADDING, title_y),
+                    COMPILE_LOG_TITLE_FONT_SIZE, 0, rl.WHITE)
+
+    log_rect = rl.Rectangle(
+      rect.x + COMPILE_LOG_PADDING,
+      title_y + title_size.y + 18,
+      rect.width - COMPILE_LOG_PADDING * 2,
+      rect.height - title_size.y - COMPILE_LOG_PADDING * 2 - 18,
+    )
+    rl.draw_rectangle_rounded(log_rect, 0.04, 8, COMPILE_LOG_BG)
+    rl.draw_rectangle_rounded_lines_ex(log_rect, 0.04, 8, 2, COMPILE_LOG_BORDER)
+
+    lines = self._fit_lines(self._lines_callback(), log_rect.width - COMPILE_LOG_PADDING * 2)
+    max_lines = max(1, int((log_rect.height - COMPILE_LOG_PADDING * 2) // COMPILE_LOG_LINE_HEIGHT))
+    visible_lines = lines[-max_lines:]
+
+    rl.begin_scissor_mode(int(log_rect.x), int(log_rect.y), int(log_rect.width), int(log_rect.height))
+    y = log_rect.y + COMPILE_LOG_PADDING
+    for line in visible_lines:
+      rl.draw_text_ex(self._font_regular, line, rl.Vector2(log_rect.x + COMPILE_LOG_PADDING, y),
+                      COMPILE_LOG_FONT_SIZE, 0, COMPILE_LOG_TEXT)
+      y += COMPILE_LOG_LINE_HEIGHT
+    rl.end_scissor_mode()
+
+  def _fit_lines(self, lines: list[str], max_width: float) -> list[str]:
+    fitted: list[str] = []
+    for line in lines:
+      fitted.append(self._truncate_line(line, max_width))
+    return fitted or [tr("No compile log yet")]
+
+  def _truncate_line(self, line: str, max_width: float) -> str:
+    text = line.expandtabs(2).strip()
+    if measure_text_cached(self._font_regular, text, COMPILE_LOG_FONT_SIZE).x <= max_width:
+      return text
+
+    ellipsis = "..."
+    while text and measure_text_cached(self._font_regular, text + ellipsis, COMPILE_LOG_FONT_SIZE).x > max_width:
+      text = text[:-1]
+    return (text.rstrip() + ellipsis) if text else ellipsis
+
+
 class CustomSettingsLayout(Widget):
   def __init__(self):
     super().__init__()
@@ -245,7 +312,7 @@ class CustomSettingsLayout(Widget):
       "Model": [
         self._model_selection_item(),
         text_item(lambda: tr("Compile status"), self._compile_status_text),
-        text_item(lambda: tr("Compile detail"), self._compile_log_tail_text),
+        CompileLogPanel(tr_noop("Compile detail"), self._compile_log_lines),
       ],
       "Debug": [
         self._toggle_json_item("debug1", tr_noop("Debug 1")),
@@ -527,7 +594,7 @@ class CustomSettingsLayout(Widget):
     self._params.put(COMPILE_NAME_KEY, model_name)
     self._params.put(COMPILE_FINISHED_AT_KEY, str(int(time.time())))
     self._params.put(COMPILE_ERROR_KEY, "")
-    self._params.put(COMPILE_PROGRESS_KEY, "100")
+    self._params.put(COMPILE_PROGRESS_KEY, 100)
 
   def _compile_progress(self) -> int:
     raw = self._param_text(COMPILE_PROGRESS_KEY)
@@ -607,25 +674,26 @@ class CustomSettingsLayout(Widget):
     return tr("Idle")
 
   def _compile_log_tail_text(self) -> str:
+    lines = self._compile_log_lines()
+    return lines[-1][-100:] if lines else ""
+
+  def _compile_log_lines(self) -> list[str]:
     now = time.monotonic()
     if now - self._last_compile_log_check < COMPILE_LOG_CACHE_INTERVAL:
-      return self._compile_log_tail
+      return self._compile_log_tail.splitlines()
     self._last_compile_log_check = now
 
     try:
       with open(COMPILE_LOG_PATH, encoding="utf-8", errors="replace") as log_file:
-        lines = [line.strip() for line in log_file.readlines()[-80:]]
+        lines = [line.rstrip() for line in log_file.readlines()[-120:]]
     except OSError:
-      self._compile_log_tail = ""
-      return self._compile_log_tail
+      error = self._param_text(COMPILE_ERROR_KEY)
+      self._compile_log_tail = error or ""
+      return self._compile_log_tail.splitlines()
 
-    for line in reversed(lines):
-      if line:
-        self._compile_log_tail = line[-100:]
-        return self._compile_log_tail
-
-    self._compile_log_tail = ""
-    return self._compile_log_tail
+    visible_lines = [line for line in lines if line.strip()]
+    self._compile_log_tail = "\n".join(visible_lines[-80:])
+    return self._compile_log_tail.splitlines()
 
   def _model_button_text(self) -> str:
     status = self._compile_status()
@@ -665,7 +733,7 @@ class CustomSettingsLayout(Widget):
       self._params.put("ActiveModelName", DEFAULT_MODEL_NAME)
       self._params.put(COMPILE_NAME_KEY, "")
       self._params.put(COMPILE_ERROR_KEY, "")
-      self._params.put(COMPILE_PROGRESS_KEY, "0")
+      self._params.put(COMPILE_PROGRESS_KEY, 0)
       return
 
     self._params.put(COMPILE_STATUS_KEY, STATUS_RUNNING)
@@ -673,7 +741,7 @@ class CustomSettingsLayout(Widget):
     self._params.put(COMPILE_STARTED_AT_KEY, str(int(time.time())))
     self._params.put(COMPILE_FINISHED_AT_KEY, "")
     self._params.put(COMPILE_ERROR_KEY, "")
-    self._params.put(COMPILE_PROGRESS_KEY, "0")
+    self._params.put(COMPILE_PROGRESS_KEY, 0)
 
     def worker() -> None:
       result: subprocess.CompletedProcess | None = None
