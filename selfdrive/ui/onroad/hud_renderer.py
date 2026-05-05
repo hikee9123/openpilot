@@ -49,6 +49,10 @@ class Colors:
   BORDER_TRANSLUCENT = rl.Color(255, 255, 255, 75)
   HEADER_GRADIENT_START = rl.Color(0, 0, 0, 114)
   HEADER_GRADIENT_END = rl.BLANK
+  BRAKE_LIGHT = rl.Color(201, 34, 49, 100)
+  BRAKE_SOFT = rl.Color(255, 34, 0, 255)
+  BRAKE_HARD = rl.Color(255, 0, 0, 255)
+  GAS = rl.Color(255, 255, 0, 255)
 
 
 UI_CONFIG = UIConfig()
@@ -64,6 +68,7 @@ class HudRenderer(Widget):
     self.is_cruise_available: bool = True
     self.set_speed: float = SET_SPEED_NA
     self.speed: float = 0.0
+    self.speed_color: rl.Color = COLORS.WHITE
     self.v_ego_cluster_seen: bool = False
 
     self._font_semi_bold: rl.Font = gui_app.font(FontWeight.SEMI_BOLD)
@@ -79,6 +84,7 @@ class HudRenderer(Widget):
       self.is_cruise_set = False
       self.set_speed = SET_SPEED_NA
       self.speed = 0.0
+      self.speed_color = COLORS.WHITE
       return
 
     controls_state = sm['controlsState']
@@ -99,6 +105,7 @@ class HudRenderer(Widget):
     v_ego = v_ego_cluster if self.v_ego_cluster_seen else car_state.vEgo
     speed_conversion = CV.MS_TO_KPH if ui_state.is_metric else CV.MS_TO_MPH
     self.speed = max(0.0, v_ego * speed_conversion)
+    self.speed_color = self._speed_color(car_state)
 
   def _render(self, rect: rl.Rectangle) -> None:
     """Render HUD elements to the screen."""
@@ -172,9 +179,48 @@ class HudRenderer(Widget):
     speed_text = str(round(self.speed))
     speed_text_size = measure_text_cached(self._font_bold, speed_text, FONT_SIZES.current_speed)
     speed_pos = rl.Vector2(rect.x + rect.width / 2 - speed_text_size.x / 2, 180 - speed_text_size.y / 2)
-    rl.draw_text_ex(self._font_bold, speed_text, speed_pos, FONT_SIZES.current_speed, 0, COLORS.WHITE)
+    rl.draw_text_ex(self._font_bold, speed_text, speed_pos, FONT_SIZES.current_speed, 0, self.speed_color)
 
     unit_text = tr("km/h") if ui_state.is_metric else tr("mph")
     unit_text_size = measure_text_cached(self._font_medium, unit_text, FONT_SIZES.speed_unit)
     unit_pos = rl.Vector2(rect.x + rect.width / 2 - unit_text_size.x / 2, 290 - unit_text_size.y / 2)
     rl.draw_text_ex(self._font_medium, unit_text, unit_pos, FONT_SIZES.speed_unit, 0, COLORS.WHITE_TRANSLUCENT)
+
+  def _speed_color(self, car_state) -> rl.Color:
+    car_state_custom = getattr(car_state, "carSCustom", None)
+    brake_pos = max(0.0, float(getattr(car_state_custom, "breakPos", 0.0)))
+    brake_lights = bool(getattr(car_state, "brakeLightsDEPRECATED", False))
+    brake_pressed = bool(getattr(car_state, "brakePressed", False))
+    gas_value = max(0.0, float(getattr(car_state, "gasDEPRECATED", 0.0))) * 100.0
+    if bool(getattr(car_state, "gasPressed", False)):
+      gas_value = max(gas_value, 5.0)
+
+    if brake_pos > 0:
+      if brake_lights:
+        return self._interp_color(brake_pos, 0.0, 60.0, 130.0, COLORS.BRAKE_LIGHT, COLORS.BRAKE_SOFT, COLORS.BRAKE_HARD)
+      return self._interp_color(brake_pos, 0.0, 60.0, 130.0, COLORS.WHITE, rl.Color(200, 100, 50, 255), COLORS.BRAKE_HARD)
+    if brake_lights:
+      return COLORS.BRAKE_LIGHT
+    if brake_pressed:
+      return COLORS.BRAKE_HARD
+    if gas_value > 0:
+      return self._interp_color(gas_value, 5.0, 60.0, 60.0, COLORS.WHITE, COLORS.GAS, COLORS.GAS)
+    return COLORS.WHITE
+
+  def _interp_color(self, value: float, x0: float, x1: float, x2: float, c0: rl.Color, c1: rl.Color, c2: rl.Color) -> rl.Color:
+    if value <= x0:
+      return c0
+    if value >= x2:
+      return c2
+    if value <= x1:
+      return self._mix_color(c0, c1, (value - x0) / max(1e-3, x1 - x0))
+    return self._mix_color(c1, c2, (value - x1) / max(1e-3, x2 - x1))
+
+  def _mix_color(self, c0: rl.Color, c1: rl.Color, ratio: float) -> rl.Color:
+    ratio = min(1.0, max(0.0, ratio))
+    return rl.Color(
+      round(c0.r + (c1.r - c0.r) * ratio),
+      round(c0.g + (c1.g - c0.g) * ratio),
+      round(c0.b + (c1.b - c0.b) * ratio),
+      round(c0.a + (c1.a - c0.a) * ratio),
+    )
