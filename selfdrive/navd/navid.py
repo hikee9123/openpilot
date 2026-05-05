@@ -13,13 +13,32 @@ from openpilot.selfdrive.navd.speed_camera import (
   create_database_from_csv,
   find_lead_camera,
 )
+from openpilot.selfdrive.ui.custom import read_custom_params
 
 
-PASSING_DISTANCE_M = 30.0
-PASSED_IGNORE_SECONDS = 8.0
 MIN_GPS_SPEED_MPS = 1.0
 DB_RETRY_SECONDS = 60.0
 LOOKUP_INTERVAL_SECONDS = 0.5
+
+
+def _clip(value: float, min_value: float, max_value: float) -> float:
+  return max(min_value, min(max_value, value))
+
+
+def _speed_camera_tuning() -> dict[str, float]:
+  try:
+    values = read_custom_params()
+  except Exception:
+    cloudlog.exception("navid: failed to read speed camera tuning params")
+    values = {}
+
+  return {
+    "lookahead_distance_m": _clip(float(values.get("SpeedCameraLookaheadDistance", 2000)), 500.0, 3000.0),
+    "lookahead_angle_deg": _clip(float(values.get("SpeedCameraLookaheadAngle", 35)), 15.0, 60.0),
+    "camera_direction_angle_deg": _clip(float(values.get("SpeedCameraDirectionAngle", 60)), 30.0, 90.0),
+    "passing_distance_m": _clip(float(values.get("SpeedCameraPassingDistance", 30)), 10.0, 80.0),
+    "passed_ignore_seconds": _clip(float(values.get("SpeedCameraPassedIgnoreSeconds", 8)), 3.0, 30.0),
+  }
 
 
 def _db_path() -> Path:
@@ -96,6 +115,7 @@ def main() -> None:
   ignored_until: dict[str, float] = {}
   active_camera_id: str | None = None
   active_camera = None
+  tuning = _speed_camera_tuning()
   last_lookup_t = 0.0
 
   while True:
@@ -120,10 +140,20 @@ def main() -> None:
 
     if now - last_lookup_t >= LOOKUP_INTERVAL_SECONDS:
       last_lookup_t = now
+      tuning = _speed_camera_tuning()
       ignored_ids = {camera_id for camera_id, until in ignored_until.items() if until > now}
       ignored_until = {camera_id: until for camera_id, until in ignored_until.items() if until > now}
 
-      active_camera = find_lead_camera(db_path, gps.latitude, gps.longitude, gps.bearingDeg, ignored_ids=ignored_ids)
+      active_camera = find_lead_camera(
+        db_path,
+        gps.latitude,
+        gps.longitude,
+        gps.bearingDeg,
+        tuning["lookahead_distance_m"],
+        tuning["lookahead_angle_deg"],
+        tuning["camera_direction_angle_deg"],
+        ignored_ids,
+      )
 
     if active_camera is None:
       active_camera_id = None
@@ -131,8 +161,8 @@ def main() -> None:
       rk.keep_time()
       continue
 
-    if active_camera.distance_m <= PASSING_DISTANCE_M:
-      ignored_until[active_camera.id] = now + PASSED_IGNORE_SECONDS
+    if active_camera.distance_m <= tuning["passing_distance_m"]:
+      ignored_until[active_camera.id] = now + tuning["passed_ignore_seconds"]
       active_camera = None
       active_camera_id = None
       _send_inactive(pm)

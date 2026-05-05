@@ -330,6 +330,7 @@ def find_lead_camera(
   heading_deg: float,
   max_distance_m: float = LOOKAHEAD_DISTANCE_M,
   max_angle_deg: float = LOOKAHEAD_ANGLE_DEG,
+  camera_direction_angle_deg: float = CAMERA_DIRECTION_ANGLE_DEG,
   ignored_ids: set[str] | None = None,
 ) -> SpeedCamera | None:
   if not db_path.exists():
@@ -360,7 +361,7 @@ def find_lead_camera(
       continue
 
     camera_direction = direction_bearing_deg(row["direction"])
-    if camera_direction is not None and angle_diff_deg(camera_direction, heading_deg) > CAMERA_DIRECTION_ANGLE_DEG:
+    if camera_direction is not None and angle_diff_deg(camera_direction, heading_deg) > camera_direction_angle_deg:
       continue
 
     camera = _row_to_camera(row, distance, cam_bearing, diff)

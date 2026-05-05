@@ -114,23 +114,26 @@ active=1 camType=1 limit=80 dist=450m roadLimit=80 road='...'
 
 ## 6. Tune false positives
 
-The first implementation uses GPS, heading, distance, and optional road direction
-fields from the CSV.
+The implementation uses GPS, heading, distance, and optional road direction
+fields from the CSV. These values can be tuned from
+`Custom > Navigation > Speed camera tuning`.
 
-Tune these constants in `selfdrive/navd/speed_camera.py`:
+Default values:
 
 ```text
-LOOKAHEAD_DISTANCE_M
-LOOKAHEAD_ANGLE_DEG
-CAMERA_DIRECTION_ANGLE_DEG
+Camera search distance: 2000m
+Camera search angle: 35deg
+Camera direction angle: 60deg
+Camera passing distance: 30m
+Camera ignore time: 8s
 ```
 
 Suggested starting points:
 
 ```text
-LOOKAHEAD_DISTANCE_M = 1500 to 2500
-LOOKAHEAD_ANGLE_DEG = 30 to 45
-CAMERA_DIRECTION_ANGLE_DEG = 45 to 70
+Camera search distance: 1500 to 2500
+Camera search angle: 30 to 45
+Camera direction angle: 45 to 70
 ```
 
-If adjacent-road detections are common, lower `LOOKAHEAD_ANGLE_DEG` first.
+If adjacent-road detections are common, lower `Camera search angle` first.

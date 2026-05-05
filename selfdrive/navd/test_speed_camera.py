@@ -60,6 +60,10 @@ def test_camera_direction_filter(tmp_path: Path) -> None:
   assert camera is not None
   assert camera.id.startswith("A2-")
 
+  permissive_camera = find_lead_camera(db_path, 37.0, 127.0, 0.0, camera_direction_angle_deg=181.0)
+  assert permissive_camera is not None
+  assert permissive_camera.id.startswith("A1-")
+
 
 def test_direction_bearing_deg() -> None:
   assert direction_bearing_deg("북") == 0.0

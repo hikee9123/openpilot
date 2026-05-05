@@ -16,9 +16,10 @@ def main() -> None:
   parser.add_argument("--heading", type=float, required=True)
   parser.add_argument("--distance", type=float, default=2500.0)
   parser.add_argument("--angle", type=float, default=45.0)
+  parser.add_argument("--direction-angle", type=float, default=70.0)
   args = parser.parse_args()
 
-  camera = find_lead_camera(args.db, args.lat, args.lon, args.heading, args.distance, args.angle)
+  camera = find_lead_camera(args.db, args.lat, args.lon, args.heading, args.distance, args.angle, args.direction_angle)
   if camera is None:
     print("no lead camera found")
     return
