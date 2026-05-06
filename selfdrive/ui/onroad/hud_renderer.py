@@ -296,9 +296,9 @@ class HudRenderer(Widget):
   def _draw_speed_limit_sign(self, center_x: float, center_y: float, radius: int, limit_text: str) -> None:
     is_speed = self._is_speed_camera_category(self.camera_category, self.camera_type)
     inner_gap = 10 if is_speed else 8
-    self._draw_camera_direction_pointer(center_x, center_y, radius)
     rl.draw_circle(int(center_x), int(center_y), radius, self._speed_sign_ring_color())
     rl.draw_circle(int(center_x), int(center_y), radius - inner_gap, COLORS.SPEED_SIGN_INNER)
+    self._draw_camera_direction_pointer(center_x, center_y, radius)
 
     if is_speed:
       font_size = 58 if len(limit_text) <= 2 else 44
@@ -320,9 +320,9 @@ class HudRenderer(Widget):
     direction_y = -math.cos(angle_rad)
     perpendicular_x = math.cos(angle_rad)
     perpendicular_y = math.sin(angle_rad)
-    pointer_length = max(14.0, radius * 0.34)
-    pointer_half_width = max(9.0, radius * 0.17)
-    base_radius = radius - 2.0
+    pointer_length = max(18.0, radius * 0.38)
+    pointer_half_width = max(10.0, radius * 0.18)
+    base_radius = radius + 1.0
     tip_radius = radius + pointer_length
 
     tip = rl.Vector2(center_x + direction_x * tip_radius, center_y + direction_y * tip_radius)
@@ -330,7 +330,7 @@ class HudRenderer(Widget):
     base_center_y = center_y + direction_y * base_radius
     left = rl.Vector2(base_center_x + perpendicular_x * pointer_half_width, base_center_y + perpendicular_y * pointer_half_width)
     right = rl.Vector2(base_center_x - perpendicular_x * pointer_half_width, base_center_y - perpendicular_y * pointer_half_width)
-    rl.draw_triangle(tip, left, right, self._camera_pointer_color())
+    rl.draw_triangle(tip, right, left, self._camera_pointer_color())
 
   def _camera_category_label(self, category: str, cam_type: int) -> str:
     if category == "SPEED":
