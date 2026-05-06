@@ -44,6 +44,8 @@ struct NaviCustom @0xf35cc4560bbf6ec2 {
     camCategoryCode @16 :Int16;
     roadClass @17 :Text;
     roadClassCode @18 :Int16;
+    camBearingDeg @19 :Float32;
+    camRelativeAngleDeg @20 :Float32;
   }
 }
 

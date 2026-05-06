@@ -15,6 +15,7 @@ from openpilot.selfdrive.navd.speed_camera import (
   normalize_camera_category,
   normalize_road_class,
   road_class_code,
+  update_camera_position,
 )
 from openpilot.selfdrive.ui.custom import read_custom_params
 
@@ -77,6 +78,8 @@ def _send_inactive(pm: messaging.PubMaster) -> None:
   nav.camCategoryCode = 0
   nav.roadClass = ""
   nav.roadClassCode = 0
+  nav.camBearingDeg = 0.0
+  nav.camRelativeAngleDeg = 0.0
   pm.send("naviCustom", msg)
 
 
@@ -106,6 +109,8 @@ def _send_camera(pm: messaging.PubMaster, camera) -> None:
   nav.camCategoryCode = type_code
   nav.roadClass = road_class
   nav.roadClassCode = road_class_code_value
+  nav.camBearingDeg = float(getattr(camera, "bearing_deg", 0.0))
+  nav.camRelativeAngleDeg = float(getattr(camera, "relative_angle_deg", 0.0))
   nav.camLimitSpeed = camera.speed_limit
   nav.camLimitSpeedLeftDist = max(0, int(camera.distance_m))
   nav.sectionLimitSpeed = camera.speed_limit if type_code == 4 else 0
@@ -188,6 +193,7 @@ def main() -> None:
       rk.keep_time()
       continue
 
+    active_camera = update_camera_position(active_camera, gps.latitude, gps.longitude, gps.bearingDeg)
     if active_camera.distance_m <= tuning["passing_distance_m"]:
       ignored_until[active_camera.id] = now + tuning["passed_ignore_seconds"]
       active_camera = None

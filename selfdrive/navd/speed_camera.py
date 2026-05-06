@@ -8,7 +8,7 @@ import sqlite3
 import time
 from collections.abc import Callable
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -207,6 +207,7 @@ class SpeedCamera:
   distance_m: float = 0.0
   bearing_deg: float = 0.0
   angle_diff_deg: float = 0.0
+  relative_angle_deg: float = 0.0
   camera_category: str = "UNKNOWN"
   camera_type_code: int = 0
   region: str = ""
@@ -1130,6 +1131,23 @@ def angle_diff_deg(a: float, b: float) -> float:
   return abs((a - b + 180.0) % 360.0 - 180.0)
 
 
+def relative_angle_deg(bearing: float, heading: float) -> float:
+  return (bearing - heading + 180.0) % 360.0 - 180.0
+
+
+def update_camera_position(camera: SpeedCamera, lat: float, lon: float, heading_deg: float) -> SpeedCamera:
+  distance = haversine_distance_m(lat, lon, camera.lat, camera.lon)
+  bearing = bearing_deg(lat, lon, camera.lat, camera.lon)
+  relative_angle = relative_angle_deg(bearing, heading_deg)
+  return replace(
+    camera,
+    distance_m=distance,
+    bearing_deg=bearing,
+    angle_diff_deg=abs(relative_angle),
+    relative_angle_deg=relative_angle,
+  )
+
+
 def direction_bearing_deg(direction: str) -> float | None:
   normalized = direction.strip().upper()
   if not normalized:
@@ -1175,7 +1193,7 @@ def _row_get(row: sqlite3.Row, column: str, default):
   return default
 
 
-def _row_to_camera(row: sqlite3.Row, distance_m: float, bearing: float, angle_diff: float) -> SpeedCamera:
+def _row_to_camera(row: sqlite3.Row, distance_m: float, bearing: float, angle_diff: float, relative_angle: float) -> SpeedCamera:
   camera_type = str(_row_get(row, "camera_type", ""))
   section_type = str(_row_get(row, "section_type", ""))
   road_name = str(_row_get(row, "road_name", ""))
@@ -1215,6 +1233,7 @@ def _row_to_camera(row: sqlite3.Row, distance_m: float, bearing: float, angle_di
     distance_m=distance_m,
     bearing_deg=bearing,
     angle_diff_deg=angle_diff,
+    relative_angle_deg=relative_angle,
     camera_category=category,
     camera_type_code=type_code,
     region=str(_row_get(row, "region", "")),
@@ -1291,7 +1310,8 @@ def find_lead_camera(
       continue
 
     cam_bearing = bearing_deg(lat, lon, row["lat"], row["lon"])
-    diff = angle_diff_deg(cam_bearing, heading_deg)
+    relative_angle = relative_angle_deg(cam_bearing, heading_deg)
+    diff = abs(relative_angle)
     if diff > max_angle_deg:
       continue
 
@@ -1299,7 +1319,7 @@ def find_lead_camera(
     if camera_direction is not None and angle_diff_deg(camera_direction, heading_deg) > camera_direction_angle_deg:
       continue
 
-    camera = _row_to_camera(row, distance, cam_bearing, diff)
+    camera = _row_to_camera(row, distance, cam_bearing, diff, relative_angle)
     if best is None or camera.distance_m < best.distance_m:
       best = camera
 

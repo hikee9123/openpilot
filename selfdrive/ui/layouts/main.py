@@ -1,8 +1,10 @@
 import pyray as rl
 from enum import IntEnum
 import cereal.messaging as messaging
+from openpilot.common.params import Params
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.widgets import Widget
+from openpilot.selfdrive.ui.custom import speed_camera_debug_preview_active
 from openpilot.selfdrive.ui.layouts.sidebar import Sidebar, SIDEBAR_WIDTH
 from openpilot.selfdrive.ui.layouts.home import HomeLayout
 from openpilot.selfdrive.ui.layouts.settings.settings import SettingsLayout, PanelType
@@ -23,6 +25,7 @@ class MainLayout(Widget):
     super().__init__()
 
     self._pm = messaging.PubMaster(['bookmarkButton'])
+    self._params = Params()
 
     self._sidebar = Sidebar()
     self._current_mode = MainState.HOME
@@ -48,6 +51,8 @@ class MainLayout(Widget):
 
   def _render(self, _):
     self._handle_onroad_transition()
+    if self._current_mode == MainState.ONROAD and not ui_state.started and not self._speed_camera_preview_active():
+      self._set_mode_for_state()
     self._render_main_content()
 
   def _setup_callbacks(self):
@@ -56,7 +61,10 @@ class MainLayout(Widget):
                                 open_settings=lambda: self.open_settings(PanelType.TOGGLES))
     self._layouts[MainState.HOME]._setup_widget.set_open_settings_callback(lambda: self.open_settings(PanelType.FIREHOSE))
     self._layouts[MainState.HOME].set_settings_callback(lambda: self.open_settings(PanelType.TOGGLES))
-    self._layouts[MainState.SETTINGS].set_callbacks(on_close=self._set_mode_for_state)
+    self._layouts[MainState.SETTINGS].set_callbacks(
+      on_close=self._set_mode_for_state,
+      on_speed_camera_preview=self._show_speed_camera_preview,
+    )
 
     for layout in (self._layouts[MainState.ONROAD], self._home_body_layout):
       layout.set_click_callback(self._on_onroad_clicked)
@@ -88,6 +96,9 @@ class MainLayout(Widget):
       if self._current_mode != MainState.ONROAD:
         self._sidebar.set_visible(False)
       self._set_current_layout(MainState.ONROAD)
+    elif not ui_state.is_body and self._speed_camera_preview_active():
+      self._sidebar.set_visible(False)
+      self._set_current_layout(MainState.ONROAD)
     else:
       self._set_current_layout(MainState.HOME)
       self._sidebar.set_visible(True)
@@ -111,6 +122,17 @@ class MainLayout(Widget):
     user_bookmark = messaging.new_message('bookmarkButton')
     user_bookmark.valid = True
     self._pm.send('bookmarkButton', user_bookmark)
+
+  def _show_speed_camera_preview(self):
+    ui_state.auto_power_off.disarm()
+    if not ui_state.is_body:
+      self._sidebar.set_visible(False)
+      self._set_current_layout(MainState.ONROAD)
+    else:
+      self._set_mode_for_state()
+
+  def _speed_camera_preview_active(self):
+    return speed_camera_debug_preview_active(self._params)
 
   def _on_onroad_clicked(self):
     self._sidebar.set_visible(not self._sidebar.is_visible)

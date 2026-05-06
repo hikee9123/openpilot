@@ -69,6 +69,17 @@ class AugmentedRoadView(CameraView):
     # Only render when system is started to avoid invalid data access
     start_draw = time.monotonic()
     if not ui_state.started:
+      if not self._hud_renderer.speed_camera_preview_active():
+        return
+      rl.draw_rectangle_rec(rect, rl.BLACK)
+      self._content_rect = rl.Rectangle(
+        rect.x + UI_BORDER_SIZE,
+        rect.y + UI_BORDER_SIZE,
+        rect.width - 2 * UI_BORDER_SIZE,
+        rect.height - 2 * UI_BORDER_SIZE,
+      )
+      self._hud_renderer.render(self._content_rect)
+      self._draw_border(rect)
       return
 
     self._switch_stream_if_needed(ui_state.sm)

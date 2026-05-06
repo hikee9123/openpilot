@@ -58,6 +58,7 @@ class SettingsLayout(Widget):
     # Panel configuration
     wifi_manager = WifiManager()
     wifi_manager.set_active(False)
+    self._custom_panel = CustomSettingsLayout()
 
     self._panels = {
       PanelType.DEVICE: PanelInfo(tr_noop("Device"), DeviceLayout()),
@@ -67,7 +68,7 @@ class SettingsLayout(Widget):
       PanelType.FIREHOSE: PanelInfo(tr_noop("Firehose"), FirehoseLayout()),
       PanelType.DEVELOPER: PanelInfo(tr_noop("Developer"), DeveloperLayout()),
       # #custom start: custom settings panel
-      PanelType.CUSTOM: PanelInfo(tr_noop("Custom"), CustomSettingsLayout()),
+      PanelType.CUSTOM: PanelInfo(tr_noop("Custom"), self._custom_panel),
       # #custom end
     }
 
@@ -77,8 +78,9 @@ class SettingsLayout(Widget):
     # Callbacks
     self._close_callback: Callable | None = None
 
-  def set_callbacks(self, on_close: Callable):
+  def set_callbacks(self, on_close: Callable, on_speed_camera_preview: Callable | None = None):
     self._close_callback = on_close
+    self._custom_panel.set_speed_camera_preview_callback(on_speed_camera_preview)
 
   def _render(self, rect: rl.Rectangle):
     # Calculate layout

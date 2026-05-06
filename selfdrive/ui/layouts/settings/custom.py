@@ -17,7 +17,12 @@ from openpilot.selfdrive.navd.speed_camera import (
   database_data_date,
   database_region_stats,
 )
-from openpilot.selfdrive.ui.custom import read_custom_param_map, read_custom_params, write_custom_params
+from openpilot.selfdrive.ui.custom import (
+  SPEED_CAMERA_DEBUG_PREVIEW_UNTIL_KEY,
+  read_custom_param_map,
+  read_custom_params,
+  write_custom_params,
+)
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.hardware import PC
 from openpilot.system.ui.lib.application import FontWeight, MousePos, gui_app
@@ -92,6 +97,7 @@ SPEED_CAMERA_COUNT_KEY = "SpeedCameraUpdateCount"
 SPEED_CAMERA_PROGRESS_KEY = "SpeedCameraUpdateProgress"
 SPEED_CAMERA_UPDATED_AT_KEY = "SpeedCameraUpdatedAt"
 SPEED_CAMERA_DATA_DATE_KEY = "SpeedCameraDataDate"
+SPEED_CAMERA_DEBUG_PREVIEW_DURATION_SECONDS = 30
 SPEED_CAMERA_LOG_PATH = str(CUSTOM_TMP_ROOT / "openpilot_speed_camera_update.log")
 REPO_ROOT = Path(BASEDIR)
 MODELD_DIR = REPO_ROOT / "selfdrive/modeld"
@@ -426,6 +432,7 @@ class CustomSettingsLayout(Widget):
     self._speed_camera_region_cache_loaded = False
     self._speed_camera_category_counts_cache: list[tuple[str, int]] = []
     self._speed_camera_region_stats_cache: list[tuple[str, int, int, str]] = []
+    self._speed_camera_preview_callback: Callable | None = None
     self._current_tab = "UI"
     self._tab_rects: dict[str, rl.Rectangle] = {}
     self._tab_font = gui_app.font(FontWeight.MEDIUM)
@@ -531,6 +538,7 @@ class CustomSettingsLayout(Widget):
         text_item(lambda: tr("Speed camera regions"), self._speed_camera_regions_text,
                   description=lambda: tr("Shows saved speed camera counts by category and region.")),
         SpeedCameraRegionsPanel(self._speed_camera_region_stats, self._speed_camera_category_counts),
+        self._speed_camera_icon_preview_item(),
         SectionHeader(tr_noop("Speed camera tuning")),
         self._number_item("SpeedCameraLookaheadDistance", tr_noop("Camera search distance"), 500, 3000, 100,
                           description=tr_noop("Sets how far ahead, in meters, the speed camera lookup searches."), unit="m"),
@@ -553,6 +561,9 @@ class CustomSettingsLayout(Widget):
       ],
     }
     self._scrollers = {name: Scroller(items, line_separator=True, spacing=0) for name, items in self._sections.items()}
+
+  def set_speed_camera_preview_callback(self, callback: Callable | None) -> None:
+    self._speed_camera_preview_callback = callback
 
   def _values(self):
     return read_custom_params(self._params)
@@ -759,6 +770,20 @@ class CustomSettingsLayout(Widget):
       description=lambda: tr("Downloads the national public unmanned traffic enforcement camera CSV and imports it into the local navigation DB."),
       callback=self._handle_speed_camera_update,
       enabled=lambda: self._speed_camera_update_status() != STATUS_RUNNING,
+    )
+
+  def _speed_camera_icon_preview_item(self):
+    def callback() -> None:
+      write_custom_params({SPEED_CAMERA_DEBUG_PREVIEW_UNTIL_KEY: time.time() + SPEED_CAMERA_DEBUG_PREVIEW_DURATION_SECONDS}, self._params)
+      ui_state.custom_publisher.update(force=True)
+      if self._speed_camera_preview_callback is not None:
+        self._speed_camera_preview_callback()
+
+    return button_item(
+      lambda: tr("Speed camera icon preview"),
+      lambda: tr("SHOW"),
+      description=lambda: tr("Shows a 30 second HUD-only speed camera icon preview and switches to the camera screen when openpilot is onroad."),
+      callback=callback,
     )
 
   def _handle_speed_camera_update(self) -> None:

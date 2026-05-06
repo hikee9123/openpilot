@@ -1,6 +1,11 @@
-import pyray as rl
+import math
+import time
 from dataclasses import dataclass
+
+import pyray as rl
 from openpilot.common.constants import CV
+from openpilot.common.params import Params
+from openpilot.selfdrive.ui.custom import SPEED_CAMERA_DEBUG_PREVIEW_UNTIL_KEY, read_custom_params
 from openpilot.selfdrive.ui.mici.onroad.torque_bar import TorqueBar
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
 from openpilot.system.ui.lib.application import gui_app, FontWeight
@@ -16,6 +21,14 @@ EventName = log.OnroadEvent.EventName
 SET_SPEED_NA = 255
 KM_TO_MILE = 0.621371
 CRUISE_DISABLED_CHAR = '–'
+SPEED_CAMERA_DEBUG_PREVIEW_POLL_INTERVAL = 0.5
+SPEED_CAMERA_DEBUG_PREVIEW_LIMIT = 50
+SPEED_CAMERA_DEBUG_PREVIEW_DISTANCE_M = 350
+SPEED_CAMERA_DEBUG_PREVIEW_TYPE = 4
+SPEED_CAMERA_DEBUG_PREVIEW_CATEGORY = "SECTION_SPEED"
+SPEED_CAMERA_DEBUG_PREVIEW_ROAD_CLASS = "EXPRESSWAY"
+SPEED_CAMERA_DEBUG_PREVIEW_ROAD_CLASS_CODE = 1
+SPEED_CAMERA_DEBUG_PREVIEW_RELATIVE_ANGLE_DEG = 30.0
 
 SET_SPEED_PERSISTENCE = 2.5  # seconds
 
@@ -123,6 +136,11 @@ class HudRenderer(Widget):
     self.camera_type: int = 0
     self.road_class: str = ""
     self.road_class_code: int = 0
+    self.camera_bearing_deg: float = 0.0
+    self.camera_relative_angle_deg: float = 0.0
+    self._params = Params()
+    self._camera_preview_until: float = 0.0
+    self._camera_preview_last_check: float = 0.0
 
     self._can_draw_top_icons = True
     self._show_wheel_critical = False
@@ -164,6 +182,8 @@ class HudRenderer(Widget):
       self.set_speed = SET_SPEED_NA
       self.speed = 0.0
       self.camera_alert_active = False
+      if self._speed_camera_preview_active():
+        self._apply_speed_camera_preview()
       return
 
     controls_state = sm['controlsState']
@@ -300,6 +320,36 @@ class HudRenderer(Widget):
     self.camera_category_code = int(getattr(nav, "camCategoryCode", self.camera_type))
     self.road_class = str(getattr(nav, "roadClass", ""))
     self.road_class_code = int(getattr(nav, "roadClassCode", 0))
+    self.camera_bearing_deg = float(getattr(nav, "camBearingDeg", 0.0))
+    self.camera_relative_angle_deg = float(getattr(nav, "camRelativeAngleDeg", 0.0))
+    if not self.camera_alert_active and self._speed_camera_preview_active():
+      self._apply_speed_camera_preview()
+
+  def _speed_camera_preview_active(self) -> bool:
+    now = time.time()
+    if now - self._camera_preview_last_check >= SPEED_CAMERA_DEBUG_PREVIEW_POLL_INTERVAL:
+      self._camera_preview_last_check = now
+      try:
+        values = read_custom_params(self._params)
+        self._camera_preview_until = float(values.get(SPEED_CAMERA_DEBUG_PREVIEW_UNTIL_KEY, 0.0))
+      except (TypeError, ValueError):
+        self._camera_preview_until = 0.0
+    return now < self._camera_preview_until
+
+  def speed_camera_preview_active(self) -> bool:
+    return self._speed_camera_preview_active()
+
+  def _apply_speed_camera_preview(self) -> None:
+    self.camera_alert_active = True
+    self.camera_limit_speed = SPEED_CAMERA_DEBUG_PREVIEW_LIMIT
+    self.camera_distance_m = SPEED_CAMERA_DEBUG_PREVIEW_DISTANCE_M
+    self.camera_type = SPEED_CAMERA_DEBUG_PREVIEW_TYPE
+    self.camera_category = SPEED_CAMERA_DEBUG_PREVIEW_CATEGORY
+    self.camera_category_code = SPEED_CAMERA_DEBUG_PREVIEW_TYPE
+    self.road_class = SPEED_CAMERA_DEBUG_PREVIEW_ROAD_CLASS
+    self.road_class_code = SPEED_CAMERA_DEBUG_PREVIEW_ROAD_CLASS_CODE
+    self.camera_bearing_deg = 0.0
+    self.camera_relative_angle_deg = SPEED_CAMERA_DEBUG_PREVIEW_RELATIVE_ANGLE_DEG
 
   def _draw_speed_camera_alert(self, rect: rl.Rectangle) -> None:
     if not self.camera_alert_active or not self._can_draw_top_icons:
@@ -332,7 +382,7 @@ class HudRenderer(Widget):
     rl.draw_text_ex(
       self._font_medium,
       distance_text,
-      rl.Vector2(x + (width - distance_size.x) / 2, y + 128),
+      rl.Vector2(x + (width - distance_size.x) / 2, y + 136),
       24,
       0,
       COLORS.WHITE_TRANSLUCENT,
@@ -341,13 +391,14 @@ class HudRenderer(Widget):
   def _draw_speed_limit_sign(self, center_x: float, center_y: float, radius: int, limit_text: str) -> None:
     is_speed = self._is_speed_camera_category(self.camera_category, self.camera_type)
     inner_gap = 10 if is_speed else 8
+    self._draw_camera_direction_pointer(center_x, center_y, radius)
     rl.draw_circle(int(center_x), int(center_y), radius, self._speed_sign_ring_color())
     rl.draw_circle(int(center_x), int(center_y), radius - inner_gap, COLORS.SPEED_SIGN_INNER)
 
     if is_speed:
-      font_size = 50 if len(limit_text) <= 2 else 40
+      font_size = 54 if len(limit_text) <= 2 else 44
     else:
-      font_size = 42 if len(limit_text) <= 2 else 34
+      font_size = 46 if len(limit_text) <= 2 else 38
     text_size = measure_text_cached(self._font_bold, limit_text, font_size)
     rl.draw_text_ex(
       self._font_bold,
@@ -357,6 +408,24 @@ class HudRenderer(Widget):
       0,
       COLORS.SPEED_SIGN_TEXT,
     )
+
+  def _draw_camera_direction_pointer(self, center_x: float, center_y: float, radius: int) -> None:
+    angle_rad = math.radians(max(-85.0, min(85.0, self.camera_relative_angle_deg)))
+    direction_x = math.sin(angle_rad)
+    direction_y = -math.cos(angle_rad)
+    perpendicular_x = math.cos(angle_rad)
+    perpendicular_y = math.sin(angle_rad)
+    pointer_length = max(12.0, radius * 0.34)
+    pointer_half_width = max(8.0, radius * 0.17)
+    base_radius = radius - 2.0
+    tip_radius = radius + pointer_length
+
+    tip = rl.Vector2(center_x + direction_x * tip_radius, center_y + direction_y * tip_radius)
+    base_center_x = center_x + direction_x * base_radius
+    base_center_y = center_y + direction_y * base_radius
+    left = rl.Vector2(base_center_x + perpendicular_x * pointer_half_width, base_center_y + perpendicular_y * pointer_half_width)
+    right = rl.Vector2(base_center_x - perpendicular_x * pointer_half_width, base_center_y - perpendicular_y * pointer_half_width)
+    rl.draw_triangle(tip, left, right, self._camera_pointer_color())
 
   def _camera_category_label(self, category: str, cam_type: int) -> str:
     if category == "SPEED":
@@ -440,10 +509,15 @@ class HudRenderer(Widget):
       return COLORS.SPEED_SIGN_RING_RED
     return COLORS.SPEED_SIGN_RING_BLUE
 
+  def _camera_pointer_color(self) -> rl.Color:
+    if self._is_speed_camera_category(self.camera_category, self.camera_type):
+      return COLORS.SPEED_SIGN_RING_BLUE
+    return COLORS.SPEED_SIGN_RING_RED
+
   def _speed_sign_radius(self) -> int:
     if self._is_speed_camera_category(self.camera_category, self.camera_type):
-      return 48
-    return 38
+      return 55
+    return 43
 
   def _fit_text(self, text: str, max_width: float, font_size: int, min_font_size: int) -> tuple[str, int, rl.Vector2]:
     for size in range(font_size, min_font_size - 1, -1):

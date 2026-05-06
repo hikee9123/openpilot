@@ -9,6 +9,7 @@ from openpilot.common.params import Params
 
 # #custom start: shared custom UI params and publisher
 CUSTOM_PARAM_KEY = "CustomParam"
+SPEED_CAMERA_DEBUG_PREVIEW_UNTIL_KEY = "SpeedCameraDebugPreviewUntil"
 POWER_OFF_MIN_SPEED = 10.0
 POWER_OFF_UPDATE_INTERVAL = 1.0
 
@@ -27,6 +28,7 @@ DEFAULT_CUSTOM_PARAMS: dict[str, int | float | bool] = {
   "SpeedCameraPassingDistance": 30,
   "SpeedCameraPassedIgnoreSeconds": 8,
   "SpeedCameraMinGpsSpeed": 3,
+  SPEED_CAMERA_DEBUG_PREVIEW_UNTIL_KEY: 0.0,
   "ParamAutoScreenOff": 8,
   "ParamScreenOffAfterFade": True,
   "ParamBrightness": -12,
@@ -122,6 +124,14 @@ def write_custom_params(values: Mapping[str, int | float | bool], params: Params
   elif "ParamDebug" in values:
     merged["ShowDebugMessage"] = bool(merged["ParamDebug"])
   params.put(CUSTOM_PARAM_KEY, json.dumps(merged, separators=(",", ":"), sort_keys=True))
+
+
+def speed_camera_debug_preview_active(params: Params | None = None, now: float | None = None) -> bool:
+  try:
+    values = read_custom_params(params)
+    return float(values.get(SPEED_CAMERA_DEBUG_PREVIEW_UNTIL_KEY, 0.0)) > (time.time() if now is None else now)
+  except (TypeError, ValueError):
+    return False
 
 
 class CustomPublisher:
