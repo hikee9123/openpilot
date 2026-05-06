@@ -422,7 +422,7 @@ def build_dedup_key(
   return f"ROW|{fallback_id}"
 
 
-def init_db(conn: sqlite3.Connection) -> None:
+def init_db(conn: sqlite3.Connection, backfill: bool = True) -> None:
   conn.executescript("""
     CREATE TABLE IF NOT EXISTS metadata (
       key TEXT PRIMARY KEY,
@@ -520,8 +520,94 @@ def init_db(conn: sqlite3.Connection) -> None:
     CREATE INDEX IF NOT EXISTS idx_speed_cameras_dedup
     ON speed_cameras(dedup_key);
   """)
+  if backfill:
+    _backfill_derived_columns(conn)
   conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("version", str(DB_VERSION)))
   conn.commit()
+
+
+def _backfill_derived_columns(conn: sqlite3.Connection) -> None:
+  rows = conn.execute("""
+    SELECT
+      id, lat, lon, camera_type, camera_type_raw, camera_category, camera_type_code,
+      speed_limit, region, road_type_raw, road_class, road_name, place, section_type,
+      source_type, source_file, dedup_key
+    FROM speed_cameras
+  """).fetchall()
+
+  for row in rows:
+    (
+      camera_id,
+      lat,
+      lon,
+      camera_type,
+      camera_type_raw,
+      camera_category,
+      _stored_type_code,
+      speed_limit,
+      _region,
+      road_type_raw,
+      road_class,
+      road_name,
+      place,
+      section_type,
+      source_type,
+      source_file,
+      dedup_key,
+    ) = row
+
+    raw_camera_type = camera_type_raw or camera_type or ""
+    category = camera_category or normalize_camera_category(raw_camera_type, section_type or "")
+    if category == "UNKNOWN":
+      category = normalize_camera_category(raw_camera_type, section_type or "")
+    type_code = camera_category_code(category)
+
+    raw_road_type = road_type_raw or ""
+    normalized_road_class = road_class or normalize_road_class(raw_road_type, road_name or "", place or "")
+    if normalized_road_class == "UNKNOWN":
+      normalized_road_class = normalize_road_class(raw_road_type, road_name or "", place or "")
+    road_code = road_class_code(normalized_road_class)
+
+    normalized_source_type = _source_type(source_type or "public")
+    normalized_dedup_key = dedup_key or f"GPS|{float(lat):.6f}|{float(lon):.6f}|{int(speed_limit or 0)}"
+
+    conn.execute("""
+      UPDATE speed_cameras
+      SET
+        camera_type_raw = ?,
+        camera_category = ?,
+        camera_type_code = ?,
+        is_speed_camera = ?,
+        is_signal_camera = ?,
+        is_section_camera = ?,
+        is_etc_camera = ?,
+        road_type_raw = ?,
+        road_class = ?,
+        road_class_code = ?,
+        is_expressway = ?,
+        is_national_road = ?,
+        source_type = ?,
+        source_file = ?,
+        dedup_key = ?
+      WHERE id = ?
+    """, (
+      raw_camera_type,
+      category,
+      type_code,
+      int(is_speed_category(category)),
+      int(is_signal_category(category)),
+      int(is_section_category(category)),
+      int(is_etc_category(category)),
+      raw_road_type,
+      normalized_road_class,
+      road_code,
+      int(is_expressway_class(normalized_road_class)),
+      int(is_national_road_class(normalized_road_class)),
+      normalized_source_type,
+      source_file or "",
+      normalized_dedup_key,
+      camera_id,
+    ))
 
 
 def _date_priority(value: str) -> int:
@@ -629,7 +715,7 @@ def create_database_from_csvs(csv_sources: list[CsvSource], db_path: Path = DEFA
   db_path.parent.mkdir(parents=True, exist_ok=True)
 
   with closing(sqlite3.connect(db_path)) as conn:
-    init_db(conn)
+    init_db(conn, backfill=False)
     conn.execute("DELETE FROM speed_cameras")
 
     placeholders = ", ".join("?" for _ in SPEED_CAMERA_COLUMNS)
@@ -925,7 +1011,7 @@ def _row_to_camera(row: sqlite3.Row, distance_m: float, bearing: float, angle_di
   place = str(_row_get(row, "place", ""))
 
   category = str(_row_get(row, "camera_category", ""))
-  if not category:
+  if not category or category == "UNKNOWN":
     category = normalize_camera_category(camera_type, section_type)
 
   type_code = int(_row_get(row, "camera_type_code", 0))
@@ -934,7 +1020,7 @@ def _row_to_camera(row: sqlite3.Row, distance_m: float, bearing: float, angle_di
 
   road_type_raw = str(_row_get(row, "road_type_raw", ""))
   road_class = str(_row_get(row, "road_class", ""))
-  if not road_class:
+  if not road_class or road_class == "UNKNOWN":
     road_class = normalize_road_class(road_type_raw, road_name, place)
 
   road_code = int(_row_get(row, "road_class_code", 0))

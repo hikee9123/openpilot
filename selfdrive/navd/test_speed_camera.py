@@ -289,6 +289,46 @@ def test_speed_camera_dataclass_contains_ui_fields(tmp_path: Path) -> None:
   assert camera.is_national_road is False
 
 
+def test_init_db_backfills_old_database_speed_flags(tmp_path: Path) -> None:
+  db_path = tmp_path / "old_speed_cameras.sqlite3"
+  with sqlite3.connect(db_path) as conn:
+    conn.executescript("""
+      CREATE TABLE metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      INSERT INTO metadata(key, value) VALUES('version', '2');
+
+      CREATE TABLE speed_cameras (
+        id TEXT PRIMARY KEY,
+        lat REAL NOT NULL,
+        lon REAL NOT NULL,
+        camera_type TEXT NOT NULL,
+        speed_limit INTEGER NOT NULL,
+        region TEXT NOT NULL,
+        road_name TEXT NOT NULL,
+        place TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        section_type TEXT NOT NULL,
+        section_length_m INTEGER NOT NULL,
+        school_zone TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO speed_cameras VALUES (
+        'OLD', 37.001, 127.0, '01', 80, '', '고속도로', '전방도로', '', '', 0, '', '2026-01-01'
+      );
+    """)
+    speed_camera.init_db(conn)
+
+  camera = find_lead_camera(db_path, 37.0, 127.0, 0.0)
+  assert camera is not None
+  assert camera.id == "OLD"
+  assert camera.camera_category == "SPEED"
+  assert camera.camera_type_code == 1
+  assert camera.road_class == "EXPRESSWAY"
+  assert camera.is_expressway is True
+
+
 def test_camera_type_code_backward_compatibility() -> None:
   assert camera_type_code("속도위반") == 1
   assert camera_type_code("신호위반") == 2
