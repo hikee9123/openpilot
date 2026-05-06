@@ -31,6 +31,10 @@ def main() -> None:
 
     print(
       f"active={nav.active} camType={nav.camType} "
+      f"category={getattr(nav, 'camCategory', '')} "
+      f"camCategoryCode={getattr(nav, 'camCategoryCode', 0)} "
+      f"roadClass={getattr(nav, 'roadClass', '')} "
+      f"roadClassCode={getattr(nav, 'roadClassCode', 0)} "
       f"limit={nav.camLimitSpeed} dist={nav.camLimitSpeedLeftDist}m "
       f"roadLimit={nav.roadLimitSpeed} road='{nav.currentRoadName}'"
     )

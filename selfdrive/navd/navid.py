@@ -12,6 +12,9 @@ from openpilot.selfdrive.navd.speed_camera import (
   camera_type_code,
   create_database_from_csv,
   find_lead_camera,
+  normalize_camera_category,
+  normalize_road_class,
+  road_class_code,
 )
 from openpilot.selfdrive.ui.custom import read_custom_params
 
@@ -70,6 +73,10 @@ def _send_inactive(pm: messaging.PubMaster) -> None:
   msg = messaging.new_message("naviCustom")
   nav = msg.naviCustom.naviData
   nav.active = 0
+  nav.camCategory = ""
+  nav.camCategoryCode = 0
+  nav.roadClass = ""
+  nav.roadClassCode = 0
   pm.send("naviCustom", msg)
 
 
@@ -79,17 +86,36 @@ def _send_camera(pm: messaging.PubMaster, camera) -> None:
 
   nav.active = 1
   nav.roadLimitSpeed = camera.speed_limit
-  nav.camType = camera_type_code(camera.camera_type, camera.section_type)
+
+  category = getattr(camera, "camera_category", "")
+  type_code = int(getattr(camera, "camera_type_code", 0))
+  if not category:
+    category = normalize_camera_category(camera.camera_type, camera.section_type)
+  if type_code == 0:
+    type_code = camera_type_code(camera.camera_type, camera.section_type)
+
+  road_class = getattr(camera, "road_class", "")
+  road_class_code_value = int(getattr(camera, "road_class_code", 0))
+  if not road_class:
+    road_class = normalize_road_class("", camera.road_name, camera.place)
+  if road_class_code_value == 0:
+    road_class_code_value = road_class_code(road_class)
+
+  nav.camType = type_code
+  nav.camCategory = category
+  nav.camCategoryCode = type_code
+  nav.roadClass = road_class
+  nav.roadClassCode = road_class_code_value
   nav.camLimitSpeed = camera.speed_limit
   nav.camLimitSpeedLeftDist = max(0, int(camera.distance_m))
-  nav.sectionLimitSpeed = camera.speed_limit if nav.camType == 4 else 0
-  nav.sectionLeftDist = max(0, int(camera.distance_m + camera.section_length_m)) if nav.camType == 4 else 0
+  nav.sectionLimitSpeed = camera.speed_limit if type_code == 4 else 0
+  nav.sectionLeftDist = max(0, int(camera.distance_m + camera.section_length_m)) if type_code == 4 else 0
   nav.sectionAvgSpeed = 0
   nav.sectionLeftTime = 0
   nav.sectionAdjustSpeed = False
   nav.camSpeedFactor = 1.0
   nav.currentRoadName = camera.road_name or camera.place
-  nav.isHighway = "고속" in camera.road_name or "고속" in camera.place
+  nav.isHighway = bool(getattr(camera, "is_expressway", False)) or "고속" in camera.road_name or "고속" in camera.place
   nav.isNda2 = False
 
   pm.send("naviCustom", msg)

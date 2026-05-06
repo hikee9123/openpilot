@@ -40,6 +40,10 @@ struct NaviCustom @0xf35cc4560bbf6ec2 {
     currentRoadName @12 :Text;
     isNda2 @13 :Bool;
     cntIdx @14 :Int16;
+    camCategory @15 :Text;
+    camCategoryCode @16 :Int16;
+    roadClass @17 :Text;
+    roadClassCode @18 :Int16;
   }
 }
 

@@ -56,6 +56,9 @@ class Colors:
   GAS = rl.Color(255, 255, 0, 255)
   SPEED_CAMERA = rl.Color(255, 198, 77, 255)
   SPEED_SIGN_RED = rl.Color(210, 32, 42, 255)
+  SPEED_SIGN_RING_RED = rl.Color(210, 32, 42, 255)
+  SPEED_SIGN_RING_BLUE = rl.Color(52, 120, 246, 255)
+  SPEED_SIGN_INNER = rl.WHITE
   SPEED_SIGN_TEXT = rl.Color(18, 18, 18, 255)
 
 
@@ -78,6 +81,11 @@ class HudRenderer(Widget):
     self.camera_alert_active: bool = False
     self.camera_limit_speed: int = 0
     self.camera_distance_m: int = 0
+    self.camera_category: str = ""
+    self.camera_category_code: int = 0
+    self.camera_type: int = 0
+    self.road_class: str = ""
+    self.road_class_code: int = 0
 
     self._font_semi_bold: rl.Font = gui_app.font(FontWeight.SEMI_BOLD)
     self._font_bold: rl.Font = gui_app.font(FontWeight.BOLD)
@@ -192,43 +200,59 @@ class HudRenderer(Widget):
     self.camera_alert_active = bool(nav.active and nav.camType != 0 and nav.camLimitSpeedLeftDist > 0)
     self.camera_limit_speed = int(nav.camLimitSpeed)
     self.camera_distance_m = int(nav.camLimitSpeedLeftDist)
+    self.camera_type = int(nav.camType)
+    self.camera_category = str(getattr(nav, "camCategory", ""))
+    self.camera_category_code = int(getattr(nav, "camCategoryCode", self.camera_type))
+    self.road_class = str(getattr(nav, "roadClass", ""))
+    self.road_class_code = int(getattr(nav, "roadClassCode", 0))
 
   def _draw_speed_camera_alert(self, rect: rl.Rectangle) -> None:
     if not self.camera_alert_active:
       return
 
     width = UI_CONFIG.set_speed_width_metric if ui_state.is_metric else UI_CONFIG.set_speed_width_imperial
-    height = 146
     x = rect.x + 60 + (UI_CONFIG.set_speed_width_imperial - width) // 2
     y = rect.y + 45 + UI_CONFIG.set_speed_height + 16
-    alert_rect = rl.Rectangle(x, y, width, height)
-
-    rl.draw_rectangle_rounded(alert_rect, 0.28, 10, COLORS.BLACK_TRANSLUCENT)
-    rl.draw_rectangle_rounded_lines_ex(alert_rect, 0.28, 10, 4, COLORS.SPEED_CAMERA)
 
     limit_text = str(self.camera_limit_speed) if self.camera_limit_speed > 0 else "--"
     distance_text = self._format_distance(self.camera_distance_m)
+    info_label = self._camera_info_label()
 
-    sign_radius = 42
+    label_text, label_font_size, label_size = self._fit_text(info_label, width, 22, 18)
+    rl.draw_text_ex(
+      self._font_medium,
+      label_text,
+      rl.Vector2(x + (width - label_size.x) / 2, y + 2),
+      label_font_size,
+      0,
+      COLORS.SPEED_CAMERA,
+    )
+
+    sign_radius = self._speed_sign_radius()
     sign_center_x = x + width / 2
-    sign_center_y = y + 52
+    sign_center_y = y + 88
     self._draw_speed_limit_sign(sign_center_x, sign_center_y, sign_radius, limit_text)
 
     distance_size = measure_text_cached(self._font_medium, distance_text, 30)
     rl.draw_text_ex(
       self._font_medium,
       distance_text,
-      rl.Vector2(x + (width - distance_size.x) / 2, y + 105),
+      rl.Vector2(x + (width - distance_size.x) / 2, y + 150),
       30,
       0,
       COLORS.WHITE_TRANSLUCENT,
     )
 
   def _draw_speed_limit_sign(self, center_x: float, center_y: float, radius: int, limit_text: str) -> None:
-    rl.draw_circle(int(center_x), int(center_y), radius, COLORS.SPEED_SIGN_RED)
-    rl.draw_circle(int(center_x), int(center_y), radius - 8, COLORS.WHITE)
+    is_speed = self._is_speed_camera_category(self.camera_category, self.camera_type)
+    inner_gap = 10 if is_speed else 8
+    rl.draw_circle(int(center_x), int(center_y), radius, self._speed_sign_ring_color())
+    rl.draw_circle(int(center_x), int(center_y), radius - inner_gap, COLORS.SPEED_SIGN_INNER)
 
-    font_size = 44 if len(limit_text) <= 2 else 34
+    if is_speed:
+      font_size = 52 if len(limit_text) <= 2 else 40
+    else:
+      font_size = 42 if len(limit_text) <= 2 else 34
     text_size = measure_text_cached(self._font_bold, limit_text, font_size)
     rl.draw_text_ex(
       self._font_bold,
@@ -238,6 +262,111 @@ class HudRenderer(Widget):
       0,
       COLORS.SPEED_SIGN_TEXT,
     )
+
+  def _camera_category_label(self, category: str, cam_type: int) -> str:
+    if category == "SPEED":
+      return tr("Speed")
+    if category == "SIGNAL":
+      return tr("Signal")
+    if category == "SPEED_SIGNAL":
+      return tr("Speed+Signal")
+    if category == "SECTION_SPEED":
+      return tr("Section")
+    if category == "PARKING":
+      return tr("Parking")
+    if category == "BUS_LANE":
+      return tr("Bus Lane")
+    if category == "TRAFFIC":
+      return tr("Traffic")
+    if category == "SECURITY":
+      return tr("Security")
+
+    if cam_type == 1:
+      return tr("Speed")
+    if cam_type == 2:
+      return tr("Signal")
+    if cam_type == 3:
+      return tr("Speed+Signal")
+    if cam_type == 4:
+      return tr("Section")
+
+    return tr("Camera")
+
+  def _road_class_label(self, road_class: str, road_class_code: int) -> str:
+    if road_class == "EXPRESSWAY":
+      return tr("Expressway")
+    if road_class == "NATIONAL_ROAD":
+      return tr("National")
+    if road_class == "NATIONAL_LOCAL_ROAD":
+      return tr("Nat.Local")
+    if road_class == "LOCAL_ROAD":
+      return tr("Local")
+    if road_class == "CITY_ROAD":
+      return tr("City")
+    if road_class == "COUNTY_ROAD":
+      return tr("County")
+    if road_class == "DISTRICT_ROAD":
+      return tr("District")
+    if road_class == "ETC":
+      return tr("Road")
+
+    if road_class_code == 1:
+      return tr("Expressway")
+    if road_class_code == 2:
+      return tr("National")
+    if road_class_code == 3:
+      return tr("Nat.Local")
+    if road_class_code == 4:
+      return tr("Local")
+    if road_class_code == 5:
+      return tr("City")
+
+    return ""
+
+  def _camera_info_label(self) -> str:
+    category_label = self._camera_category_label(self.camera_category, self.camera_type)
+    road_label = self._road_class_label(self.road_class, self.road_class_code)
+
+    if road_label:
+      return f"{category_label} / {road_label}"
+    return category_label
+
+  def _is_speed_camera_category(self, category: str, cam_type: int) -> bool:
+    if category in ("SPEED", "SPEED_SIGNAL", "SECTION_SPEED"):
+      return True
+
+    if cam_type in (1, 3, 4):
+      return True
+
+    return False
+
+  def _speed_sign_ring_color(self) -> rl.Color:
+    if self._is_speed_camera_category(self.camera_category, self.camera_type):
+      return COLORS.SPEED_SIGN_RING_RED
+    return COLORS.SPEED_SIGN_RING_BLUE
+
+  def _speed_sign_radius(self) -> int:
+    if self._is_speed_camera_category(self.camera_category, self.camera_type):
+      return 56
+    return 42
+
+  def _fit_text(self, text: str, max_width: float, font_size: int, min_font_size: int) -> tuple[str, int, rl.Vector2]:
+    for size in range(font_size, min_font_size - 1, -1):
+      text_size = measure_text_cached(self._font_medium, text, size)
+      if text_size.x <= max_width:
+        return text, size, text_size
+
+    fitted = text
+    suffix = "..."
+    while fitted:
+      candidate = fitted + suffix
+      text_size = measure_text_cached(self._font_medium, candidate, min_font_size)
+      if text_size.x <= max_width:
+        return candidate, min_font_size, text_size
+      fitted = fitted[:-1]
+
+    text_size = measure_text_cached(self._font_medium, suffix, min_font_size)
+    return suffix, min_font_size, text_size
 
   def _format_distance(self, distance_m: int) -> str:
     if distance_m >= 1000:

@@ -1,66 +1,207 @@
 # Speed Camera navid
 
-`navid` publishes fixed speed camera information from a public CSV database to
-`naviCustom`. The onroad HUD subscribes to `naviCustom` and shows the camera
-speed limit and remaining distance.
+`navid` publishes fixed speed camera information from a SQLite database to
+`naviCustom`. The onroad HUD subscribes to `naviCustom` and shows camera category,
+road class, speed limit, and remaining distance.
 
-## 1. Download the CSV
+## 1. Input Data
 
-Download `전국무인교통단속카메라표준데이터` from the public data portal:
-
-https://www.data.go.kr/data/15028200/standard.do
-
-The dataset is for fixed unmanned traffic enforcement cameras. It does not cover
-mobile or temporary enforcement.
-
-## 2. Import the database
-
-Copy the CSV to the device or PC, then import it:
-
-```bash
-.venv/bin/python tools/scripts/import_speed_cameras.py --csv /path/to/speed_cameras.csv
-```
-
-Default output paths:
+The default public CSV remains:
 
 ```text
 selfdrive/navd/data/speed_cameras.csv
-selfdrive/navd/data/speed_cameras.sqlite3
 ```
 
-The `selfdrive/navd/data` directory is used as runtime data storage. The generated
-CSV stays ignored in git, while the bundled `speed_cameras.sqlite3` can be updated
-and committed when a fresh default DB is needed.
-
-You can override the data directory with:
+Regional CSV files can be added under:
 
 ```text
-SPEED_CAMERA_ROOT=/persist
+selfdrive/navd/data/region/
 ```
 
-You can also download the official public data portal CSV and import it in one step:
+Example:
 
-```bash
-.venv/bin/python tools/scripts/update_speed_cameras.py
+```text
+selfdrive/navd/data/
+  speed_cameras.csv
+  speed_cameras.sqlite3
+  region/
+    seoul_speed_cameras.csv
+    gyeonggi_speed_cameras.csv
 ```
 
-On device, the same flow is available from `Custom > Navigation > Speed camera DB`.
-The button downloads the national public dataset, writes `speed_cameras.csv`, and
-replaces the local SQLite DB used by `navid`. The Navigation menu also shows the
-current update status, progress percentage, public data reference date, and a
-summary of saved camera counts by region.
+CSV files are read with `utf-8-sig`, `utf-8`, `cp949`, `euc-kr`, then a
+replacement fallback.
 
-You can override paths:
+## 2. Import
+
+Single public CSV import still works:
 
 ```bash
 .venv/bin/python tools/scripts/import_speed_cameras.py \
-  --csv /path/to/speed_cameras.csv \
+  --csv selfdrive/navd/data/speed_cameras.csv \
   --db selfdrive/navd/data/speed_cameras.sqlite3
 ```
 
-## 3. Check a known location
+To include regional CSVs:
 
-Use the current latitude, longitude, and heading:
+```bash
+.venv/bin/python tools/scripts/import_speed_cameras.py \
+  --csv selfdrive/navd/data/speed_cameras.csv \
+  --region-dir selfdrive/navd/data/region \
+  --db selfdrive/navd/data/speed_cameras.sqlite3
+```
+
+Extra custom CSVs can be provided repeatedly:
+
+```bash
+.venv/bin/python tools/scripts/import_speed_cameras.py \
+  --csv selfdrive/navd/data/speed_cameras.csv \
+  --extra-csv /path/to/custom.csv
+```
+
+`update_speed_cameras.py` still downloads the national public data portal CSV, then
+imports it together with optional `--region-dir` and `--extra-csv` sources.
+
+## 3. Stored Classification
+
+The DB stores both original and normalized values:
+
+```text
+camera_type_raw -> camera_category -> camera_type_code -> is_speed_camera
+road_type_raw   -> road_class      -> road_class_code  -> is_expressway / is_national_road
+```
+
+Camera categories:
+
+```text
+SPEED
+SIGNAL
+SPEED_SIGNAL
+SECTION_SPEED
+PARKING
+BUS_LANE
+TRAFFIC
+SECURITY
+ETC
+UNKNOWN
+```
+
+Default driving alerts use only:
+
+```text
+SPEED
+SPEED_SIGNAL
+SECTION_SPEED
+```
+
+Signal-only, parking, bus-lane, and security cameras are stored in the DB but are
+excluded from the default speed alert lookup.
+
+Road classes:
+
+```text
+EXPRESSWAY
+NATIONAL_ROAD
+NATIONAL_LOCAL_ROAD
+LOCAL_ROAD
+CITY_ROAD
+COUNTY_ROAD
+DISTRICT_ROAD
+ETC
+UNKNOWN
+```
+
+## 4. Deduplication
+
+Rows from all CSV sources are normalized, then merged by `dedup_key`.
+
+Dedup key priority:
+
+```text
+관리번호
+GPS + 제한속도
+지역 + 설치장소 + 제한속도
+fallback row id
+```
+
+Merge priority:
+
+```text
+newer updated_at
+custom source
+region source
+public source
+valid lat/lon
+longer place text
+```
+
+## 5. Runtime Flow
+
+```text
+national public CSV + regional CSVs
+        -> normalized columns
+        -> camera category
+        -> road class
+        -> dedup merge
+        -> speed_cameras.sqlite3
+        -> find_lead_camera(is_speed_camera = 1)
+        -> navid naviCustom category / roadClass
+        -> HUD Speed / Expressway label
+```
+
+`naviCustom.naviData` includes:
+
+```text
+camType
+camCategory
+camCategoryCode
+roadClass
+roadClassCode
+camLimitSpeed
+camLimitSpeedLeftDist
+currentRoadName
+```
+
+Watch output:
+
+```bash
+.venv/bin/python tools/scripts/watch_navi_custom.py
+```
+
+Example:
+
+```text
+active=1 camType=1 category=SPEED camCategoryCode=1 roadClass=EXPRESSWAY roadClassCode=1 limit=80 dist=450m roadLimit=80 road='...'
+```
+
+## 6. HUD Policy
+
+HUD examples:
+
+```text
+Speed / Expressway
+      80
+     450m
+
+Section / National
+      80
+     1.2km
+```
+
+Speed camera alert UI policy:
+
+```text
+No outer rectangular box
+Large circular speed-limit donut as the primary element
+SPEED / SPEED_SIGNAL / SECTION_SPEED: larger Red donut
+Other categories: Blue donut
+Camera category / road class: small supporting label
+Remaining distance: centered below the donut
+```
+
+## 7. Lookup Check
+
+Use a known latitude, longitude, and heading:
 
 ```bash
 .venv/bin/python tools/scripts/import_speed_cameras.py \
@@ -80,45 +221,10 @@ Or check an existing DB:
   --heading 0
 ```
 
-## 4. Run onroad
+## 8. Tuning
 
-`navid` is registered as an onroad process. When the car is onroad and GPS is
-valid, it reads:
-
-```text
-gpsLocationExternal
-gpsLocation
-```
-
-Then it publishes:
-
-```text
-naviCustom.naviData.active
-naviCustom.naviData.camType
-naviCustom.naviData.camLimitSpeed
-naviCustom.naviData.camLimitSpeedLeftDist
-naviCustom.naviData.currentRoadName
-```
-
-## 5. Watch the output
-
-Run this while onroad or while replaying/mocking GPS:
-
-```bash
-.venv/bin/python tools/scripts/watch_navi_custom.py
-```
-
-Expected active output:
-
-```text
-active=1 camType=1 limit=80 dist=450m roadLimit=80 road='...'
-```
-
-## 6. Tune false positives
-
-The implementation uses GPS, heading, distance, and optional road direction
-fields from the CSV. These values can be tuned from
-`Custom > Navigation > Speed camera tuning`.
+The implementation uses GPS, heading, distance, and optional road direction fields.
+These values can be tuned from `Custom > Navigation > Speed camera tuning`.
 
 Default values:
 
@@ -130,13 +236,3 @@ Camera passing distance: 30m
 Camera ignore time: 8s
 Minimum GPS speed: 3km/h
 ```
-
-Suggested starting points:
-
-```text
-Camera search distance: 1500 to 2500
-Camera search angle: 30 to 45
-Camera direction angle: 45 to 70
-```
-
-If adjacent-road detections are common, lower `Camera search angle` first.

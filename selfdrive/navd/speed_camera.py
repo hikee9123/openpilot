@@ -3,6 +3,7 @@ import csv
 import json
 import math
 import os
+import re
 import sqlite3
 import time
 from collections.abc import Callable
@@ -13,7 +14,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
-DB_VERSION = 2
+DB_VERSION = 4
 PUBLIC_DATA_PK = "15028200"
 PUBLIC_DATA_BASE_URL = "https://www.data.go.kr"
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -27,6 +28,7 @@ def _default_data_root() -> Path:
 
 DEFAULT_DB_PATH = _default_data_root() / "speed_cameras.sqlite3"
 DEFAULT_CSV_PATH = _default_data_root() / "speed_cameras.csv"
+DEFAULT_REGION_DIR = _default_data_root() / "region"
 
 LOOKAHEAD_DISTANCE_M = 2500.0
 LOOKAHEAD_ANGLE_DEG = 45.0
@@ -38,12 +40,37 @@ DATA_GO_KR_USER_AGENT = "Mozilla/5.0 (openpilot speed camera updater)"
 
 
 FIELD_ALIASES = {
-  "id": ("무인교통단속카메라관리번호", "무인교통단속카메라 관리번호", "관리번호", "MNLSS_REGLT_CAMERA_MANAGE_NO", "id"),
+  "id": (
+    "무인교통단속카메라관리번호",
+    "무인교통단속카메라 관리번호",
+    "관리번호",
+    "MNLSS_REGLT_CAMERA_MANAGE_NO",
+    "manage_no",
+    "camera_id",
+    "id",
+  ),
   "lat": ("위도", "LATITUDE", "lat", "latitude"),
   "lon": ("경도", "LONGITUDE", "lon", "lng", "longitude"),
-  "camera_type": ("단속구분", "단속유형", "REGLT_SE", "camera_type", "type"),
-  "speed_limit": ("제한속도", "제한속도(km/h)", "LMTT_VE", "speed_limit"),
+  "camera_type": (
+    "단속구분",
+    "단속유형",
+    "단속종류",
+    "REGLT_SE",
+    "regltSe",
+    "camera_type",
+    "type",
+  ),
+  "speed_limit": ("제한속도", "제한속도(km/h)", "LMTT_VE", "lmttVe", "speed_limit"),
   "region": ("시도명", "시도", "CTPRVN_NM", "SIDO_NM", "region", "sido"),
+  "road_type": (
+    "도로종류",
+    "도로구분",
+    "도로유형",
+    "ROAD_KND",
+    "roadKnd",
+    "road_knd",
+    "road_type",
+  ),
   "road_name": ("도로노선명", "소재지도로명주소", "도로명", "ROAD_ROUTE_NM", "RDNMADR", "road_name"),
   "place": ("설치장소", "소재지지번주소", "ITLPC", "LNMADR", "place"),
   "direction": ("도로노선방향", "방향", "ROAD_ROUTE_DRC", "direction"),
@@ -95,6 +122,74 @@ REGION_ALIASES = {
   "충청북도": "충청북도",
 }
 
+CAMERA_CATEGORY_CODES = {
+  "ETC": 0,
+  "SPEED": 1,
+  "SIGNAL": 2,
+  "SPEED_SIGNAL": 3,
+  "SECTION_SPEED": 4,
+  "PARKING": 5,
+  "BUS_LANE": 6,
+  "TRAFFIC": 7,
+  "SECURITY": 8,
+  "UNKNOWN": 9,
+}
+
+ROAD_CLASS_CODES = {
+  "UNKNOWN": 0,
+  "EXPRESSWAY": 1,
+  "NATIONAL_ROAD": 2,
+  "NATIONAL_LOCAL_ROAD": 3,
+  "LOCAL_ROAD": 4,
+  "CITY_ROAD": 5,
+  "COUNTY_ROAD": 6,
+  "DISTRICT_ROAD": 7,
+  "ETC": 8,
+}
+
+SOURCE_TYPE_PRIORITY = {
+  "public": 1,
+  "region": 2,
+  "custom": 3,
+}
+
+SPEED_CAMERA_COLUMNS = (
+  "id",
+  "lat",
+  "lon",
+  "camera_type",
+  "camera_type_raw",
+  "camera_category",
+  "camera_type_code",
+  "is_speed_camera",
+  "is_signal_camera",
+  "is_section_camera",
+  "is_etc_camera",
+  "speed_limit",
+  "region",
+  "road_type_raw",
+  "road_class",
+  "road_class_code",
+  "is_expressway",
+  "is_national_road",
+  "road_name",
+  "place",
+  "direction",
+  "section_type",
+  "section_length_m",
+  "school_zone",
+  "updated_at",
+  "source_type",
+  "source_file",
+  "dedup_key",
+)
+
+
+@dataclass(frozen=True)
+class CsvSource:
+  path: Path
+  source_type: str
+
 
 @dataclass(frozen=True)
 class SpeedCamera:
@@ -111,12 +206,28 @@ class SpeedCamera:
   distance_m: float = 0.0
   bearing_deg: float = 0.0
   angle_diff_deg: float = 0.0
+  camera_category: str = "UNKNOWN"
+  camera_type_code: int = 0
+  region: str = ""
+  road_type_raw: str = ""
+  road_class: str = "UNKNOWN"
+  road_class_code: int = 0
+  is_expressway: bool = False
+  is_national_road: bool = False
+  source_type: str = ""
+  source_file: str = ""
 
 
 def _first(row: dict[str, str], field: str) -> str:
-  for key in FIELD_ALIASES[field]:
+  aliases = FIELD_ALIASES[field]
+  for key in aliases:
     if key in row and row[key] is not None:
       return row[key].strip()
+
+  lower_aliases = {key.lower() for key in aliases}
+  for key, value in row.items():
+    if key is not None and key.strip().lower() in lower_aliases and value is not None:
+      return value.strip()
   return ""
 
 
@@ -150,7 +261,7 @@ def _extract_region(row: dict[str, str]) -> str:
 
 
 def _read_csv_rows(csv_path: Path) -> list[dict[str, str]]:
-  for encoding in ("utf-8-sig", "cp949", "euc-kr"):
+  for encoding in ("utf-8-sig", "utf-8", "cp949", "euc-kr"):
     try:
       with csv_path.open("r", encoding=encoding, newline="") as f:
         return list(csv.DictReader(f))
@@ -158,6 +269,157 @@ def _read_csv_rows(csv_path: Path) -> list[dict[str, str]]:
       continue
   with csv_path.open("r", encoding="utf-8", errors="replace", newline="") as f:
     return list(csv.DictReader(f))
+
+
+def normalize_camera_category(camera_type: str, section_type: str = "") -> str:
+  camera_type = (camera_type or "").strip()
+  section_type = (section_type or "").strip()
+  raw = f"{camera_type} {section_type}".strip()
+  compact = raw.replace(" ", "").upper()
+
+  if not raw:
+    return "UNKNOWN"
+
+  has_speed = (
+    camera_type in ("01", "1") or
+    "과속" in raw or
+    "속도" in raw or
+    "SPEED" in compact
+  )
+
+  has_signal = (
+    camera_type in ("02", "2") or
+    "신호" in raw or
+    "SIGNAL" in compact
+  )
+
+  has_section = (
+    camera_type in ("03", "3", "04", "4") or
+    "구간" in raw or
+    "SECTION" in compact
+  )
+
+  if has_section:
+    return "SECTION_SPEED"
+
+  if has_speed and has_signal:
+    return "SPEED_SIGNAL"
+
+  if has_speed:
+    return "SPEED"
+
+  if has_signal:
+    return "SIGNAL"
+
+  if "주정차" in raw or "불법주정차" in raw or "주차" in raw or "정차" in raw:
+    return "PARKING"
+
+  if "버스전용" in raw or "버스차로" in raw or "버스" in raw:
+    return "BUS_LANE"
+
+  if "통행" in raw or "진입" in raw or "교차로" in raw or "꼬리" in raw or "끼어들기" in raw:
+    return "TRAFFIC"
+
+  if "방범" in raw or "CCTV" in compact:
+    return "SECURITY"
+
+  if "기타" in raw or compact == "ETC":
+    return "ETC"
+
+  return "UNKNOWN"
+
+
+def camera_category_code(camera_category: str) -> int:
+  return CAMERA_CATEGORY_CODES.get(camera_category, 0)
+
+
+def is_speed_category(camera_category: str) -> bool:
+  return camera_category in ("SPEED", "SPEED_SIGNAL", "SECTION_SPEED")
+
+
+def is_signal_category(camera_category: str) -> bool:
+  return camera_category in ("SIGNAL", "SPEED_SIGNAL")
+
+
+def is_section_category(camera_category: str) -> bool:
+  return camera_category == "SECTION_SPEED"
+
+
+def is_etc_category(camera_category: str) -> bool:
+  return camera_category not in ("SPEED", "SIGNAL", "SPEED_SIGNAL", "SECTION_SPEED")
+
+
+def camera_type_code(camera_type: str, section_type: str = "") -> int:
+  category = normalize_camera_category(camera_type, section_type)
+  return camera_category_code(category)
+
+
+def normalize_road_class(road_type: str, road_name: str = "", place: str = "") -> str:
+  raw = f"{road_type or ''} {road_name or ''} {place or ''}".strip()
+  compact = raw.replace(" ", "").upper()
+
+  if not raw:
+    return "UNKNOWN"
+
+  if "고속국도" in raw or "고속도로" in raw or "고속" in raw:
+    return "EXPRESSWAY"
+
+  if "일반국도" in raw or "국도" in raw:
+    return "NATIONAL_ROAD"
+
+  if "국가지원지방도" in raw or "국지도" in raw:
+    return "NATIONAL_LOCAL_ROAD"
+
+  if "지방도" in raw:
+    return "LOCAL_ROAD"
+
+  if "특별시도" in raw or "특별광역시도" in raw or "시도" in raw:
+    return "CITY_ROAD"
+
+  if "군도" in raw:
+    return "COUNTY_ROAD"
+
+  if "구도" in raw:
+    return "DISTRICT_ROAD"
+
+  if "기타" in raw or compact == "ETC":
+    return "ETC"
+
+  return "UNKNOWN"
+
+
+def road_class_code(road_class: str) -> int:
+  return ROAD_CLASS_CODES.get(road_class, 0)
+
+
+def is_expressway_class(road_class: str) -> bool:
+  return road_class == "EXPRESSWAY"
+
+
+def is_national_road_class(road_class: str) -> bool:
+  return road_class == "NATIONAL_ROAD"
+
+
+def build_dedup_key(
+  row: dict[str, str],
+  lat: float,
+  lon: float,
+  speed_limit: int,
+  region: str,
+  place: str,
+  fallback_id: str,
+) -> str:
+  manage_no = _first(row, "id")
+  if manage_no:
+    return f"NO|{manage_no}"
+
+  if lat is not None and lon is not None:
+    return f"GPS|{lat:.6f}|{lon:.6f}|{speed_limit}"
+
+  if region and place:
+    return f"LOC|{region}|{place}|{speed_limit}"
+
+  return f"ROW|{fallback_id}"
 
 
 def init_db(conn: sqlite3.Connection) -> None:
@@ -172,84 +434,226 @@ def init_db(conn: sqlite3.Connection) -> None:
       lat REAL NOT NULL,
       lon REAL NOT NULL,
       camera_type TEXT NOT NULL,
+      camera_type_raw TEXT NOT NULL,
+      camera_category TEXT NOT NULL,
+      camera_type_code INTEGER NOT NULL,
+      is_speed_camera INTEGER NOT NULL,
+      is_signal_camera INTEGER NOT NULL,
+      is_section_camera INTEGER NOT NULL,
+      is_etc_camera INTEGER NOT NULL,
       speed_limit INTEGER NOT NULL,
       region TEXT NOT NULL,
+      road_type_raw TEXT NOT NULL,
+      road_class TEXT NOT NULL,
+      road_class_code INTEGER NOT NULL,
+      is_expressway INTEGER NOT NULL,
+      is_national_road INTEGER NOT NULL,
       road_name TEXT NOT NULL,
       place TEXT NOT NULL,
       direction TEXT NOT NULL,
       section_type TEXT NOT NULL,
       section_length_m INTEGER NOT NULL,
       school_zone TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      source_file TEXT NOT NULL,
+      dedup_key TEXT NOT NULL
     );
-
-    CREATE INDEX IF NOT EXISTS idx_speed_cameras_lat_lon ON speed_cameras(lat, lon);
 
     CREATE TABLE IF NOT EXISTS speed_camera_region_counts (
       region TEXT PRIMARY KEY,
       count INTEGER NOT NULL
     );
   """)
+
+  column_defaults = {
+    "region": "TEXT NOT NULL DEFAULT ''",
+    "camera_type_raw": "TEXT NOT NULL DEFAULT ''",
+    "camera_category": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
+    "camera_type_code": "INTEGER NOT NULL DEFAULT 0",
+    "is_speed_camera": "INTEGER NOT NULL DEFAULT 0",
+    "is_signal_camera": "INTEGER NOT NULL DEFAULT 0",
+    "is_section_camera": "INTEGER NOT NULL DEFAULT 0",
+    "is_etc_camera": "INTEGER NOT NULL DEFAULT 0",
+    "road_type_raw": "TEXT NOT NULL DEFAULT ''",
+    "road_class": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
+    "road_class_code": "INTEGER NOT NULL DEFAULT 0",
+    "is_expressway": "INTEGER NOT NULL DEFAULT 0",
+    "is_national_road": "INTEGER NOT NULL DEFAULT 0",
+    "source_type": "TEXT NOT NULL DEFAULT 'public'",
+    "source_file": "TEXT NOT NULL DEFAULT ''",
+    "dedup_key": "TEXT NOT NULL DEFAULT ''",
+  }
   columns = {row[1] for row in conn.execute("PRAGMA table_info(speed_cameras)")}
-  if "region" not in columns:
-    conn.execute("ALTER TABLE speed_cameras ADD COLUMN region TEXT NOT NULL DEFAULT ''")
+  for column, definition in column_defaults.items():
+    if column not in columns:
+      conn.execute(f"ALTER TABLE speed_cameras ADD COLUMN {column} {definition}")
+
+  conn.executescript("""
+    CREATE INDEX IF NOT EXISTS idx_speed_cameras_lat_lon
+    ON speed_cameras(lat, lon);
+
+    CREATE INDEX IF NOT EXISTS idx_speed_cameras_category
+    ON speed_cameras(camera_category);
+
+    CREATE INDEX IF NOT EXISTS idx_speed_cameras_type_code
+    ON speed_cameras(camera_type_code);
+
+    CREATE INDEX IF NOT EXISTS idx_speed_cameras_is_speed
+    ON speed_cameras(is_speed_camera);
+
+    CREATE INDEX IF NOT EXISTS idx_speed_cameras_is_signal
+    ON speed_cameras(is_signal_camera);
+
+    CREATE INDEX IF NOT EXISTS idx_speed_cameras_road_class
+    ON speed_cameras(road_class);
+
+    CREATE INDEX IF NOT EXISTS idx_speed_cameras_is_expressway
+    ON speed_cameras(is_expressway);
+
+    CREATE INDEX IF NOT EXISTS idx_speed_cameras_is_national_road
+    ON speed_cameras(is_national_road);
+
+    CREATE INDEX IF NOT EXISTS idx_speed_cameras_source
+    ON speed_cameras(source_type);
+
+    CREATE INDEX IF NOT EXISTS idx_speed_cameras_dedup
+    ON speed_cameras(dedup_key);
+  """)
   conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("version", str(DB_VERSION)))
   conn.commit()
 
 
+def _date_priority(value: str) -> int:
+  parts = [int(part) for part in re.findall(r"\d+", value or "")]
+  if len(parts) >= 3:
+    return parts[0] * 10000 + parts[1] * 100 + parts[2]
+  if len(parts) == 1 and parts[0] > 9999999:
+    return parts[0]
+  return 0
+
+
+def _source_type(source_type: str) -> str:
+  normalized = (source_type or "custom").strip().lower()
+  if normalized in SOURCE_TYPE_PRIORITY:
+    return normalized
+  return "custom"
+
+
+def _merge_priority(record: dict[str, object]) -> tuple[int, int, int, int]:
+  return (
+    _date_priority(str(record["updated_at"])),
+    SOURCE_TYPE_PRIORITY.get(str(record["source_type"]), 0),
+    int(record["lat"] is not None and record["lon"] is not None),
+    len(str(record["place"])),
+  )
+
+
+def _standardize_csv_row(row: dict[str, str], csv_source: CsvSource, idx: int) -> dict[str, object] | None:
+  lat = _parse_float(_first(row, "lat"))
+  lon = _parse_float(_first(row, "lon"))
+  if lat is None or lon is None:
+    return None
+
+  source_type = _source_type(csv_source.source_type)
+  source_file = csv_source.path.name
+  raw_camera_id = _first(row, "id") or f"{source_type}-{csv_source.path.stem}-{idx}"
+  camera_id = f"{raw_camera_id}-{lat:.7f}-{lon:.7f}"
+
+  raw_camera_type = _first(row, "camera_type")
+  section_type = _first(row, "section_type")
+  category = normalize_camera_category(raw_camera_type, section_type)
+  type_code = camera_category_code(category)
+
+  raw_road_type = _first(row, "road_type")
+  road_name = _first(row, "road_name")
+  place = _first(row, "place")
+  road_class = normalize_road_class(raw_road_type, road_name, place)
+  road_code = road_class_code(road_class)
+  speed_limit = _parse_int(_first(row, "speed_limit"))
+  region = _extract_region(row)
+  fallback_id = f"{source_type}-{source_file}-{idx}"
+  dedup_key = build_dedup_key(row, lat, lon, speed_limit, region, place, fallback_id)
+
+  return {
+    "id": camera_id,
+    "lat": lat,
+    "lon": lon,
+    "camera_type": raw_camera_type,
+    "camera_type_raw": raw_camera_type,
+    "camera_category": category,
+    "camera_type_code": type_code,
+    "is_speed_camera": int(is_speed_category(category)),
+    "is_signal_camera": int(is_signal_category(category)),
+    "is_section_camera": int(is_section_category(category)),
+    "is_etc_camera": int(is_etc_category(category)),
+    "speed_limit": speed_limit,
+    "region": region,
+    "road_type_raw": raw_road_type,
+    "road_class": road_class,
+    "road_class_code": road_code,
+    "is_expressway": int(is_expressway_class(road_class)),
+    "is_national_road": int(is_national_road_class(road_class)),
+    "road_name": road_name,
+    "place": place,
+    "direction": _first(row, "direction"),
+    "section_type": section_type,
+    "section_length_m": _parse_int(_first(row, "section_length_m")),
+    "school_zone": _first(row, "school_zone"),
+    "updated_at": _first(row, "updated_at"),
+    "source_type": source_type,
+    "source_file": source_file,
+    "dedup_key": dedup_key,
+  }
+
+
 def create_database_from_csv(csv_path: Path = DEFAULT_CSV_PATH, db_path: Path = DEFAULT_DB_PATH) -> int:
-  rows = _read_csv_rows(csv_path)
+  return create_database_from_csvs([CsvSource(csv_path, "public")], db_path)
+
+
+def create_database_from_csvs(csv_sources: list[CsvSource], db_path: Path = DEFAULT_DB_PATH) -> int:
+  merged: dict[str, dict[str, object]] = {}
+  for csv_source in csv_sources:
+    rows = _read_csv_rows(csv_source.path)
+    for idx, row in enumerate(rows):
+      record = _standardize_csv_row(row, csv_source, idx)
+      if record is None:
+        continue
+
+      dedup_key = str(record["dedup_key"])
+      current = merged.get(dedup_key)
+      if current is None or _merge_priority(record) > _merge_priority(current):
+        merged[dedup_key] = record
+
+  records = sorted(merged.values(), key=lambda record: str(record["id"]))
   db_path.parent.mkdir(parents=True, exist_ok=True)
 
   with closing(sqlite3.connect(db_path)) as conn:
     init_db(conn)
     conn.execute("DELETE FROM speed_cameras")
 
-    inserted = 0
-    source_updated_at = ""
-    for idx, row in enumerate(rows):
-      lat = _parse_float(_first(row, "lat"))
-      lon = _parse_float(_first(row, "lon"))
-      if lat is None or lon is None:
-        continue
-
-      raw_camera_id = _first(row, "id") or f"camera-{idx}"
-      camera_id = f"{raw_camera_id}-{lat:.7f}-{lon:.7f}"
-      updated_at = _first(row, "updated_at")
-      if updated_at > source_updated_at:
-        source_updated_at = updated_at
-      region = _extract_region(row)
-      conn.execute("""
-        INSERT OR REPLACE INTO speed_cameras(
-          id, lat, lon, camera_type, speed_limit, region, road_name, place, direction,
-          section_type, section_length_m, school_zone, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      """, (
-        camera_id,
-        lat,
-        lon,
-        _first(row, "camera_type"),
-        _parse_int(_first(row, "speed_limit")),
-        region,
-        _first(row, "road_name"),
-        _first(row, "place"),
-        _first(row, "direction"),
-        _first(row, "section_type"),
-        _parse_int(_first(row, "section_length_m")),
-        _first(row, "school_zone"),
-        updated_at,
-      ))
-      inserted += 1
+    placeholders = ", ".join("?" for _ in SPEED_CAMERA_COLUMNS)
+    columns = ", ".join(SPEED_CAMERA_COLUMNS)
+    conn.executemany(
+      f"INSERT OR REPLACE INTO speed_cameras({columns}) VALUES ({placeholders})",
+      [tuple(record[column] for column in SPEED_CAMERA_COLUMNS) for record in records],
+    )
 
     conn.execute("DELETE FROM speed_camera_region_counts")
     conn.execute("""
       INSERT INTO speed_camera_region_counts(region, count)
       SELECT region, COUNT(*)
       FROM speed_cameras
+      WHERE is_speed_camera = 1
       GROUP BY region
       ORDER BY region
     """)
+
+    source_updated_at = ""
+    if records:
+      source_updated_at = str(max(records, key=lambda record: _date_priority(str(record["updated_at"])))["updated_at"])
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("source_updated_at", source_updated_at))
+    conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("version", str(DB_VERSION)))
     conn.commit()
     return conn.execute("SELECT COUNT(*) FROM speed_cameras").fetchone()[0]
 
@@ -281,6 +685,13 @@ def database_data_date(db_path: Path = DEFAULT_DB_PATH) -> str:
       return ""
 
 
+def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+  try:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table_name})")}
+  except sqlite3.Error:
+    return set()
+
+
 def database_region_counts(db_path: Path = DEFAULT_DB_PATH) -> list[tuple[str, int]]:
   try:
     if not db_path.exists():
@@ -294,24 +705,85 @@ def database_region_counts(db_path: Path = DEFAULT_DB_PATH) -> list[tuple[str, i
     return []
 
   with closing(conn):
+    columns = _table_columns(conn, "speed_cameras")
+    if "is_speed_camera" in columns:
+      try:
+        rows = conn.execute("""
+          SELECT region, COUNT(*)
+          FROM speed_cameras
+          WHERE is_speed_camera = 1
+          GROUP BY region
+          ORDER BY COUNT(*) DESC, region
+        """).fetchall()
+        if rows:
+          return [(str(region or "미분류"), int(count)) for region, count in rows]
+      except sqlite3.Error:
+        pass
+
     try:
       rows = conn.execute("""
         SELECT region, count
         FROM speed_camera_region_counts
         ORDER BY count DESC, region
       """).fetchall()
-      return [(str(region), int(count)) for region, count in rows]
+      if rows:
+        return [(str(region), int(count)) for region, count in rows]
     except sqlite3.Error:
+      pass
+
+    try:
+      rows = conn.execute("""
+        SELECT region, COUNT(*)
+        FROM speed_cameras
+        GROUP BY region
+        ORDER BY COUNT(*) DESC, region
+      """).fetchall()
+      return [(str(region or "미분류"), int(count)) for region, count in rows]
+    except sqlite3.Error:
+      return []
+
+
+def database_road_class_counts(db_path: Path = DEFAULT_DB_PATH) -> list[tuple[str, int]]:
+  try:
+    if not db_path.exists():
+      return []
+  except OSError:
+    return []
+
+  try:
+    conn = sqlite3.connect(db_path)
+  except sqlite3.Error:
+    return []
+
+  with closing(conn):
+    columns = _table_columns(conn, "speed_cameras")
+    if "road_class" not in columns:
+      return []
+
+    if "is_speed_camera" in columns:
       try:
         rows = conn.execute("""
-          SELECT region, COUNT(*)
+          SELECT road_class, COUNT(*)
           FROM speed_cameras
-          GROUP BY region
-          ORDER BY COUNT(*) DESC, region
+          WHERE is_speed_camera = 1
+          GROUP BY road_class
+          ORDER BY COUNT(*) DESC, road_class
         """).fetchall()
-        return [(str(region or "미분류"), int(count)) for region, count in rows]
+        if rows:
+          return [(str(road_class or "UNKNOWN"), int(count)) for road_class, count in rows]
       except sqlite3.Error:
-        return []
+        pass
+
+    try:
+      rows = conn.execute("""
+        SELECT road_class, COUNT(*)
+        FROM speed_cameras
+        GROUP BY road_class
+        ORDER BY COUNT(*) DESC, road_class
+      """).fetchall()
+      return [(str(road_class or "UNKNOWN"), int(count)) for road_class, count in rows]
+    except sqlite3.Error:
+      return []
 
 
 def _fetch_data_go_json(path: str, params: dict, timeout: int = DATA_GO_KR_TIMEOUT_SECONDS):
@@ -401,41 +873,29 @@ def angle_diff_deg(a: float, b: float) -> float:
   return abs((a - b + 180.0) % 360.0 - 180.0)
 
 
-def camera_type_code(camera_type: str, section_type: str = "") -> int:
-  code = camera_type.strip()
-  if code in ("01", "1"):
-    return 1
-  if code in ("02", "2"):
-    return 2
-  if code in ("03", "3", "04", "4"):
-    return 0
-
-  text = f"{camera_type} {section_type}"
-  has_speed = "속도" in text or "과속" in text
-  has_signal = "신호" in text
-  has_section = "구간" in text
-
-  if has_section:
-    return 4
-  if has_speed and has_signal:
-    return 3
-  if has_speed:
-    return 1
-  if has_signal:
-    return 2
-  return 0
-
-
 def direction_bearing_deg(direction: str) -> float | None:
   normalized = direction.strip().upper()
   if not normalized:
     return None
 
+  exact_directions = {
+    "N": 0.0,
+    "NB": 0.0,
+    "E": 90.0,
+    "EB": 90.0,
+    "S": 180.0,
+    "SB": 180.0,
+    "W": 270.0,
+    "WB": 270.0,
+  }
+  if normalized in exact_directions:
+    return exact_directions[normalized]
+
   directions = [
-    (("북", "NORTH", "NB"), 0.0),
-    (("동", "EAST", "EB"), 90.0),
-    (("남", "SOUTH", "SB"), 180.0),
-    (("서", "WEST", "WB"), 270.0),
+    (("북", "NORTH"), 0.0),
+    (("동", "EAST"), 90.0),
+    (("남", "SOUTH"), 180.0),
+    (("서", "WEST"), 270.0),
   ]
   matches = [bearing for names, bearing in directions if any(name in normalized for name in names)]
   if len(matches) == 1:
@@ -450,22 +910,98 @@ def _bounding_box(lat: float, lon: float, radius_m: float) -> tuple[float, float
   return lat - lat_delta, lat + lat_delta, lon - lon_delta, lon + lon_delta
 
 
+def _row_get(row: sqlite3.Row, column: str, default):
+  if column in row.keys():
+    value = row[column]
+    if value is not None:
+      return value
+  return default
+
+
 def _row_to_camera(row: sqlite3.Row, distance_m: float, bearing: float, angle_diff: float) -> SpeedCamera:
+  camera_type = str(_row_get(row, "camera_type", ""))
+  section_type = str(_row_get(row, "section_type", ""))
+  road_name = str(_row_get(row, "road_name", ""))
+  place = str(_row_get(row, "place", ""))
+
+  category = str(_row_get(row, "camera_category", ""))
+  if not category:
+    category = normalize_camera_category(camera_type, section_type)
+
+  type_code = int(_row_get(row, "camera_type_code", 0))
+  if type_code == 0:
+    type_code = camera_type_code(camera_type, section_type)
+
+  road_type_raw = str(_row_get(row, "road_type_raw", ""))
+  road_class = str(_row_get(row, "road_class", ""))
+  if not road_class:
+    road_class = normalize_road_class(road_type_raw, road_name, place)
+
+  road_code = int(_row_get(row, "road_class_code", 0))
+  if road_code == 0:
+    road_code = road_class_code(road_class)
+
+  is_expressway = bool(int(_row_get(row, "is_expressway", int(is_expressway_class(road_class)))))
+  is_national_road = bool(int(_row_get(row, "is_national_road", int(is_national_road_class(road_class)))))
+
   return SpeedCamera(
-    id=row["id"],
-    lat=row["lat"],
-    lon=row["lon"],
-    camera_type=row["camera_type"],
-    speed_limit=row["speed_limit"],
-    road_name=row["road_name"],
-    place=row["place"],
-    direction=row["direction"],
-    section_type=row["section_type"],
-    section_length_m=row["section_length_m"],
+    id=str(row["id"]),
+    lat=float(row["lat"]),
+    lon=float(row["lon"]),
+    camera_type=camera_type,
+    speed_limit=int(row["speed_limit"]),
+    road_name=road_name,
+    place=place,
+    direction=str(_row_get(row, "direction", "")),
+    section_type=section_type,
+    section_length_m=int(_row_get(row, "section_length_m", 0)),
     distance_m=distance_m,
     bearing_deg=bearing,
     angle_diff_deg=angle_diff,
+    camera_category=category,
+    camera_type_code=type_code,
+    region=str(_row_get(row, "region", "")),
+    road_type_raw=road_type_raw,
+    road_class=road_class,
+    road_class_code=road_code,
+    is_expressway=is_expressway,
+    is_national_road=is_national_road,
+    source_type=str(_row_get(row, "source_type", "")),
+    source_file=str(_row_get(row, "source_file", "")),
   )
+
+
+def _database_version(conn: sqlite3.Connection) -> int:
+  try:
+    row = conn.execute("SELECT value FROM metadata WHERE key = ?", ("version",)).fetchone()
+    return int(row[0]) if row and row[0] else 0
+  except (sqlite3.Error, TypeError, ValueError):
+    return 0
+
+
+def _candidate_rows(
+  conn: sqlite3.Connection,
+  lat_min: float,
+  lat_max: float,
+  lon_min: float,
+  lon_max: float,
+) -> list[sqlite3.Row]:
+  columns = _table_columns(conn, "speed_cameras")
+  version = _database_version(conn)
+  if "is_speed_camera" in columns:
+    rows = conn.execute("""
+      SELECT * FROM speed_cameras
+      WHERE lat BETWEEN ? AND ?
+        AND lon BETWEEN ? AND ?
+        AND is_speed_camera = 1
+    """, (lat_min, lat_max, lon_min, lon_max)).fetchall()
+    if rows or version >= DB_VERSION:
+      return rows
+
+  return conn.execute("""
+    SELECT * FROM speed_cameras
+    WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
+  """, (lat_min, lat_max, lon_min, lon_max)).fetchall()
 
 
 def find_lead_camera(
@@ -486,10 +1022,7 @@ def find_lead_camera(
 
   with closing(sqlite3.connect(db_path)) as conn:
     conn.row_factory = sqlite3.Row
-    rows = conn.execute("""
-      SELECT * FROM speed_cameras
-      WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
-    """, (lat_min, lat_max, lon_min, lon_max)).fetchall()
+    rows = _candidate_rows(conn, lat_min, lat_max, lon_min, lon_max)
 
   best: SpeedCamera | None = None
   for row in rows:
