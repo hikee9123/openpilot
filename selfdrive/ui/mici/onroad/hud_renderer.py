@@ -359,7 +359,7 @@ class HudRenderer(Widget):
     x = rect.x
     y = rect.y + 176
 
-    limit_text = str(self.camera_limit_speed) if self.camera_limit_speed > 0 else "--"
+    sign_lines = self._camera_sign_lines()
     distance_text = self._format_distance(self.camera_distance_m)
     info_label = self._camera_info_label().replace(" / ", "/")
 
@@ -376,7 +376,7 @@ class HudRenderer(Widget):
     sign_radius = self._speed_sign_radius()
     sign_center_x = x + width / 2
     sign_center_y = y + 70
-    self._draw_speed_limit_sign(sign_center_x, sign_center_y, sign_radius, limit_text)
+    self._draw_speed_limit_sign(sign_center_x, sign_center_y, sign_radius, sign_lines)
 
     distance_size = measure_text_cached(self._font_medium, distance_text, 24)
     rl.draw_text_ex(
@@ -388,21 +388,44 @@ class HudRenderer(Widget):
       COLORS.WHITE_TRANSLUCENT,
     )
 
-  def _draw_speed_limit_sign(self, center_x: float, center_y: float, radius: int, limit_text: str) -> None:
+  def _draw_speed_limit_sign(self, center_x: float, center_y: float, radius: int, sign_lines: tuple[str, str]) -> None:
     is_speed = self._is_speed_camera_category(self.camera_category, self.camera_type)
     inner_gap = 10 if is_speed else 8
     rl.draw_circle(int(center_x), int(center_y), radius, self._speed_sign_ring_color())
     rl.draw_circle(int(center_x), int(center_y), radius - inner_gap, COLORS.SPEED_SIGN_INNER)
     self._draw_camera_direction_pointer(center_x, center_y, radius)
 
-    if is_speed:
-      font_size = 54 if len(limit_text) <= 2 else 44
-    else:
-      font_size = 46 if len(limit_text) <= 2 else 38
-    text_size = measure_text_cached(self._font_bold, limit_text, font_size)
+    primary_text, secondary_text = sign_lines
+    if secondary_text:
+      primary_font_size = 21
+      secondary_font_size = 32 if len(secondary_text) <= 2 else 27
+      primary_size = measure_text_cached(self._font_bold, primary_text, primary_font_size)
+      secondary_size = measure_text_cached(self._font_bold, secondary_text, secondary_font_size)
+      gap = 0
+      y = center_y - (primary_size.y + secondary_size.y + gap) / 2
+      rl.draw_text_ex(
+        self._font_bold,
+        primary_text,
+        rl.Vector2(center_x - primary_size.x / 2, y),
+        primary_font_size,
+        0,
+        COLORS.SPEED_SIGN_TEXT,
+      )
+      rl.draw_text_ex(
+        self._font_bold,
+        secondary_text,
+        rl.Vector2(center_x - secondary_size.x / 2, y + primary_size.y + gap),
+        secondary_font_size,
+        0,
+        COLORS.SPEED_SIGN_TEXT,
+      )
+      return
+
+    font_size = 54 if is_speed and len(primary_text) <= 2 else 44 if is_speed else 46 if len(primary_text) <= 2 else 38
+    text_size = measure_text_cached(self._font_bold, primary_text, font_size)
     rl.draw_text_ex(
       self._font_bold,
-      limit_text,
+      primary_text,
       rl.Vector2(center_x - text_size.x / 2, center_y - text_size.y / 2),
       font_size,
       0,
@@ -426,6 +449,13 @@ class HudRenderer(Widget):
     left = rl.Vector2(base_center_x + perpendicular_x * pointer_half_width, base_center_y + perpendicular_y * pointer_half_width)
     right = rl.Vector2(base_center_x - perpendicular_x * pointer_half_width, base_center_y - perpendicular_y * pointer_half_width)
     rl.draw_triangle(tip, right, left, self._camera_pointer_color())
+
+  def _camera_sign_lines(self) -> tuple[str, str]:
+    if self._is_speed_camera_category(self.camera_category, self.camera_type):
+      return (str(self.camera_limit_speed) if self.camera_limit_speed > 0 else "--", "")
+    if self._is_signal_camera_category(self.camera_category, self.camera_type):
+      return ("SIG", str(self.camera_limit_speed) if self.camera_limit_speed > 0 else "")
+    return ("--", "")
 
   def _camera_category_label(self, category: str, cam_type: int) -> str:
     if category == "SPEED":
@@ -504,6 +534,9 @@ class HudRenderer(Widget):
 
     return False
 
+  def _is_signal_camera_category(self, category: str, cam_type: int) -> bool:
+    return category == "SIGNAL" or cam_type == 2
+
   def _speed_sign_ring_color(self) -> rl.Color:
     if self._is_speed_camera_category(self.camera_category, self.camera_type):
       return COLORS.SPEED_SIGN_RING_RED
@@ -517,6 +550,8 @@ class HudRenderer(Widget):
   def _speed_sign_radius(self) -> int:
     if self._is_speed_camera_category(self.camera_category, self.camera_type):
       return 55
+    if self._is_signal_camera_category(self.camera_category, self.camera_type):
+      return 48
     return 43
 
   def _fit_text(self, text: str, max_width: float, font_size: int, min_font_size: int) -> tuple[str, int, rl.Vector2]:
