@@ -94,6 +94,14 @@ SPEED_SIGNAL
 SECTION_SPEED
 ```
 
+Public data often uses numeric enforcement codes. `01+02` is normalized as
+`SPEED_SIGNAL`. Rows with `단속구분=99` are kept as `UNKNOWN` unless their section
+position code or location text indicates a section camera; `단속구간위치구분`
+`1/01` or `2/02`, or location text containing `구간`, `시점`, `종점`, or
+`어린이보호구역`, is normalized as `SECTION_SPEED`. `단속구분=99` rows with a
+30 km/h limit and `초등학교` in the location text are also normalized as
+`SECTION_SPEED`.
+
 Signal-only, parking, bus-lane, and security cameras are stored in the DB but are
 excluded from the default speed alert lookup.
 
@@ -118,15 +126,28 @@ Rows from all CSV sources are normalized, then merged by `dedup_key`.
 Dedup key priority:
 
 ```text
-관리번호
-GPS + 제한속도
-지역 + 설치장소 + 제한속도
+관리번호 + compatible category + road class + GPS cluster within 50m
+GPS + 제한속도 + category + road class
+지역 + 설치장소 + 제한속도 + category + road class
 fallback row id
 ```
+
+Management numbers in the public data are not globally unique across every
+region. Rows with the same management number are merged only when their GPS
+coordinates are within 50m; farther rows are treated as separate cameras.
+Known camera categories are not merged when they differ. `UNKNOWN` rows use a
+practical mode: they can merge with a known category only when the speed limit
+matches and the cluster has no conflicting known category. When an `UNKNOWN`
+row is merged with a known category, the known category is preferred so speed
+camera behavior is not lost just because a newer public row is less specific.
+Road class is also part of dedup compatibility, so expressway cameras are not
+merged with city, local, or national-road cameras even when their management
+number and coordinates are nearly identical.
 
 Merge priority:
 
 ```text
+known camera category
 newer updated_at
 custom source
 region source

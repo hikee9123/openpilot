@@ -22,8 +22,10 @@ camera_category_code = speed_camera.camera_category_code
 camera_type_code = speed_camera.camera_type_code
 create_database_from_csv = speed_camera.create_database_from_csv
 create_database_from_csvs = speed_camera.create_database_from_csvs
+database_category_counts = speed_camera.database_category_counts
 database_data_date = speed_camera.database_data_date
 database_region_counts = speed_camera.database_region_counts
+database_region_stats = speed_camera.database_region_stats
 direction_bearing_deg = speed_camera.direction_bearing_deg
 download_public_speed_camera_csv = speed_camera.download_public_speed_camera_csv
 find_lead_camera = speed_camera.find_lead_camera
@@ -78,7 +80,9 @@ def test_import_and_find_lead_camera(tmp_path: Path) -> None:
     ("신호위반", "SIGNAL"),
     ("신호+속도위반", "SPEED_SIGNAL"),
     ("과속+신호", "SPEED_SIGNAL"),
+    ("01+02", "SPEED_SIGNAL"),
     ("구간단속", "SECTION_SPEED"),
+    ("99", "UNKNOWN"),
     ("주정차", "PARKING"),
     ("버스전용차로", "BUS_LANE"),
     ("방범CCTV", "SECURITY"),
@@ -92,6 +96,12 @@ def test_normalize_camera_category(camera_type: str, expected: str) -> None:
 
 def test_normalize_camera_category_uses_section_type() -> None:
   assert normalize_camera_category("", section_type="구간") == "SECTION_SPEED"
+  assert normalize_camera_category("99", section_type="1") == "SECTION_SPEED"
+  assert normalize_camera_category("99", section_type="2") == "SECTION_SPEED"
+  assert normalize_camera_category("99", context_text="구간 종점 1차로") == "SECTION_SPEED"
+  assert normalize_camera_category("99", context_text="초교 건너편 어린이보호구역") == "SECTION_SPEED"
+  assert normalize_camera_category("99", context_text="학돌초등학교 사거리", speed_limit=30) == "SECTION_SPEED"
+  assert normalize_camera_category("99", context_text="학돌초등학교 사거리", speed_limit=50) == "UNKNOWN"
 
 
 @pytest.mark.parametrize(
@@ -237,6 +247,38 @@ def test_section_speed_category_is_returned(tmp_path: Path) -> None:
   assert camera.camera_type_code == 4
 
 
+def test_combined_speed_signal_code_is_returned(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,설치장소\n"
+    "A1,37.001,127.0,01+02,50,복합단속\n",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 1
+  row = _fetch_row(db_path, "A1")
+  assert row["camera_category"] == "SPEED_SIGNAL"
+  assert row["is_speed_camera"] == 1
+  assert row["is_signal_camera"] == 1
+
+
+def test_section_speed_from_unknown_code_and_context(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,단속구간위치구분,제한속도,설치장소\n"
+    "A1,37.001,127.0,99,1,80,구간 시점 1차로\n"
+    "A2,37.002,127.0,99,,80,구간 종점 1차로\n",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 2
+  with sqlite3.connect(db_path) as conn:
+    rows = conn.execute("SELECT camera_category, is_speed_camera FROM speed_cameras ORDER BY id").fetchall()
+  assert rows == [("SECTION_SPEED", 1), ("SECTION_SPEED", 1)]
+
+
 def test_create_database_from_csvs_merges_duplicate_rows(tmp_path: Path) -> None:
   public_csv = tmp_path / "public.csv"
   region_csv = tmp_path / "region.csv"
@@ -267,6 +309,117 @@ def test_create_database_from_csvs_custom_overrides_region(tmp_path: Path) -> No
   assert row["source_type"] == "custom"
   assert row["source_file"] == "custom.csv"
   assert row["place"] == "커스텀 위치"
+
+
+def test_same_manage_no_nearby_gps_rows_are_merged(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,설치장소,데이터기준일자\n"
+    "A1,37.000000,127.000000,속도위반,80,짧은 위치,2026-01-01\n"
+    "A1,37.000100,127.000000,속도위반,80,더 자세한 같은 위치,2026-01-01\n",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 1
+
+  row = _fetch_row(db_path, "A1")
+  assert row["place"] == "더 자세한 같은 위치"
+
+
+def test_same_manage_no_far_gps_rows_are_kept_separate(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,설치장소,데이터기준일자\n"
+    "A1,37.000000,127.000000,속도위반,80,첫 번째 위치,2026-01-01\n"
+    "A1,37.002000,127.000000,속도위반,80,두 번째 위치,2026-01-01\n",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 2
+
+  with sqlite3.connect(db_path) as conn:
+    rows = conn.execute("SELECT dedup_key FROM speed_cameras WHERE id LIKE 'A1-%' ORDER BY id").fetchall()
+  assert len(rows) == 2
+  assert rows[0][0] != rows[1][0]
+
+
+def test_same_manage_no_rows_over_50m_are_kept_separate(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,설치장소,데이터기준일자\n"
+    "A1,37.000000,127.000000,속도위반,80,첫 번째 위치,2026-01-01\n"
+    "A1,37.000600,127.000000,속도위반,80,두 번째 위치,2026-01-01\n",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 2
+
+
+def test_same_manage_no_different_known_categories_are_kept_separate(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,설치장소,데이터기준일자\n"
+    "A1,37.000000,127.000000,속도위반,50,과속 위치,2026-01-01\n"
+    "A1,37.000100,127.000000,신호위반,50,신호 위치,2026-01-02\n",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 2
+
+  with sqlite3.connect(db_path) as conn:
+    categories = [row[0] for row in conn.execute("SELECT camera_category FROM speed_cameras ORDER BY camera_category")]
+  assert categories == ["SIGNAL", "SPEED"]
+
+
+def test_same_manage_no_different_road_classes_are_kept_separate(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,도로종류,설치장소,데이터기준일자\n"
+    "A1,37.0000000,127.0000000,속도위반,80,고속국도,고속도로 위치,2026-01-01\n"
+    "A1,37.0001000,127.0000000,속도위반,80,시도,일반도로 위치,2026-01-02\n",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 2
+
+  with sqlite3.connect(db_path) as conn:
+    road_classes = [row[0] for row in conn.execute("SELECT road_class FROM speed_cameras ORDER BY road_class")]
+  assert road_classes == ["CITY_ROAD", "EXPRESSWAY"]
+
+
+def test_unknown_category_merges_with_known_same_speed_and_keeps_known_category(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,설치장소,데이터기준일자\n"
+    "A1,37.000000,127.000000,속도위반,50,과속 위치,2025-01-01\n"
+    "A1,37.000100,127.000000,,50,최신 미분류 위치,2026-01-01\n",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 1
+
+  row = _fetch_row(db_path, "A1")
+  assert row["camera_category"] == "SPEED"
+  assert row["place"] == "과속 위치"
+
+
+def test_unknown_category_different_speed_is_kept_separate_from_known(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,설치장소,데이터기준일자\n"
+    "A1,37.000000,127.000000,속도위반,50,과속 위치,2025-01-01\n"
+    "A1,37.000100,127.000000,,60,미분류 위치,2026-01-01\n",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 2
 
 
 def test_speed_camera_dataclass_contains_ui_fields(tmp_path: Path) -> None:
@@ -393,18 +546,26 @@ def test_region_counts_from_address(tmp_path: Path) -> None:
   db_path = tmp_path / "speed_cameras.sqlite3"
   _write_csv(
     csv_path,
-    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,소재지도로명주소,소재지지번주소\n"
-    "A1,37.001,127.0,속도위반,80,서울특별시 강남구 테헤란로,\n"
-    "A2,36.999,127.0,속도위반,60,서울시 서초구 반포대로,\n"
-    "A3,35.001,128.0,속도위반,50,,경상남도 창원시 성산구\n"
-    "A4,35.002,128.0,속도위반,50,,주소없음\n",
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,소재지도로명주소,소재지지번주소,데이터기준일자\n"
+    "A1,37.001,127.0,속도위반,80,서울특별시 강남구 테헤란로,,2026-01-01\n"
+    "A2,36.999,127.0,속도위반,60,서울시 서초구 반포대로,,2026-02-01\n"
+    "A3,35.001,128.0,신호위반,50,,경상남도 창원시 성산구,2026-03-01\n"
+    "A4,35.002,128.0,속도위반,50,,주소없음,2026-04-01\n",
   )
 
   assert create_database_from_csv(csv_path, db_path) == 4
   assert database_region_counts(db_path) == [
     ("서울특별시", 2),
-    ("경상남도", 1),
     ("미분류", 1),
+  ]
+  assert database_region_stats(db_path) == [
+    ("서울특별시", 2, 2, "2026-02-01"),
+    ("미분류", 1, 1, "2026-04-01"),
+    ("경상남도", 1, 0, "2026-03-01"),
+  ]
+  assert database_category_counts(db_path) == [
+    ("SPEED", 3),
+    ("SIGNAL", 1),
   ]
 
 
@@ -413,7 +574,9 @@ def test_database_summary_helpers_handle_unopenable_path(tmp_path: Path) -> None
   db_path.mkdir()
 
   assert database_data_date(db_path) == ""
+  assert database_category_counts(db_path) == []
   assert database_region_counts(db_path) == []
+  assert database_region_stats(db_path) == []
 
 
 def test_download_public_speed_camera_csv(tmp_path: Path, monkeypatch) -> None:

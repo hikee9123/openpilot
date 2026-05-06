@@ -33,6 +33,7 @@ DEFAULT_REGION_DIR = _default_data_root() / "region"
 LOOKAHEAD_DISTANCE_M = 2500.0
 LOOKAHEAD_ANGLE_DEG = 45.0
 CAMERA_DIRECTION_ANGLE_DEG = 70.0
+MANAGE_NO_DEDUP_DISTANCE_M = 50.0
 EARTH_RADIUS_M = 6371000.0
 DATA_GO_KR_TIMEOUT_SECONDS = 30
 DATA_GO_KR_RETRY_COUNT = 3
@@ -271,10 +272,18 @@ def _read_csv_rows(csv_path: Path) -> list[dict[str, str]]:
     return list(csv.DictReader(f))
 
 
-def normalize_camera_category(camera_type: str, section_type: str = "") -> str:
+def normalize_camera_category(
+  camera_type: str,
+  section_type: str = "",
+  context_text: str = "",
+  speed_limit: int = 0,
+) -> str:
   camera_type = (camera_type or "").strip()
   section_type = (section_type or "").strip()
+  context_text = (context_text or "").strip()
   raw = f"{camera_type} {section_type}".strip()
+  context_raw = f"{raw} {context_text}".strip()
+  context_compact = context_raw.replace(" ", "")
   compact = raw.replace(" ", "").upper()
 
   if not raw:
@@ -282,6 +291,7 @@ def normalize_camera_category(camera_type: str, section_type: str = "") -> str:
 
   has_speed = (
     camera_type in ("01", "1") or
+    compact in ("01+02", "1+2", "01/02", "1/02", "01/2") or
     "과속" in raw or
     "속도" in raw or
     "SPEED" in compact
@@ -289,12 +299,17 @@ def normalize_camera_category(camera_type: str, section_type: str = "") -> str:
 
   has_signal = (
     camera_type in ("02", "2") or
+    compact in ("01+02", "1+2", "01/02", "1/02", "01/2") or
     "신호" in raw or
     "SIGNAL" in compact
   )
 
   has_section = (
     camera_type in ("03", "3", "04", "4") or
+    (camera_type == "99" and section_type in ("01", "1", "02", "2")) or
+    (camera_type == "99" and any(keyword in context_raw for keyword in ("구간", "시점", "종점"))) or
+    (camera_type == "99" and "어린이보호구역" in context_compact) or
+    (camera_type == "99" and speed_limit == 30 and "초등학교" in context_compact) or
     "구간" in raw or
     "SECTION" in compact
   )
@@ -405,6 +420,8 @@ def build_dedup_key(
   lat: float,
   lon: float,
   speed_limit: int,
+  camera_category: str,
+  road_class: str,
   region: str,
   place: str,
   fallback_id: str,
@@ -414,10 +431,10 @@ def build_dedup_key(
     return f"NO|{manage_no}"
 
   if lat is not None and lon is not None:
-    return f"GPS|{lat:.6f}|{lon:.6f}|{speed_limit}"
+    return f"GPS|{lat:.6f}|{lon:.6f}|{speed_limit}|{camera_category}|{road_class}"
 
   if region and place:
-    return f"LOC|{region}|{place}|{speed_limit}"
+    return f"LOC|{region}|{place}|{speed_limit}|{camera_category}|{road_class}"
 
   return f"ROW|{fallback_id}"
 
@@ -557,9 +574,13 @@ def _backfill_derived_columns(conn: sqlite3.Connection) -> None:
     ) = row
 
     raw_camera_type = camera_type_raw or camera_type or ""
-    category = camera_category or normalize_camera_category(raw_camera_type, section_type or "")
+    category = camera_category or normalize_camera_category(
+      raw_camera_type, section_type or "", f"{road_name or ''} {place or ''}", int(speed_limit or 0)
+    )
     if category == "UNKNOWN":
-      category = normalize_camera_category(raw_camera_type, section_type or "")
+      category = normalize_camera_category(
+        raw_camera_type, section_type or "", f"{road_name or ''} {place or ''}", int(speed_limit or 0)
+      )
     type_code = camera_category_code(category)
 
     raw_road_type = road_type_raw or ""
@@ -626,13 +647,83 @@ def _source_type(source_type: str) -> str:
   return "custom"
 
 
-def _merge_priority(record: dict[str, object]) -> tuple[int, int, int, int]:
+def _merge_priority(record: dict[str, object]) -> tuple[int, int, int, int, int]:
   return (
+    int(str(record["camera_category"]) != "UNKNOWN"),
     _date_priority(str(record["updated_at"])),
     SOURCE_TYPE_PRIORITY.get(str(record["source_type"]), 0),
     int(record["lat"] is not None and record["lon"] is not None),
     len(str(record["place"])),
   )
+
+
+def _dedup_categories_are_compatible(
+  record: dict[str, object],
+  cluster: dict[str, object],
+) -> bool:
+  category = str(record["camera_category"])
+  speed_limit = int(record["speed_limit"])
+  cluster_categories = set(str(category) for category in cluster["categories"])
+  cluster_speed_limits = set(int(speed_limit) for speed_limit in cluster["speed_limits"])
+  non_unknown_categories = {cluster_category for cluster_category in cluster_categories if cluster_category != "UNKNOWN"}
+
+  if category != "UNKNOWN":
+    if non_unknown_categories and non_unknown_categories != {category}:
+      return False
+    if "UNKNOWN" not in cluster_categories:
+      return True
+
+  if category == "UNKNOWN" and len(non_unknown_categories) > 1:
+    return False
+
+  return cluster_speed_limits == {speed_limit}
+
+
+def _dedup_road_class_is_compatible(
+  record: dict[str, object],
+  cluster: dict[str, object],
+) -> bool:
+  road_class = str(record["road_class"])
+  cluster_road_classes = set(str(road_class) for road_class in cluster["road_classes"])
+  return cluster_road_classes == {road_class}
+
+
+def _manage_no_dedup_key(
+  record: dict[str, object],
+  manage_no_clusters: dict[str, list[dict[str, object]]],
+) -> str | None:
+  manage_no = str(record.get("_manage_no", ""))
+  if not manage_no:
+    return None
+
+  lat = float(record["lat"])
+  lon = float(record["lon"])
+  clusters = manage_no_clusters.setdefault(manage_no, [])
+  for cluster in clusters:
+    distance = haversine_distance_m(lat, lon, float(cluster["lat"]), float(cluster["lon"]))
+    if (
+      distance <= MANAGE_NO_DEDUP_DISTANCE_M and
+      _dedup_categories_are_compatible(record, cluster) and
+      _dedup_road_class_is_compatible(record, cluster)
+    ):
+      cluster["categories"].add(str(record["camera_category"]))
+      cluster["speed_limits"].add(int(record["speed_limit"]))
+      cluster["road_classes"].add(str(record["road_class"]))
+      return str(cluster["key"])
+
+  key = (
+    f"NO|{manage_no}|{str(record['camera_category'])}|"
+    f"{int(record['speed_limit'])}|{str(record['road_class'])}|{lat:.6f}|{lon:.6f}"
+  )
+  clusters.append({
+    "key": key,
+    "lat": lat,
+    "lon": lon,
+    "categories": {str(record["camera_category"])},
+    "speed_limits": {int(record["speed_limit"])},
+    "road_classes": {str(record["road_class"])},
+  })
+  return key
 
 
 def _standardize_csv_row(row: dict[str, str], csv_source: CsvSource, idx: int) -> dict[str, object] | None:
@@ -643,23 +734,24 @@ def _standardize_csv_row(row: dict[str, str], csv_source: CsvSource, idx: int) -
 
   source_type = _source_type(csv_source.source_type)
   source_file = csv_source.path.name
-  raw_camera_id = _first(row, "id") or f"{source_type}-{csv_source.path.stem}-{idx}"
+  manage_no = _first(row, "id")
+  raw_camera_id = manage_no or f"{source_type}-{csv_source.path.stem}-{idx}"
   camera_id = f"{raw_camera_id}-{lat:.7f}-{lon:.7f}"
-
-  raw_camera_type = _first(row, "camera_type")
-  section_type = _first(row, "section_type")
-  category = normalize_camera_category(raw_camera_type, section_type)
-  type_code = camera_category_code(category)
 
   raw_road_type = _first(row, "road_type")
   road_name = _first(row, "road_name")
   place = _first(row, "place")
+  speed_limit = _parse_int(_first(row, "speed_limit"))
+  raw_camera_type = _first(row, "camera_type")
+  section_type = _first(row, "section_type")
+  category = normalize_camera_category(raw_camera_type, section_type, f"{road_name} {place}", speed_limit)
+  type_code = camera_category_code(category)
+
   road_class = normalize_road_class(raw_road_type, road_name, place)
   road_code = road_class_code(road_class)
-  speed_limit = _parse_int(_first(row, "speed_limit"))
   region = _extract_region(row)
   fallback_id = f"{source_type}-{source_file}-{idx}"
-  dedup_key = build_dedup_key(row, lat, lon, speed_limit, region, place, fallback_id)
+  dedup_key = build_dedup_key(row, lat, lon, speed_limit, category, road_class, region, place, fallback_id)
 
   return {
     "id": camera_id,
@@ -690,6 +782,7 @@ def _standardize_csv_row(row: dict[str, str], csv_source: CsvSource, idx: int) -
     "source_type": source_type,
     "source_file": source_file,
     "dedup_key": dedup_key,
+    "_manage_no": manage_no,
   }
 
 
@@ -699,6 +792,7 @@ def create_database_from_csv(csv_path: Path = DEFAULT_CSV_PATH, db_path: Path = 
 
 def create_database_from_csvs(csv_sources: list[CsvSource], db_path: Path = DEFAULT_DB_PATH) -> int:
   merged: dict[str, dict[str, object]] = {}
+  manage_no_clusters: dict[str, list[dict[str, object]]] = {}
   for csv_source in csv_sources:
     rows = _read_csv_rows(csv_source.path)
     for idx, row in enumerate(rows):
@@ -706,7 +800,8 @@ def create_database_from_csvs(csv_sources: list[CsvSource], db_path: Path = DEFA
       if record is None:
         continue
 
-      dedup_key = str(record["dedup_key"])
+      dedup_key = _manage_no_dedup_key(record, manage_no_clusters) or str(record["dedup_key"])
+      record["dedup_key"] = dedup_key
       current = merged.get(dedup_key)
       if current is None or _merge_priority(record) > _merge_priority(current):
         merged[dedup_key] = record
@@ -825,6 +920,82 @@ def database_region_counts(db_path: Path = DEFAULT_DB_PATH) -> list[tuple[str, i
         ORDER BY COUNT(*) DESC, region
       """).fetchall()
       return [(str(region or "미분류"), int(count)) for region, count in rows]
+    except sqlite3.Error:
+      return []
+
+
+def database_region_stats(db_path: Path = DEFAULT_DB_PATH) -> list[tuple[str, int, int, str]]:
+  try:
+    if not db_path.exists():
+      return []
+  except OSError:
+    return []
+
+  try:
+    conn = sqlite3.connect(db_path)
+  except sqlite3.Error:
+    return []
+
+  with closing(conn):
+    columns = _table_columns(conn, "speed_cameras")
+    if {"region", "is_speed_camera", "updated_at"}.issubset(columns):
+      try:
+        rows = conn.execute("""
+          SELECT
+            region,
+            COUNT(*) AS total_count,
+            SUM(CASE WHEN is_speed_camera = 1 THEN 1 ELSE 0 END) AS alert_count,
+            MAX(updated_at) AS latest_updated_at
+          FROM speed_cameras
+          GROUP BY region
+          ORDER BY alert_count DESC, total_count DESC, region
+        """).fetchall()
+        return [
+          (str(region or "미분류"), int(total_count), int(alert_count or 0), str(latest_updated_at or ""))
+          for region, total_count, alert_count, latest_updated_at in rows
+        ]
+      except sqlite3.Error:
+        pass
+
+    return [
+      (region, count, count, "")
+      for region, count in database_region_counts(db_path)
+    ]
+
+
+def database_category_counts(db_path: Path = DEFAULT_DB_PATH) -> list[tuple[str, int]]:
+  try:
+    if not db_path.exists():
+      return []
+  except OSError:
+    return []
+
+  try:
+    conn = sqlite3.connect(db_path)
+  except sqlite3.Error:
+    return []
+
+  with closing(conn):
+    columns = _table_columns(conn, "speed_cameras")
+    if "camera_category" not in columns:
+      return []
+
+    try:
+      rows = conn.execute("""
+        SELECT camera_category, COUNT(*)
+        FROM speed_cameras
+        GROUP BY camera_category
+        ORDER BY
+          CASE camera_category
+            WHEN 'SPEED' THEN 1
+            WHEN 'SECTION_SPEED' THEN 2
+            WHEN 'SIGNAL' THEN 3
+            WHEN 'UNKNOWN' THEN 4
+            ELSE 5
+          END,
+          camera_category
+      """).fetchall()
+      return [(str(category or "UNKNOWN"), int(count)) for category, count in rows]
     except sqlite3.Error:
       return []
 

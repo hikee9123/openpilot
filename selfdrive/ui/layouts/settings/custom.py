@@ -13,8 +13,9 @@ from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
 from openpilot.selfdrive.navd.speed_camera import (
   DEFAULT_DB_PATH as SPEED_CAMERA_DB_PATH,
+  database_category_counts,
   database_data_date,
-  database_region_counts,
+  database_region_stats,
 )
 from openpilot.selfdrive.ui.custom import read_custom_param_map, read_custom_params, write_custom_params
 from openpilot.selfdrive.ui.ui_state import ui_state
@@ -289,9 +290,14 @@ class CompileLogPanel(Widget):
 
 
 class SpeedCameraRegionsPanel(Widget):
-  def __init__(self, region_counts_callback: Callable[[], list[tuple[str, int]]]):
+  def __init__(
+    self,
+    region_stats_callback: Callable[[], list[tuple[str, int, int, str]]],
+    category_counts_callback: Callable[[], list[tuple[str, int]]],
+  ):
     super().__init__()
-    self._region_counts_callback = region_counts_callback
+    self._region_stats_callback = region_stats_callback
+    self._category_counts_callback = category_counts_callback
     self._font = gui_app.font(FontWeight.NORMAL)
     self.set_rect(rl.Rectangle(0, 0, 0, SPEED_CAMERA_REGION_PANEL_HEIGHT))
 
@@ -309,8 +315,9 @@ class SpeedCameraRegionsPanel(Widget):
     rl.draw_rectangle_rounded(panel_rect, 0.04, 8, COMPILE_LOG_BG)
     rl.draw_rectangle_rounded_lines_ex(panel_rect, 0.04, 8, 2, COMPILE_LOG_BORDER)
 
-    region_counts = self._region_counts_callback()
-    if not region_counts:
+    region_stats = self._region_stats_callback()
+    category_counts = self._category_counts_callback()
+    if not region_stats:
       self._draw_text("--", rl.Vector2(panel_rect.x + SPEED_CAMERA_REGION_PADDING, panel_rect.y + SPEED_CAMERA_REGION_PADDING))
       return
 
@@ -318,30 +325,85 @@ class SpeedCameraRegionsPanel(Widget):
     content_y = panel_rect.y + SPEED_CAMERA_REGION_PADDING
     content_w = panel_rect.width - SPEED_CAMERA_REGION_PADDING * 2
     content_h = panel_rect.height - SPEED_CAMERA_REGION_PADDING * 2
-    max_rows = max(1, int(content_h // SPEED_CAMERA_REGION_LINE_HEIGHT))
-    column_count = 2
-    column_gap = 38
-    column_width = (content_w - column_gap) / column_count
-    value_width = 90
-    name_width = column_width - value_width - 14
+    category_h = SPEED_CAMERA_REGION_LINE_HEIGHT
+    header_h = SPEED_CAMERA_REGION_LINE_HEIGHT
+    max_rows = max(1, int((content_h - category_h - header_h) // SPEED_CAMERA_REGION_LINE_HEIGHT))
+    column_count = 3
+    column_gap = 34
+    column_width = (content_w - column_gap * (column_count - 1)) / column_count
+    all_width = 82
+    alert_width = 78
+    field_gap = 14
+    name_width = column_width - all_width - alert_width - field_gap * 2
 
-    visible_counts = region_counts[:max_rows * column_count]
-    rows_per_column = (len(visible_counts) + column_count - 1) // column_count
+    visible_stats = region_stats[:max_rows * column_count]
+    rows_per_column = (len(visible_stats) + column_count - 1) // column_count
+    header_y = content_y + category_h
+    self._draw_category_counts(category_counts, content_x, content_y, content_w)
+    self._draw_headers(content_x, header_y, column_count, column_width, column_gap, name_width, all_width, alert_width, field_gap)
+    rl.draw_line_ex(
+      rl.Vector2(content_x, header_y + header_h - 4),
+      rl.Vector2(content_x + content_w, header_y + header_h - 4),
+      1,
+      COMPILE_LOG_BORDER,
+    )
 
-    for idx, (region, count) in enumerate(visible_counts):
+    for idx, (region, total_count, alert_count, latest_updated_at) in enumerate(visible_stats):
       col = idx // rows_per_column
       row = idx % rows_per_column
       x = content_x + col * (column_width + column_gap)
-      y = content_y + row * SPEED_CAMERA_REGION_LINE_HEIGHT
+      y = header_y + header_h + row * SPEED_CAMERA_REGION_LINE_HEIGHT
       region_text = self._truncate(str(region), name_width)
-      count_text = str(count)
+      all_text = f"{total_count:,}"
+      alert_text = f"{alert_count:,}"
       self._draw_text(region_text, rl.Vector2(x, y))
 
-      count_size = measure_text_cached(self._font, count_text, SPEED_CAMERA_REGION_FONT_SIZE)
-      self._draw_text(count_text, rl.Vector2(x + column_width - count_size.x, y))
+      all_x = x + name_width + field_gap
+      alert_x = all_x + all_width + field_gap
+      self._draw_right_aligned(all_text, rl.Rectangle(all_x, y, all_width, SPEED_CAMERA_REGION_LINE_HEIGHT))
+      self._draw_right_aligned(alert_text, rl.Rectangle(alert_x, y, alert_width, SPEED_CAMERA_REGION_LINE_HEIGHT))
 
   def _draw_text(self, text: str, pos: rl.Vector2) -> None:
     rl.draw_text_ex(self._font, text, pos, SPEED_CAMERA_REGION_FONT_SIZE, 0, COMPILE_LOG_TEXT)
+
+  def _draw_category_counts(self, category_counts: list[tuple[str, int]], x: float, y: float, width: float) -> None:
+    if not category_counts:
+      return
+
+    label_map = {
+      "SPEED": "Speed",
+      "SECTION_SPEED": "Section",
+      "SIGNAL": "Signal",
+      "UNKNOWN": "Unknown",
+    }
+    labels = [f"{label_map.get(category, category.title())} {count:,}" for category, count in category_counts]
+    item_width = width / max(1, len(labels))
+    for idx, label in enumerate(labels):
+      self._draw_text(label, rl.Vector2(x + idx * item_width, y))
+
+  def _draw_headers(
+    self,
+    content_x: float,
+    content_y: float,
+    column_count: int,
+    column_width: float,
+    column_gap: float,
+    name_width: float,
+    all_width: float,
+    alert_width: float,
+    field_gap: float,
+  ) -> None:
+    for col in range(column_count):
+      x = content_x + col * (column_width + column_gap)
+      all_x = x + name_width + field_gap
+      alert_x = all_x + all_width + field_gap
+      self._draw_text("Region", rl.Vector2(x, content_y))
+      self._draw_right_aligned("All", rl.Rectangle(all_x, content_y, all_width, SPEED_CAMERA_REGION_LINE_HEIGHT))
+      self._draw_right_aligned("Alert", rl.Rectangle(alert_x, content_y, alert_width, SPEED_CAMERA_REGION_LINE_HEIGHT))
+
+  def _draw_right_aligned(self, text: str, rect: rl.Rectangle) -> None:
+    text_size = measure_text_cached(self._font, text, SPEED_CAMERA_REGION_FONT_SIZE)
+    self._draw_text(text, rl.Vector2(rect.x + rect.width - text_size.x, rect.y))
 
   def _truncate(self, text: str, max_width: float) -> str:
     if measure_text_cached(self._font, text, SPEED_CAMERA_REGION_FONT_SIZE).x <= max_width:
@@ -362,7 +424,8 @@ class CustomSettingsLayout(Widget):
     self._last_compile_log_check = -COMPILE_LOG_CACHE_INTERVAL
     self._compile_log_tail = ""
     self._speed_camera_region_cache_loaded = False
-    self._speed_camera_region_counts_cache: list[tuple[str, int]] = []
+    self._speed_camera_category_counts_cache: list[tuple[str, int]] = []
+    self._speed_camera_region_stats_cache: list[tuple[str, int, int, str]] = []
     self._current_tab = "UI"
     self._tab_rects: dict[str, rl.Rectangle] = {}
     self._tab_font = gui_app.font(FontWeight.MEDIUM)
@@ -466,8 +529,8 @@ class CustomSettingsLayout(Widget):
         text_item(lambda: tr("Speed camera data date"), self._speed_camera_data_date_text,
                   description=lambda: tr("Shows the public data reference date stored in the local speed camera DB.")),
         text_item(lambda: tr("Speed camera regions"), self._speed_camera_regions_text,
-                  description=lambda: tr("Shows the saved speed camera count by region.")),
-        SpeedCameraRegionsPanel(self._speed_camera_region_counts),
+                  description=lambda: tr("Shows saved speed camera counts by category and region.")),
+        SpeedCameraRegionsPanel(self._speed_camera_region_stats, self._speed_camera_category_counts),
         SectionHeader(tr_noop("Speed camera tuning")),
         self._number_item("SpeedCameraLookaheadDistance", tr_noop("Camera search distance"), 500, 3000, 100,
                           description=tr_noop("Sets how far ahead, in meters, the speed camera lookup searches."), unit="m"),
@@ -778,20 +841,25 @@ class CustomSettingsLayout(Widget):
 
   def _refresh_speed_camera_region_counts(self, force: bool = False) -> None:
     if force or not self._speed_camera_region_cache_loaded:
-      self._speed_camera_region_counts_cache = database_region_counts(SPEED_CAMERA_DB_PATH)
+      self._speed_camera_category_counts_cache = database_category_counts(SPEED_CAMERA_DB_PATH)
+      self._speed_camera_region_stats_cache = database_region_stats(SPEED_CAMERA_DB_PATH)
       self._speed_camera_region_cache_loaded = True
 
-  def _speed_camera_region_counts(self) -> list[tuple[str, int]]:
-    return self._speed_camera_region_counts_cache
+  def _speed_camera_category_counts(self) -> list[tuple[str, int]]:
+    return self._speed_camera_category_counts_cache
+
+  def _speed_camera_region_stats(self) -> list[tuple[str, int, int, str]]:
+    return self._speed_camera_region_stats_cache
 
   def _speed_camera_regions_text(self) -> str:
-    region_counts = self._speed_camera_region_counts()
-    if not region_counts:
+    region_stats = self._speed_camera_region_stats()
+    if not region_stats:
       return "--"
 
-    region_total = len(region_counts)
-    camera_total = sum(count for _, count in region_counts)
-    return f"{region_total} regions / {camera_total}"
+    region_total = len(region_stats)
+    camera_total = sum(total_count for _, total_count, _, _ in region_stats)
+    alert_total = sum(alert_count for _, _, alert_count, _ in region_stats)
+    return f"{region_total} regions / {camera_total:,} all / {alert_total:,} alerts"
 
   def _speed_camera_status_text(self) -> str:
     status = self._speed_camera_update_status()
