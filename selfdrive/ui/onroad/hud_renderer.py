@@ -223,6 +223,12 @@ class HudRenderer(Widget):
     )
 
   def _update_camera_alert(self, sm) -> None:
+    if sm.recv_frame["naviCustom"] <= ui_state.started_frame:
+      self._clear_camera_alert()
+      if self._speed_camera_preview_active():
+        self._apply_speed_camera_preview()
+      return
+
     nav = sm["naviCustom"].naviData
     self.camera_alert_active = bool(nav.active and nav.camType != 0 and nav.camLimitSpeedLeftDist > 0)
     self.camera_limit_speed = int(nav.camLimitSpeed)
@@ -239,6 +245,20 @@ class HudRenderer(Widget):
       self._apply_speed_camera_preview()
     if not self.camera_alert_active:
       self._camera_pointer_angle_filter.initialized = False
+
+  def _clear_camera_alert(self) -> None:
+    self.camera_alert_active = False
+    self.camera_limit_speed = 0
+    self.camera_distance_m = 0
+    self.camera_type = 0
+    self.camera_category = ""
+    self.camera_category_code = 0
+    self.road_class = ""
+    self.road_class_code = 0
+    self.camera_bearing_deg = 0.0
+    self.camera_relative_angle_deg = 0.0
+    self.camera_candidates_text = ""
+    self._camera_pointer_angle_filter.initialized = False
 
   def _speed_camera_preview_active(self) -> bool:
     now = time.time()
