@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -154,6 +155,7 @@ SPEED_CAMERA_REGION_PANEL_HEIGHT = 360
 SPEED_CAMERA_REGION_FONT_SIZE = 22
 SPEED_CAMERA_REGION_LINE_HEIGHT = 32
 SPEED_CAMERA_REGION_PADDING = 20
+SPEED_CAMERA_OSM_STATUS_CACHE_INTERVAL = 5.0
 COMPACT_INFO_ROW_HEIGHT = 82
 COMPACT_INFO_PADDING_X = 34
 COMPACT_INFO_PADDING_Y = 8
@@ -375,11 +377,12 @@ class CompactStatusProgressGroup(CompactInfoGroup):
       rect.height - COMPACT_INFO_PADDING_Y,
     )
     rl.draw_rectangle_rounded(panel_rect, 0.05, 8, COMPACT_INFO_BG)
+    self._draw_status_progress_row(panel_rect, panel_rect.y + COMPACT_INFO_PADDING_Y / 2)
 
+  def _draw_status_progress_row(self, panel_rect: rl.Rectangle, row_y: float) -> None:
     label_x = panel_rect.x + COMPACT_INFO_PADDING_X
     value_right = panel_rect.x + panel_rect.width - COMPACT_INFO_PADDING_X
     value_x = panel_rect.x + panel_rect.width * 0.38
-    row_y = panel_rect.y + COMPACT_INFO_PADDING_Y / 2
     self._draw_label(tr("Status"), label_x, row_y, value_x - label_x - COMPACT_INFO_PADDING_X)
 
     progress = self._progress_percent()
@@ -494,6 +497,73 @@ class CompactStatusProgressGroup(CompactInfoGroup):
     rl.draw_rectangle_rounded(bg_rect, 1.0, 16, COMPACT_PROGRESS_BAR_BG)
     if fill_rect.width > 0:
       rl.draw_rectangle_rounded(fill_rect, 1.0, 16, COMPACT_PROGRESS_BAR_FILL)
+
+
+class CompactStatusProgressInfoGroup(CompactStatusProgressGroup):
+  def __init__(self, status_callback: Callable[[], str], progress_callback: Callable[[], str],
+               rows: list[tuple[str, Callable[[], str]]], status_details: list[Callable[[], str]] | None = None):
+    super().__init__(status_callback, progress_callback)
+    self._extra_rows = rows
+    self._status_details = status_details or []
+    self._status_row_height = max(
+      COMPACT_INFO_ROW_HEIGHT,
+      COMPACT_STATUS_LINE_HEIGHT * (1 + len(self._status_details)) + COMPACT_INFO_PADDING_Y,
+    )
+    height = COMPACT_INFO_PADDING_Y * 2 + self._status_row_height + COMPACT_INFO_ROW_HEIGHT * len(self._extra_rows)
+    self.set_rect(rl.Rectangle(0, 0, 0, height))
+
+  def _render(self, rect: rl.Rectangle):
+    panel_rect = rl.Rectangle(
+      rect.x + COMPACT_INFO_PADDING_X / 2,
+      rect.y + COMPACT_INFO_PADDING_Y / 2,
+      rect.width - COMPACT_INFO_PADDING_X,
+      rect.height - COMPACT_INFO_PADDING_Y,
+    )
+    rl.draw_rectangle_rounded(panel_rect, 0.05, 8, COMPACT_INFO_BG)
+
+    row_y = panel_rect.y + COMPACT_INFO_PADDING_Y / 2
+    self._draw_status_progress_info_row(panel_rect, row_y)
+    row_y += self._status_row_height
+
+    label_x = panel_rect.x + COMPACT_INFO_PADDING_X
+    value_x = panel_rect.x + panel_rect.width * 0.38
+    value_right = panel_rect.x + panel_rect.width - COMPACT_INFO_PADDING_X
+    for label_source, value_callback in self._extra_rows:
+      self._draw_label(tr(label_source), label_x, row_y, value_x - label_x - COMPACT_INFO_PADDING_X)
+      self._draw_value(value_callback(), value_x, row_y, value_right - value_x)
+      row_y += COMPACT_INFO_ROW_HEIGHT
+
+  def _draw_status_progress_info_row(self, panel_rect: rl.Rectangle, row_y: float) -> None:
+    label_x = panel_rect.x + COMPACT_INFO_PADDING_X
+    value_right = panel_rect.x + panel_rect.width - COMPACT_INFO_PADDING_X
+    value_x = panel_rect.x + panel_rect.width * 0.38
+    self._draw_label(tr("Status"), label_x, row_y, value_x - label_x - COMPACT_INFO_PADDING_X)
+
+    progress = self._progress_percent()
+    if progress is None:
+      self._draw_status_detail_lines([self._rows[0][1](), *[detail() for detail in self._status_details]],
+                                     value_x, row_y, value_right - value_x)
+      return
+
+    bar_width = min(COMPACT_PROGRESS_BAR_WIDTH, max(160, (value_right - value_x) * 0.34))
+    status_width = value_right - value_x - COMPACT_PROGRESS_PERCENT_WIDTH - bar_width - COMPACT_PROGRESS_GAP * 2
+    self._draw_status_detail_lines([self._rows[0][1](), *[detail() for detail in self._status_details]],
+                                   value_x, row_y, max(80, status_width))
+
+    percent_x = value_x + max(80, status_width) + COMPACT_PROGRESS_GAP
+    percent_text = f"{progress}%"
+    self._draw_inline_percent(percent_text, percent_x, row_y, COMPACT_PROGRESS_PERCENT_WIDTH)
+
+    bar_x = percent_x + COMPACT_PROGRESS_PERCENT_WIDTH + COMPACT_PROGRESS_GAP
+    self._draw_progress_bar(rl.Rectangle(bar_x, row_y, bar_width, COMPACT_INFO_ROW_HEIGHT), progress)
+
+  def _draw_status_detail_lines(self, lines: list[str], x: float, y: float, max_width: float) -> None:
+    visible_lines = [line for line in lines if line][:3]
+    start_y = y + (self._status_row_height - COMPACT_STATUS_LINE_HEIGHT * len(visible_lines)) / 2
+    for i, line in enumerate(visible_lines):
+      fitted = self._elide_status_line(line, COMPACT_STATUS_FONT_SIZE, max_width)
+      rl.draw_text_ex(self._font_regular, fitted, rl.Vector2(x, start_y + i * COMPACT_STATUS_LINE_HEIGHT),
+                      COMPACT_STATUS_FONT_SIZE, 0, COMPACT_INFO_VALUE_COLOR)
 
 
 class CompileLogPanel(Widget):
@@ -700,6 +770,8 @@ class CustomSettingsLayout(Widget):
     self._speed_camera_region_cache_loaded = False
     self._speed_camera_category_counts_cache: list[tuple[str, int]] = []
     self._speed_camera_region_stats_cache: list[tuple[str, int, int, str]] = []
+    self._last_speed_camera_osm_status_check = -SPEED_CAMERA_OSM_STATUS_CACHE_INTERVAL
+    self._speed_camera_osm_status_cache = ""
     self._speed_camera_preview_callback: Callable | None = None
     self._current_tab = "UI"
     self._tab_rects: dict[str, rl.Rectangle] = {}
@@ -807,12 +879,10 @@ class CustomSettingsLayout(Widget):
                           description=tr_noop("Sets the local OSM road lookup radius used to infer the current road name."), unit="m"),
         SectionHeader(tr_noop("Speed camera DB")),
         self._speed_camera_update_item(),
-        CompactInfoGroup([
-          (tr_noop("Status"), self._speed_camera_status_text),
-          (tr_noop("Progress"), self._speed_camera_progress_text),
+        CompactStatusProgressInfoGroup(self._speed_camera_status_text, self._speed_camera_progress_text, [
           (tr_noop("Data date"), self._speed_camera_data_date_text),
           (tr_noop("Regions"), self._speed_camera_regions_text),
-        ]),
+        ], status_details=[self._speed_camera_updated_status_text, self._speed_camera_osm_status_text]),
         SpeedCameraRegionsPanel(self._speed_camera_region_stats, self._speed_camera_category_counts),
         self._speed_camera_icon_preview_item(),
         SectionHeader(tr_noop("Speed camera tuning")),
@@ -1113,6 +1183,7 @@ class CustomSettingsLayout(Widget):
           if data_date:
             self._params.put(SPEED_CAMERA_DATA_DATE_KEY, data_date)
           self._refresh_speed_camera_region_counts(force=True)
+          self._refresh_speed_camera_osm_status(force=True)
           self._params.put(SPEED_CAMERA_UPDATED_AT_KEY, time.strftime("%Y-%m-%d %H:%M"))
           self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_SUCCESS)
           self._params.put(SPEED_CAMERA_ERROR_KEY, "")
@@ -1215,6 +1286,7 @@ class CustomSettingsLayout(Widget):
     if data_date:
       self._params.put(SPEED_CAMERA_DATA_DATE_KEY, data_date)
     self._refresh_speed_camera_region_counts(force=True)
+    self._refresh_speed_camera_osm_status(force=True)
     self._params.put(SPEED_CAMERA_UPDATED_AT_KEY, time.strftime("%Y-%m-%d %H:%M"))
     self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_SUCCESS)
     self._params.put(SPEED_CAMERA_ERROR_KEY, "")
@@ -1335,6 +1407,8 @@ class CustomSettingsLayout(Widget):
   def _speed_camera_progress_text(self) -> str:
     progress = self._param_text(SPEED_CAMERA_PROGRESS_KEY)
     if not progress:
+      if self._speed_camera_count() > 0:
+        return "100%"
       return "--"
     return f"{progress}%"
 
@@ -1353,6 +1427,13 @@ class CustomSettingsLayout(Widget):
   def _speed_camera_data_date_text(self) -> str:
     data_date = self._param_text(SPEED_CAMERA_DATA_DATE_KEY) or database_data_date(SPEED_CAMERA_DB_PATH)
     return data_date or "--"
+
+  def _speed_camera_updated_text(self) -> str:
+    return self._param_text(SPEED_CAMERA_UPDATED_AT_KEY) or "--"
+
+  def _speed_camera_updated_status_text(self) -> str:
+    updated = self._speed_camera_updated_text()
+    return f"{tr('Updated')} {updated}" if updated != "--" else f"{tr('Updated')} --"
 
   def _format_count_text(self, count: str) -> str:
     try:
@@ -1419,22 +1500,88 @@ class CustomSettingsLayout(Widget):
       return "--"
 
     region_total = len(region_stats)
-    camera_total = sum(total_count for _, total_count, _, _ in region_stats)
     alert_total = sum(alert_count for _, _, alert_count, _ in region_stats)
-    return f"{region_total} regions / {camera_total:,} cameras / {alert_total:,} alerts"
+    return f"{region_total} regions / {alert_total:,} alerts"
+
+  def _speed_camera_count(self) -> int:
+    try:
+      count = int(self._param_text(SPEED_CAMERA_COUNT_KEY) or 0)
+      if count > 0:
+        return count
+    except ValueError:
+      pass
+
+    region_stats = self._speed_camera_region_stats()
+    if region_stats:
+      return sum(total_count for _, total_count, _, _ in region_stats)
+
+    try:
+      with sqlite3.connect(SPEED_CAMERA_DB_PATH) as conn:
+        return int(conn.execute("SELECT COUNT(*) FROM speed_cameras").fetchone()[0])
+    except (OSError, sqlite3.Error, TypeError):
+      return 0
 
   def _format_speed_camera_count(self) -> str:
-    return self._format_count_text(self._param_text(SPEED_CAMERA_COUNT_KEY) or "0")
+    return f"{self._speed_camera_count():,}"
+
+  def _refresh_speed_camera_osm_status(self, force: bool = False) -> str:
+    now = time.monotonic()
+    if not force and now - self._last_speed_camera_osm_status_check < SPEED_CAMERA_OSM_STATUS_CACHE_INTERVAL:
+      return self._speed_camera_osm_status_cache
+
+    self._last_speed_camera_osm_status_check = now
+    self._speed_camera_osm_status_cache = self._read_speed_camera_osm_status()
+    return self._speed_camera_osm_status_cache
+
+  def _read_speed_camera_osm_status(self) -> str:
+    if not DEFAULT_OSM_ROADS_DB_PATH.exists():
+      return tr("OSM roads DB missing")
+    if not SPEED_CAMERA_DB_PATH.exists():
+      return tr("OSM road names: no camera DB")
+
+    try:
+      with sqlite3.connect(SPEED_CAMERA_DB_PATH) as conn:
+        matched = conn.execute("""
+          SELECT COUNT(*)
+          FROM speed_cameras
+          WHERE osm_road_name != '' OR osm_road_ref != ''
+        """).fetchone()[0]
+    except (OSError, sqlite3.Error):
+      return tr("OSM road names: unavailable")
+
+    if matched > 0:
+      return f"{tr('OSM road names')}: {matched:,} {tr('matched')}"
+    return tr("OSM road names: not applied")
+
+  def _speed_camera_osm_status_text(self) -> str:
+    if self._speed_camera_update_status() == STATUS_RUNNING:
+      progress = self._param_text(SPEED_CAMERA_PROGRESS_KEY)
+      try:
+        progress_value = int(progress or 0)
+      except ValueError:
+        progress_value = 0
+      if progress_value >= 95 and DEFAULT_OSM_ROADS_DB_PATH.exists():
+        return tr("Applying OSM road names")
+      return tr("OSM road names: pending")
+    return self._refresh_speed_camera_osm_status()
 
   def _speed_camera_status_text(self) -> str:
     status = self._speed_camera_update_status()
     if status == STATUS_RUNNING:
+      progress = self._param_text(SPEED_CAMERA_PROGRESS_KEY)
+      try:
+        progress_value = int(progress or 0)
+      except ValueError:
+        progress_value = 0
+      if progress_value >= 95 and DEFAULT_OSM_ROADS_DB_PATH.exists():
+        return tr("Importing")
       return tr("Downloading")
     if status == STATUS_SUCCESS:
       count = self._format_speed_camera_count()
-      updated_at = self._param_text(SPEED_CAMERA_UPDATED_AT_KEY)
-      suffix = f" / {updated_at}" if updated_at else ""
-      return f"{tr('Ready')} / {count} cameras{suffix}"
+      return f"{tr('Ready')} / {count} cameras"
+    if status == STATUS_IDLE and self._speed_camera_count() > 0:
+      count = self._format_speed_camera_count()
+      return f"{tr('Ready')} / {count} cameras"
     if status == STATUS_FAILED:
       error = self._param_text(SPEED_CAMERA_ERROR_KEY)
       if len(error) > 80:
