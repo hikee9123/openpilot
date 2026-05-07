@@ -47,6 +47,7 @@ struct NaviCustom @0xf35cc4560bbf6ec2 {
     camBearingDeg @19 :Float32;
     camRelativeAngleDeg @20 :Float32;
     camCandidatesText @21 :Text;
+    osmRoadOverlayText @22 :Text;
   }
 }
 

@@ -9,6 +9,7 @@ from openpilot.selfdrive.ui.mici.onroad.alert_renderer import AlertRenderer
 from openpilot.selfdrive.ui.mici.onroad.driver_state import DriverStateRenderer
 from openpilot.selfdrive.ui.mici.onroad.hud_renderer import HudRenderer
 from openpilot.selfdrive.ui.mici.onroad.model_renderer import ModelRenderer
+from openpilot.selfdrive.ui.onroad.osm_road_overlay_renderer import OsmRoadOverlayRenderer
 from openpilot.selfdrive.ui.mici.onroad.confidence_ball import ConfidenceBall
 from openpilot.selfdrive.ui.mici.onroad.cameraview import CameraView
 from openpilot.selfdrive.ui.onroad.car_tracking_renderer import CarTrackingRenderer
@@ -151,6 +152,7 @@ class AugmentedRoadView(CameraView):
     self._bookmark_icon = BookmarkIcon(bookmark_callback)
 
     self._model_renderer = ModelRenderer()
+    self._osm_road_overlay_renderer = OsmRoadOverlayRenderer()
     self._hud_renderer = HudRenderer()
     self._kegman_renderer = KegmanRenderer()
     self._car_tracking_renderer = CarTrackingRenderer()
@@ -229,6 +231,7 @@ class AugmentedRoadView(CameraView):
 
     # Fade out bottom of overlays for looks
     rl.draw_texture_ex(self._fade_texture, rl.Vector2(self._content_rect.x, self._content_rect.y), 0.0, 1.0, rl.WHITE)
+    self._osm_road_overlay_renderer.render(self._content_rect)
 
     alert_to_render, not_animating_out = self._alert_renderer.will_render()
 

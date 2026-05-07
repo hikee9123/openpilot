@@ -65,6 +65,12 @@ DEFAULT_MODEL_NAME = "1.Stock_Model"
 DEFAULT_MODEL_NAMES = {DEFAULT_MODEL_NAME, "1.default", "7.Current_Model", "7.Current_0.11_6a7d09ad"}
 
 EXTERNAL_NAVI_OPTIONS = ["0", "1", "2"]
+OSM_ROAD_OVERLAY_MODE_OPTIONS = [
+  (0, tr_noop("Off")),
+  (1, tr_noop("Mini map")),
+  (2, tr_noop("Camera overlay")),
+  (3, tr_noop("Both")),
+]
 CAR_TRACKING_DESCRIPTION = tr_noop(
   "Shows a separate CAR TRACKING panel on the onroad screen.<br>"
   "EGO / LEFT / RIGHT: Fuses liveTracks radar points with modelV2 leadsV3 camera candidates, then selects the nearest lead in each lane.<br>"
@@ -975,6 +981,8 @@ class CustomSettingsLayout(Widget):
         SectionHeader(tr_noop("OSM matching")),
         self._toggle_json_item("UseLocalOsmRoads", tr_noop("Use local OSM roads"),
                                tr_noop("Uses an offline OSM road DB to prefer speed camera candidates on the current road.")),
+        self._cycle_choice_item("OsmRoadOverlayMode", tr_noop("OSM road overlay"), OSM_ROAD_OVERLAY_MODE_OPTIONS,
+                                tr_noop("Selects how nearby OSM roads, speed cameras, and ego position are drawn on the onroad camera screen.")),
         self._number_item("LocalOsmRoadRadius", tr_noop("OSM road search radius"), 20, 100, 5,
                           description=tr_noop("Sets the local OSM road lookup radius used to infer the current road name."), unit="m"),
         SectionHeader(tr_noop("Speed camera DB")),
@@ -1101,6 +1109,32 @@ class CustomSettingsLayout(Widget):
 
   def _cycle_float_item(self, key: str, title: str, options: list[str]):
     return self._cycle_item(key, title, options, float)
+
+  def _cycle_choice_item(
+    self,
+    key: str,
+    title: str,
+    options: list[tuple[int, str]],
+    description: str | None = None,
+    enabled: bool | Callable[[], bool] = True,
+  ):
+    def option_index() -> int:
+      value = int(self._values()[key])
+      for idx, (option_value, _) in enumerate(options):
+        if option_value == value:
+          return idx
+      return 0
+
+    def current_value() -> str:
+      return tr(options[option_index()][1])
+
+    def step(delta: int) -> None:
+      next_idx = max(0, min(len(options) - 1, option_index() + delta))
+      self._save_value(key, options[next_idx][0])
+
+    action = StepperAction(current_value, lambda: step(-1), lambda: step(1))
+    action.set_enabled(enabled)
+    return ListItem(title=lambda: tr(title), description=(lambda: tr(description)) if description else None, action_item=action)
 
   def _toggle_json_item(self, key: str, title: str, description: str | None = None, enabled: bool | Callable[[], bool] = True):
     return toggle_item(

@@ -11,6 +11,7 @@ from openpilot.selfdrive.ui.onroad.driver_state import DriverStateRenderer
 from openpilot.selfdrive.ui.onroad.hud_renderer import HudRenderer
 from openpilot.selfdrive.ui.onroad.kegman_renderer import KegmanRenderer
 from openpilot.selfdrive.ui.onroad.model_renderer import ModelRenderer
+from openpilot.selfdrive.ui.onroad.osm_road_overlay_renderer import OsmRoadOverlayRenderer
 from openpilot.selfdrive.ui.onroad.cameraview import CameraView
 from openpilot.selfdrive.ui.onroad.trace_renderer import TraceRenderer
 from openpilot.system.ui.lib.application import gui_app
@@ -50,6 +51,7 @@ class AugmentedRoadView(CameraView):
     self._dual_camera_view._set_placeholder_color(BORDER_COLORS[UIStatus.DISENGAGED])
 
     self.model_renderer = ModelRenderer()
+    self._osm_road_overlay_renderer = OsmRoadOverlayRenderer()
     self._hud_renderer = HudRenderer()
     self._kegman_renderer = KegmanRenderer()
     self._car_tracking_renderer = CarTrackingRenderer()
@@ -119,6 +121,7 @@ class AugmentedRoadView(CameraView):
 
     # Draw all UI overlays
     self.model_renderer.render(self._content_rect)
+    self._osm_road_overlay_renderer.render(self._content_rect)
     self._hud_renderer.render(self._content_rect)
     self._kegman_renderer.render(self._content_rect)
     self.alert_renderer.render(self._content_rect)

@@ -46,6 +46,26 @@ class OSMRoadMatch:
     return self.name or self.ref
 
 
+@dataclass(frozen=True)
+class OSMRoadSegment:
+  road_id: int
+  osm_id: int
+  name: str
+  ref: str
+  highway: str
+  road_class: str
+  lat1: float
+  lon1: float
+  lat2: float
+  lon2: float
+  bearing_deg: float
+  distance_m: float
+
+  @property
+  def display_name(self) -> str:
+    return self.name or self.ref
+
+
 def normalize_road_name(value: str) -> str:
   normalized = (value or "").strip().upper()
   normalized = re.sub(r"\s+", "", normalized)
@@ -114,6 +134,15 @@ def _bounding_box(lat: float, lon: float, radius_m: float) -> tuple[float, float
   lat_delta = radius_m / METERS_PER_DEG_LAT
   lon_delta = radius_m / _lon_scale(lat)
   return lat - lat_delta, lat + lat_delta, lon - lon_delta, lon + lon_delta
+
+
+def latlon_to_car_space_m(origin_lat: float, origin_lon: float, heading_deg: float, lat: float, lon: float) -> tuple[float, float]:
+  north_m = (lat - origin_lat) * METERS_PER_DEG_LAT
+  east_m = (lon - origin_lon) * _lon_scale(origin_lat)
+  heading_rad = math.radians(heading_deg)
+  forward_m = north_m * math.cos(heading_rad) + east_m * math.sin(heading_rad)
+  right_m = east_m * math.cos(heading_rad) - north_m * math.sin(heading_rad)
+  return forward_m, right_m
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
@@ -320,3 +349,55 @@ def find_current_road(
       best = match
 
   return best
+
+
+def nearby_road_segments(
+  db_path: Path = DEFAULT_OSM_ROADS_DB_PATH,
+  lat: float = 0.0,
+  lon: float = 0.0,
+  radius_m: float = 140.0,
+  limit: int = 90,
+) -> list[OSMRoadSegment]:
+  if not db_path.exists():
+    return []
+
+  lat_min, lat_max, lon_min, lon_max = _bounding_box(lat, lon, radius_m)
+  try:
+    with closing(sqlite3.connect(db_path)) as conn:
+      conn.row_factory = sqlite3.Row
+      if not _table_exists(conn, "roads") or not _table_exists(conn, "roads_rtree"):
+        return []
+      rows = conn.execute("""
+        SELECT roads.*
+        FROM roads
+        JOIN roads_rtree ON roads.id = roads_rtree.id
+        WHERE roads_rtree.min_lat <= ?
+          AND roads_rtree.max_lat >= ?
+          AND roads_rtree.min_lon <= ?
+          AND roads_rtree.max_lon >= ?
+      """, (lat_max, lat_min, lon_max, lon_min)).fetchall()
+  except sqlite3.Error:
+    return []
+
+  segments: list[OSMRoadSegment] = []
+  for row in rows:
+    distance_m = _distance_point_to_segment_m(lat, lon, row["lat1"], row["lon1"], row["lat2"], row["lon2"])
+    if distance_m > radius_m:
+      continue
+    segments.append(OSMRoadSegment(
+      road_id=int(row["id"]),
+      osm_id=int(row["osm_id"]),
+      name=str(row["name"] or ""),
+      ref=str(row["ref"] or ""),
+      highway=str(row["highway"] or ""),
+      road_class=str(row["road_class"] or ""),
+      lat1=float(row["lat1"]),
+      lon1=float(row["lon1"]),
+      lat2=float(row["lat2"]),
+      lon2=float(row["lon2"]),
+      bearing_deg=float(row["bearing_deg"]),
+      distance_m=distance_m,
+    ))
+
+  segments.sort(key=lambda segment: segment.distance_m)
+  return segments[:max(0, limit)]

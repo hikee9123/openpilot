@@ -30,6 +30,7 @@ DEFAULT_CUSTOM_PARAMS: dict[str, int | float | bool] = {
   "SpeedCameraMinGpsSpeed": 3,
   "ShowSpeedCameraCandidates": False,
   "UseLocalOsmRoads": False,
+  "OsmRoadOverlayMode": 0,
   "LocalOsmRoadRadius": 50,
   SPEED_CAMERA_DEBUG_PREVIEW_UNTIL_KEY: 0.0,
   "ParamAutoScreenOff": 8,
@@ -110,6 +111,8 @@ def read_custom_params(params: Params | None = None) -> dict[str, int | float | 
     values["kegmanGPS"] = _coerce_like_default("kegmanGPS", loaded["kegmanGPU"])
   if "ShowDebugMessage" not in loaded and "ParamDebug" in loaded:
     values["ShowDebugMessage"] = _coerce_like_default("ShowDebugMessage", loaded["ParamDebug"])
+  if "OsmRoadOverlayMode" not in loaded and "ShowOsmRoadOverlay" in loaded:
+    values["OsmRoadOverlayMode"] = 3 if bool(loaded["ShowOsmRoadOverlay"]) else 0
   values["ParamDebug"] = bool(values["ShowDebugMessage"])
   return values
 

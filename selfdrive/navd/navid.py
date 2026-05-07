@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 import os
 import sqlite3
 import time
@@ -8,9 +9,23 @@ import cereal.messaging as messaging
 from openpilot.common.realtime import Ratekeeper
 from openpilot.common.swaglog import cloudlog
 try:
-  from openpilot.selfdrive.navd.osm_roads import DEFAULT_LOOKUP_RADIUS_M, DEFAULT_OSM_ROADS_DB_PATH, find_current_road
+  from openpilot.selfdrive.navd.osm_roads import (
+    DEFAULT_LOOKUP_RADIUS_M,
+    DEFAULT_OSM_ROADS_DB_PATH,
+    find_current_road,
+    latlon_to_car_space_m,
+    nearby_road_segments,
+    road_name_matches,
+  )
 except ModuleNotFoundError:
-  from selfdrive.navd.osm_roads import DEFAULT_LOOKUP_RADIUS_M, DEFAULT_OSM_ROADS_DB_PATH, find_current_road
+  from selfdrive.navd.osm_roads import (
+    DEFAULT_LOOKUP_RADIUS_M,
+    DEFAULT_OSM_ROADS_DB_PATH,
+    find_current_road,
+    latlon_to_car_space_m,
+    nearby_road_segments,
+    road_name_matches,
+  )
 from openpilot.selfdrive.navd.speed_camera import (
   DEFAULT_CSV_PATH,
   DEFAULT_DB_PATH,
@@ -30,6 +45,9 @@ from openpilot.selfdrive.ui.custom import read_custom_params
 DB_RETRY_SECONDS = 60.0
 LOOKUP_INTERVAL_SECONDS = 0.5
 OSM_ROAD_LOOKUP_INTERVAL_SECONDS = 2.0
+OSM_ROAD_OVERLAY_INTERVAL_SECONDS = 1.0
+OSM_ROAD_OVERLAY_RADIUS_M = 140.0
+OSM_ROAD_OVERLAY_MAX_SEGMENTS = 90
 KPH_TO_MPS = 1000.0 / 3600.0
 MAX_CAMERA_CANDIDATES = 3
 
@@ -53,6 +71,7 @@ def _speed_camera_tuning() -> dict[str, float | bool]:
     "passed_ignore_seconds": _clip(float(values.get("SpeedCameraPassedIgnoreSeconds", 8)), 3.0, 30.0),
     "min_gps_speed_mps": _clip(float(values.get("SpeedCameraMinGpsSpeed", 3)), 0.0, 10.0) * KPH_TO_MPS,
     "use_local_osm_roads": bool(values.get("UseLocalOsmRoads", False)),
+    "osm_road_overlay_mode": int(_clip(float(values.get("OsmRoadOverlayMode", 0)), 0.0, 3.0)),
     "local_osm_road_radius_m": _clip(float(values.get("LocalOsmRoadRadius", DEFAULT_LOOKUP_RADIUS_M)), 20.0, 100.0),
   }
 
@@ -96,7 +115,7 @@ def _ensure_database(db_path: Path, csv_path: Path) -> bool:
     return False
 
 
-def _send_inactive(pm: messaging.PubMaster) -> None:
+def _send_inactive(pm: messaging.PubMaster, osm_road_overlay_text: str = "") -> None:
   msg = messaging.new_message("naviCustom")
   nav = msg.naviCustom.naviData
   nav.active = 0
@@ -107,6 +126,7 @@ def _send_inactive(pm: messaging.PubMaster) -> None:
   nav.camBearingDeg = 0.0
   nav.camRelativeAngleDeg = 0.0
   nav.camCandidatesText = ""
+  nav.osmRoadOverlayText = osm_road_overlay_text
   pm.send("naviCustom", msg)
 
 
@@ -178,7 +198,64 @@ def _format_camera_debug_text(candidates, current_road_name: str = "") -> str:
   return "\n".join(lines)
 
 
-def _send_camera(pm: messaging.PubMaster, camera, candidates=(), current_road_name: str = "") -> None:
+def _camera_overlay_label(camera) -> str:
+  label = _candidate_category_label(camera)
+  speed_limit = int(getattr(camera, "speed_limit", 0) or 0)
+  return f"{label} {speed_limit}" if speed_limit > 0 else label
+
+
+def _build_osm_road_overlay_text(db_path: Path, gps, candidates=(), current_road_name: str = "") -> str:
+  try:
+    segments = nearby_road_segments(
+      db_path,
+      gps.latitude,
+      gps.longitude,
+      OSM_ROAD_OVERLAY_RADIUS_M,
+      OSM_ROAD_OVERLAY_MAX_SEGMENTS,
+    )
+    roads = []
+    for segment in segments:
+      x1, y1 = latlon_to_car_space_m(gps.latitude, gps.longitude, gps.bearingDeg, segment.lat1, segment.lon1)
+      x2, y2 = latlon_to_car_space_m(gps.latitude, gps.longitude, gps.bearingDeg, segment.lat2, segment.lon2)
+      if max(x1, x2) < -20.0 or min(x1, x2) > OSM_ROAD_OVERLAY_RADIUS_M + 30.0:
+        continue
+      if min(abs(y1), abs(y2)) > OSM_ROAD_OVERLAY_RADIUS_M:
+        continue
+      roads.append({
+        "x1": round(x1, 1),
+        "y1": round(y1, 1),
+        "x2": round(x2, 1),
+        "y2": round(y2, 1),
+        "n": segment.display_name[:28],
+        "h": segment.highway,
+        "c": road_name_matches(current_road_name, segment.name, segment.ref),
+      })
+
+    cameras = []
+    for camera in candidates[:MAX_CAMERA_CANDIDATES]:
+      x, y = latlon_to_car_space_m(gps.latitude, gps.longitude, gps.bearingDeg, camera.lat, camera.lon)
+      if -20.0 <= x <= float(max(OSM_ROAD_OVERLAY_RADIUS_M, getattr(camera, "distance_m", 0.0) + 20.0)):
+        cameras.append({
+          "x": round(x, 1),
+          "y": round(y, 1),
+          "d": int(max(0.0, float(getattr(camera, "distance_m", 0.0)))),
+          "s": int(getattr(camera, "speed_limit", 0) or 0),
+          "t": _camera_overlay_label(camera),
+        })
+
+    if not roads and not cameras:
+      return ""
+    return json.dumps({
+      "road": (current_road_name or "")[:32],
+      "roads": roads,
+      "cameras": cameras,
+    }, ensure_ascii=False, separators=(",", ":"))
+  except Exception:
+    cloudlog.exception("navid: failed to build OSM road overlay")
+    return ""
+
+
+def _send_camera(pm: messaging.PubMaster, camera, candidates=(), current_road_name: str = "", osm_road_overlay_text: str = "") -> None:
   msg = messaging.new_message("naviCustom")
   nav = msg.naviCustom.naviData
 
@@ -207,6 +284,7 @@ def _send_camera(pm: messaging.PubMaster, camera, candidates=(), current_road_na
   nav.camBearingDeg = float(getattr(camera, "bearing_deg", 0.0))
   nav.camRelativeAngleDeg = float(getattr(camera, "relative_angle_deg", 0.0))
   nav.camCandidatesText = _format_camera_debug_text(candidates, current_road_name)
+  nav.osmRoadOverlayText = osm_road_overlay_text
   nav.camLimitSpeed = camera.speed_limit
   nav.camLimitSpeedLeftDist = max(0, int(camera.distance_m))
   nav.sectionLimitSpeed = camera.speed_limit if type_code == 4 else 0
@@ -247,7 +325,9 @@ def main() -> None:
   tuning = _speed_camera_tuning()
   last_lookup_t = 0.0
   last_osm_lookup_t = 0.0
+  last_osm_overlay_t = 0.0
   current_road_name = ""
+  osm_road_overlay_text = ""
 
   while True:
     sm.update(0)
@@ -262,12 +342,32 @@ def main() -> None:
       continue
 
     gps = _select_gps(sm)
-    if gps is None or gps.speed < tuning["min_gps_speed_mps"]:
+    if gps is None:
       active_camera_id = None
       active_camera = None
       active_candidates = []
       current_road_name = ""
+      osm_road_overlay_text = ""
       _send_inactive(pm)
+      rk.keep_time()
+      continue
+
+    if gps.speed < tuning["min_gps_speed_mps"]:
+      active_camera_id = None
+      active_camera = None
+      active_candidates = []
+      if now - last_lookup_t >= LOOKUP_INTERVAL_SECONDS:
+        last_lookup_t = now
+        tuning = _speed_camera_tuning()
+        if int(tuning["osm_road_overlay_mode"]) > 0:
+          if now - last_osm_overlay_t >= OSM_ROAD_OVERLAY_INTERVAL_SECONDS:
+            last_osm_overlay_t = now
+            osm_road_overlay_text = _build_osm_road_overlay_text(
+              _osm_roads_db_path(), gps, [], current_road_name
+            )
+        else:
+          osm_road_overlay_text = ""
+      _send_inactive(pm, osm_road_overlay_text)
       rk.keep_time()
       continue
 
@@ -305,10 +405,18 @@ def main() -> None:
       )
       active_camera = active_candidates[0] if active_candidates else None
 
+      if int(tuning["osm_road_overlay_mode"]) > 0:
+        if now - last_osm_overlay_t >= OSM_ROAD_OVERLAY_INTERVAL_SECONDS:
+          last_osm_overlay_t = now
+          osm_road_overlay_text = _build_osm_road_overlay_text(
+            _osm_roads_db_path(), gps, active_candidates, current_road_name
+          )
+      else:
+        osm_road_overlay_text = ""
+
     if active_camera is None:
       active_camera_id = None
-      active_candidates = []
-      _send_inactive(pm)
+      _send_inactive(pm, osm_road_overlay_text)
       rk.keep_time()
       continue
 
@@ -319,7 +427,7 @@ def main() -> None:
       active_camera = None
       active_camera_id = None
       active_candidates = []
-      _send_inactive(pm)
+      _send_inactive(pm, osm_road_overlay_text)
       rk.keep_time()
       continue
 
@@ -330,7 +438,7 @@ def main() -> None:
         f"{active_camera.camera_type} limit={active_camera.speed_limit}"
       )
 
-    _send_camera(pm, active_camera, active_candidates, current_road_name)
+    _send_camera(pm, active_camera, active_candidates, current_road_name, osm_road_overlay_text)
     rk.keep_time()
 
 
