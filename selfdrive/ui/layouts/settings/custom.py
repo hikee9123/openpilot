@@ -163,6 +163,12 @@ COMPACT_INFO_VALUE_MIN_FONT_SIZE = 28
 COMPACT_INFO_BG = rl.Color(35, 35, 35, 255)
 COMPACT_INFO_LABEL_COLOR = rl.WHITE
 COMPACT_INFO_VALUE_COLOR = rl.Color(170, 170, 170, 255)
+COMPACT_PROGRESS_BAR_BG = rl.Color(72, 72, 72, 255)
+COMPACT_PROGRESS_BAR_FILL = rl.Color(52, 168, 83, 255)
+COMPACT_PROGRESS_BAR_HEIGHT = 18
+COMPACT_PROGRESS_BAR_WIDTH = 300
+COMPACT_PROGRESS_PERCENT_WIDTH = 86
+COMPACT_PROGRESS_GAP = 22
 
 
 def run_logged(command: list[str], cwd: Path, log_path: str) -> subprocess.CompletedProcess:
@@ -351,6 +357,70 @@ class CompactInfoGroup(Widget):
     while fitted and measure_text_cached(font, fitted + ellipsis, font_size).x > max_width:
       fitted = fitted[:-1]
     return ((fitted.rstrip() + ellipsis) if fitted else ellipsis), font_size
+
+
+class CompactStatusProgressGroup(CompactInfoGroup):
+  def __init__(self, status_callback: Callable[[], str], progress_callback: Callable[[], str]):
+    super().__init__([(tr_noop("Status"), status_callback)])
+    self._progress_callback = progress_callback
+
+  def _render(self, rect: rl.Rectangle):
+    panel_rect = rl.Rectangle(
+      rect.x + COMPACT_INFO_PADDING_X / 2,
+      rect.y + COMPACT_INFO_PADDING_Y / 2,
+      rect.width - COMPACT_INFO_PADDING_X,
+      rect.height - COMPACT_INFO_PADDING_Y,
+    )
+    rl.draw_rectangle_rounded(panel_rect, 0.05, 8, COMPACT_INFO_BG)
+
+    label_x = panel_rect.x + COMPACT_INFO_PADDING_X
+    value_right = panel_rect.x + panel_rect.width - COMPACT_INFO_PADDING_X
+    value_x = panel_rect.x + panel_rect.width * 0.38
+    row_y = panel_rect.y + COMPACT_INFO_PADDING_Y / 2
+    self._draw_label(tr("Status"), label_x, row_y, value_x - label_x - COMPACT_INFO_PADDING_X)
+
+    progress = self._progress_percent()
+    if progress is None:
+      self._draw_value(self._rows[0][1](), value_x, row_y, value_right - value_x)
+      return
+
+    bar_width = min(COMPACT_PROGRESS_BAR_WIDTH, max(160, (value_right - value_x) * 0.34))
+    status_width = value_right - value_x - COMPACT_PROGRESS_PERCENT_WIDTH - bar_width - COMPACT_PROGRESS_GAP * 2
+    self._draw_inline_status(self._rows[0][1](), value_x, row_y, max(80, status_width))
+
+    percent_x = value_x + max(80, status_width) + COMPACT_PROGRESS_GAP
+    percent_text = f"{progress}%"
+    self._draw_inline_percent(percent_text, percent_x, row_y, COMPACT_PROGRESS_PERCENT_WIDTH)
+
+    bar_x = percent_x + COMPACT_PROGRESS_PERCENT_WIDTH + COMPACT_PROGRESS_GAP
+    self._draw_progress_bar(rl.Rectangle(bar_x, row_y, bar_width, COMPACT_INFO_ROW_HEIGHT), progress)
+
+  def _progress_percent(self) -> int | None:
+    text = self._progress_callback().strip().removesuffix("%")
+    try:
+      return max(0, min(100, int(text)))
+    except ValueError:
+      return None
+
+  def _draw_inline_status(self, status: str, x: float, y: float, max_width: float) -> None:
+    text, font_size = self._fit_text(status, self._font_regular, COMPACT_INFO_VALUE_FONT_SIZE,
+                                     COMPACT_INFO_VALUE_MIN_FONT_SIZE, max_width)
+    text_size = measure_text_cached(self._font_regular, text, font_size)
+    text_pos = rl.Vector2(x, y + (COMPACT_INFO_ROW_HEIGHT - text_size.y) / 2)
+    rl.draw_text_ex(self._font_regular, text, text_pos, font_size, 0, COMPACT_INFO_VALUE_COLOR)
+
+  def _draw_inline_percent(self, percent: str, x: float, y: float, max_width: float) -> None:
+    text_size = measure_text_cached(self._font_regular, percent, COMPACT_INFO_VALUE_FONT_SIZE)
+    text_pos = rl.Vector2(x + max(0, max_width - text_size.x), y + (COMPACT_INFO_ROW_HEIGHT - text_size.y) / 2)
+    rl.draw_text_ex(self._font_regular, percent, text_pos, COMPACT_INFO_VALUE_FONT_SIZE, 0, COMPACT_INFO_VALUE_COLOR)
+
+  def _draw_progress_bar(self, rect: rl.Rectangle, progress: int) -> None:
+    y = rect.y + (rect.height - COMPACT_PROGRESS_BAR_HEIGHT) / 2
+    bg_rect = rl.Rectangle(rect.x, y, rect.width, COMPACT_PROGRESS_BAR_HEIGHT)
+    fill_rect = rl.Rectangle(rect.x, y, rect.width * progress / 100.0, COMPACT_PROGRESS_BAR_HEIGHT)
+    rl.draw_rectangle_rounded(bg_rect, 1.0, 16, COMPACT_PROGRESS_BAR_BG)
+    if fill_rect.width > 0:
+      rl.draw_rectangle_rounded(fill_rect, 1.0, 16, COMPACT_PROGRESS_BAR_FILL)
 
 
 class CompileLogPanel(Widget):
@@ -655,10 +725,7 @@ class CustomSettingsLayout(Widget):
       "Navigation": [
         SectionHeader(tr_noop("OSM roads DB")),
         self._osm_roads_update_item(),
-        CompactInfoGroup([
-          (tr_noop("Status"), self._osm_roads_status_text),
-          (tr_noop("Progress"), self._osm_roads_progress_text),
-        ]),
+        CompactStatusProgressGroup(self._osm_roads_status_text, self._osm_roads_progress_text),
         CompileLogPanel(tr_noop("OSM roads detail"), self._osm_roads_log_lines, tr_noop("No OSM roads log yet")),
         SectionHeader(tr_noop("OSM matching")),
         self._toggle_json_item("UseLocalOsmRoads", tr_noop("Use local OSM roads"),
@@ -1018,7 +1085,8 @@ class CustomSettingsLayout(Widget):
 
           count = osm_roads_segment_count(DEFAULT_OSM_ROADS_DB_PATH)
           self._params.put(OSM_ROADS_COUNT_KEY, max(0, count))
-          self._refresh_speed_camera_db_after_osm_update()
+          if not self._refresh_speed_camera_db_after_osm_update():
+            return
           self._params.put(OSM_ROADS_PROGRESS_KEY, 100)
           self._params.put(OSM_ROADS_UPDATED_AT_KEY, time.strftime("%Y-%m-%d %H:%M"))
           self._params.put(OSM_ROADS_STATUS_KEY, STATUS_SUCCESS)
@@ -1032,15 +1100,17 @@ class CustomSettingsLayout(Widget):
     dialog = ConfirmDialog(content, tr("UPDATE"), callback=lambda result: run() if result == DialogResult.CONFIRM else None)
     gui_app.push_widget(dialog)
 
-  def _refresh_speed_camera_db_after_osm_update(self) -> None:
+  def _refresh_speed_camera_db_after_osm_update(self) -> bool:
     if self._speed_camera_update_running():
       with open(OSM_ROADS_LOG_PATH, "a", encoding="utf-8") as log_file:
         log_file.write("speed camera DB update already running; skipping OSM road-name refresh\n")
-      return
+      self._set_osm_roads_failed("speed camera DB update already running")
+      return False
 
     self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_RUNNING)
     self._params.put(SPEED_CAMERA_ERROR_KEY, "")
     self._params.put(SPEED_CAMERA_PROGRESS_KEY, 0)
+    self._params.put(OSM_ROADS_PROGRESS_KEY, 90)
     command = (
       [sys.executable, "tools/scripts/import_speed_cameras.py"]
       if SPEED_CAMERA_CSV_PATH.exists() or SPEED_CAMERA_REGION_DIR.exists()
@@ -1057,12 +1127,13 @@ class CustomSettingsLayout(Widget):
     if result.returncode != 0:
       self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_FAILED)
       self._params.put(SPEED_CAMERA_ERROR_KEY, f"OSM road-name refresh failed: exit code {result.returncode}")
+      self._set_osm_roads_failed(f"camera refresh failed: exit code {result.returncode}")
       try:
         with open(OSM_ROADS_LOG_PATH, "a", encoding="utf-8") as log_file:
           log_file.write(f"speed camera DB refresh failed: exit code {result.returncode}\n")
       except OSError:
         pass
-      return
+      return False
 
     count = self._speed_camera_db_count_from_log(OSM_ROADS_LOG_PATH)
     self._params.put(SPEED_CAMERA_COUNT_KEY, max(0, count))
@@ -1074,6 +1145,7 @@ class CustomSettingsLayout(Widget):
     self._params.put(SPEED_CAMERA_UPDATED_AT_KEY, time.strftime("%Y-%m-%d %H:%M"))
     self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_SUCCESS)
     self._params.put(SPEED_CAMERA_ERROR_KEY, "")
+    return True
 
   def _speed_camera_update_status(self) -> str:
     if self._speed_camera_update_running():
@@ -1199,6 +1271,12 @@ class CustomSettingsLayout(Widget):
       return "--"
     return f"{progress}%"
 
+  def _osm_roads_progress_percent(self) -> int:
+    try:
+      return max(0, min(100, int(self._param_text(OSM_ROADS_PROGRESS_KEY) or 0)))
+    except ValueError:
+      return 0
+
   def _speed_camera_data_date_text(self) -> str:
     data_date = self._param_text(SPEED_CAMERA_DATA_DATE_KEY) or database_data_date(SPEED_CAMERA_DB_PATH)
     return data_date or "--"
@@ -1212,7 +1290,7 @@ class CustomSettingsLayout(Widget):
   def _osm_roads_status_text(self) -> str:
     status = self._osm_roads_update_status()
     if status == STATUS_RUNNING:
-      return tr("Building")
+      return tr("Camera Refreshing") if self._osm_roads_progress_percent() >= 90 else tr("OSM Building")
     if status == STATUS_SUCCESS:
       count = self._format_count_text(self._param_text(OSM_ROADS_COUNT_KEY) or str(osm_roads_segment_count(DEFAULT_OSM_ROADS_DB_PATH)))
       updated_at = self._param_text(OSM_ROADS_UPDATED_AT_KEY) or osm_roads_built_at(DEFAULT_OSM_ROADS_DB_PATH)

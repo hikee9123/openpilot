@@ -225,7 +225,7 @@ def main() -> None:
     params.put(OSM_ROADS_COUNT_KEY, count)
   except Exception:
     pass
-  _put_progress(params, 100)
+  _put_progress(params, 80)
   print(f"osm road segments {count}", flush=True)
 
   if not args.keep_pbf:
