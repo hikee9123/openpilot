@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -99,6 +100,8 @@ SPEED_CAMERA_UPDATED_AT_KEY = "SpeedCameraUpdatedAt"
 SPEED_CAMERA_DATA_DATE_KEY = "SpeedCameraDataDate"
 SPEED_CAMERA_DEBUG_PREVIEW_DURATION_SECONDS = 30
 SPEED_CAMERA_LOG_PATH = str(CUSTOM_TMP_ROOT / "openpilot_speed_camera_update.log")
+SPEED_CAMERA_LOCK_PATH = CUSTOM_TMP_ROOT / "openpilot_speed_camera_update.lock"
+SPEED_CAMERA_LOCK_STALE_SECONDS = 30 * 60
 REPO_ROOT = Path(BASEDIR)
 MODELD_DIR = REPO_ROOT / "selfdrive/modeld"
 TAB_HEIGHT = 110
@@ -150,6 +153,33 @@ def clear_log(log_path: str) -> None:
   path = Path(log_path)
   path.parent.mkdir(parents=True, exist_ok=True)
   path.write_text("", encoding="utf-8")
+
+
+def process_alive(pid: int) -> bool:
+  if pid <= 0:
+    return False
+  if pid == os.getpid():
+    return True
+
+  if os.name == "nt":
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32
+    synchronize = 0x00100000
+    wait_timeout = 0x00000102
+    handle = kernel32.OpenProcess(synchronize, False, pid)
+    if not handle:
+      return False
+    try:
+      return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+    finally:
+      kernel32.CloseHandle(handle)
+
+  try:
+    os.kill(pid, 0)
+    return True
+  except OSError:
+    return False
 
 
 def valid_branch_name(branch: str) -> bool:
@@ -788,35 +818,46 @@ class CustomSettingsLayout(Widget):
 
   def _handle_speed_camera_update(self) -> None:
     def run() -> None:
+      if self._speed_camera_update_running():
+        return
+
+      try:
+        self._write_speed_camera_update_lock()
+      except OSError as e:
+        self._set_speed_camera_failed(f"lock open failed: {e}")
+        return
+
       def worker() -> None:
-        self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_RUNNING)
-        self._params.put(SPEED_CAMERA_ERROR_KEY, "")
-        self._params.put(SPEED_CAMERA_PROGRESS_KEY, 0)
         try:
-          clear_log(SPEED_CAMERA_LOG_PATH)
-        except OSError as e:
-          self._set_speed_camera_failed(f"log open failed: {e}")
-          return
+          self._params.put(SPEED_CAMERA_ERROR_KEY, "")
+          self._params.put(SPEED_CAMERA_PROGRESS_KEY, 0)
+          try:
+            clear_log(SPEED_CAMERA_LOG_PATH)
+          except OSError as e:
+            self._set_speed_camera_failed(f"log open failed: {e}")
+            return
 
-        try:
-          result = run_logged([sys.executable, "tools/scripts/update_speed_cameras.py"], REPO_ROOT, SPEED_CAMERA_LOG_PATH)
-        except OSError as e:
-          self._set_speed_camera_failed(f"update start failed: {e}")
-          return
-        if result.returncode != 0:
-          self._set_speed_camera_failed(f"exit code {result.returncode}")
-          return
+          try:
+            result = run_logged([sys.executable, "tools/scripts/update_speed_cameras.py"], REPO_ROOT, SPEED_CAMERA_LOG_PATH)
+          except OSError as e:
+            self._set_speed_camera_failed(f"update start failed: {e}")
+            return
+          if result.returncode != 0:
+            self._set_speed_camera_failed(f"exit code {result.returncode}")
+            return
 
-        count = self._speed_camera_db_count_from_log()
-        self._params.put(SPEED_CAMERA_COUNT_KEY, max(0, count))
-        self._params.put(SPEED_CAMERA_PROGRESS_KEY, 100)
-        data_date = database_data_date(SPEED_CAMERA_DB_PATH)
-        if data_date:
-          self._params.put(SPEED_CAMERA_DATA_DATE_KEY, data_date)
-        self._refresh_speed_camera_region_counts(force=True)
-        self._params.put(SPEED_CAMERA_UPDATED_AT_KEY, time.strftime("%Y-%m-%d %H:%M"))
-        self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_SUCCESS)
-        self._params.put(SPEED_CAMERA_ERROR_KEY, "")
+          count = self._speed_camera_db_count_from_log()
+          self._params.put(SPEED_CAMERA_COUNT_KEY, max(0, count))
+          self._params.put(SPEED_CAMERA_PROGRESS_KEY, 100)
+          data_date = database_data_date(SPEED_CAMERA_DB_PATH)
+          if data_date:
+            self._params.put(SPEED_CAMERA_DATA_DATE_KEY, data_date)
+          self._refresh_speed_camera_region_counts(force=True)
+          self._params.put(SPEED_CAMERA_UPDATED_AT_KEY, time.strftime("%Y-%m-%d %H:%M"))
+          self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_SUCCESS)
+          self._params.put(SPEED_CAMERA_ERROR_KEY, "")
+        finally:
+          self._clear_speed_camera_update_lock()
 
       threading.Thread(target=worker, daemon=True).start()
 
@@ -825,7 +866,38 @@ class CustomSettingsLayout(Widget):
     gui_app.push_widget(dialog)
 
   def _speed_camera_update_status(self) -> str:
-    return self._param_text(SPEED_CAMERA_STATUS_KEY) or STATUS_IDLE
+    if self._speed_camera_update_running():
+      return STATUS_RUNNING
+    status = self._param_text(SPEED_CAMERA_STATUS_KEY)
+    if status == STATUS_RUNNING:
+      return STATUS_IDLE
+    return status or STATUS_IDLE
+
+  def _write_speed_camera_update_lock(self) -> None:
+    SPEED_CAMERA_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lock_data = {"pid": os.getpid(), "started_at": time.time()}
+    SPEED_CAMERA_LOCK_PATH.write_text(json.dumps(lock_data, separators=(",", ":")), encoding="utf-8")
+
+  def _clear_speed_camera_update_lock(self) -> None:
+    try:
+      SPEED_CAMERA_LOCK_PATH.unlink()
+    except OSError:
+      pass
+
+  def _speed_camera_update_running(self) -> bool:
+    try:
+      lock_data = json.loads(SPEED_CAMERA_LOCK_PATH.read_text(encoding="utf-8"))
+      pid = int(lock_data.get("pid", 0))
+      started_at = float(lock_data.get("started_at", 0.0))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+      self._clear_speed_camera_update_lock()
+      return False
+
+    if time.time() - started_at > SPEED_CAMERA_LOCK_STALE_SECONDS or not process_alive(pid):
+      self._clear_speed_camera_update_lock()
+      return False
+
+    return True
 
   def _speed_camera_button_text(self) -> str:
     status = self._speed_camera_update_status()

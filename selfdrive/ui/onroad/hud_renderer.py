@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import pyray as rl
 from openpilot.common.constants import CV
+from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
 from openpilot.selfdrive.ui.custom import SPEED_CAMERA_DEBUG_PREVIEW_UNTIL_KEY, read_custom_params
 from openpilot.selfdrive.ui.onroad.exp_button import ExpButton
@@ -72,6 +73,7 @@ class Colors:
   SPEED_SIGN_RING_RED = rl.Color(210, 32, 42, 255)
   SPEED_SIGN_RING_BLUE = rl.Color(52, 120, 246, 255)
   SPEED_SIGN_INNER = rl.WHITE
+  SPEED_SIGN_SEARCH_AREA = rl.Color(255, 198, 77, 45)
   SPEED_SIGN_TEXT = rl.Color(18, 18, 18, 255)
 
 
@@ -101,6 +103,9 @@ class HudRenderer(Widget):
     self.road_class_code: int = 0
     self.camera_bearing_deg: float = 0.0
     self.camera_relative_angle_deg: float = 0.0
+    self._camera_pointer_angle_filter = FirstOrderFilter(0.0, 0.25, 1 / gui_app.target_fps, initialized=False)
+    self.camera_search_angle_deg: float = 35.0
+    self._camera_search_angle_last_check: float = 0.0
     self._params = Params()
     self._camera_preview_until: float = 0.0
     self._camera_preview_last_check: float = 0.0
@@ -229,6 +234,8 @@ class HudRenderer(Widget):
     self.camera_relative_angle_deg = float(getattr(nav, "camRelativeAngleDeg", 0.0))
     if not self.camera_alert_active and self._speed_camera_preview_active():
       self._apply_speed_camera_preview()
+    if not self.camera_alert_active:
+      self._camera_pointer_angle_filter.initialized = False
 
   def _speed_camera_preview_active(self) -> bool:
     now = time.time()
@@ -268,26 +275,26 @@ class HudRenderer(Widget):
     distance_text = self._format_distance(self.camera_distance_m)
     info_label = self._camera_info_label()
 
+    sign_radius = self._speed_sign_radius()
+    sign_center_x = x + width / 2
+    sign_center_y = y + 92
+    self._draw_speed_limit_sign(sign_center_x, sign_center_y, sign_radius, sign_lines)
+
     label_text, label_font_size, label_size = self._fit_text(info_label, width, 22, 18)
     rl.draw_text_ex(
       self._font_medium,
       label_text,
-      rl.Vector2(x + (width - label_size.x) / 2, y + 2),
+      rl.Vector2(x + (width - label_size.x) / 2, y + 176),
       label_font_size,
       0,
       COLORS.SPEED_CAMERA,
     )
 
-    sign_radius = self._speed_sign_radius()
-    sign_center_x = x + width / 2
-    sign_center_y = y + 88
-    self._draw_speed_limit_sign(sign_center_x, sign_center_y, sign_radius, sign_lines)
-
     distance_size = measure_text_cached(self._font_medium, distance_text, 30)
     rl.draw_text_ex(
       self._font_medium,
       distance_text,
-      rl.Vector2(x + (width - distance_size.x) / 2, y + 160),
+      rl.Vector2(x + (width - distance_size.x) / 2, y + 206),
       30,
       0,
       COLORS.WHITE_TRANSLUCENT,
@@ -298,6 +305,7 @@ class HudRenderer(Widget):
     inner_gap = 10 if is_speed else 8
     rl.draw_circle(int(center_x), int(center_y), radius, self._speed_sign_ring_color())
     rl.draw_circle(int(center_x), int(center_y), radius - inner_gap, COLORS.SPEED_SIGN_INNER)
+    self._draw_camera_search_area(center_x, center_y, radius - inner_gap - 4)
     self._draw_camera_direction_pointer(center_x, center_y, radius)
 
     primary_text, secondary_text = sign_lines
@@ -338,13 +346,13 @@ class HudRenderer(Widget):
     )
 
   def _draw_camera_direction_pointer(self, center_x: float, center_y: float, radius: int) -> None:
-    angle_rad = math.radians(max(-85.0, min(85.0, self.camera_relative_angle_deg)))
+    angle_rad = math.radians(self._filtered_camera_pointer_angle())
     direction_x = math.sin(angle_rad)
     direction_y = -math.cos(angle_rad)
     perpendicular_x = math.cos(angle_rad)
     perpendicular_y = math.sin(angle_rad)
-    pointer_length = max(14.0, radius * 0.28)
-    pointer_half_width = max(8.0, radius * 0.13)
+    pointer_length = max(12.0, radius * 0.23)
+    pointer_half_width = max(7.0, radius * 0.11)
     tip_radius = radius - 12.0
     base_radius = max(0.0, tip_radius - pointer_length)
 
@@ -354,6 +362,39 @@ class HudRenderer(Widget):
     left = rl.Vector2(base_center_x + perpendicular_x * pointer_half_width, base_center_y + perpendicular_y * pointer_half_width)
     right = rl.Vector2(base_center_x - perpendicular_x * pointer_half_width, base_center_y - perpendicular_y * pointer_half_width)
     rl.draw_triangle(tip, right, left, self._camera_pointer_color())
+
+  def _draw_camera_search_area(self, center_x: float, center_y: float, radius: float) -> None:
+    half_angle = max(0.0, min(180.0, self._camera_search_angle()))
+    if radius <= 0.0 or half_angle <= 0.0:
+      return
+
+    segments = max(12, int(half_angle * 2.0 / 5.0))
+    points = [rl.Vector2(center_x, center_y)]
+    for i in range(segments + 1):
+      angle_deg = -half_angle + (half_angle * 2.0 * i / segments)
+      angle_rad = math.radians(angle_deg)
+      points.append(rl.Vector2(center_x + math.sin(angle_rad) * radius, center_y - math.cos(angle_rad) * radius))
+
+    rl.draw_triangle_fan(points, len(points), COLORS.SPEED_SIGN_SEARCH_AREA)
+
+  def _camera_search_angle(self) -> float:
+    now = time.time()
+    if now - self._camera_search_angle_last_check >= SPEED_CAMERA_DEBUG_PREVIEW_POLL_INTERVAL:
+      self._camera_search_angle_last_check = now
+      try:
+        values = read_custom_params(self._params)
+        self.camera_search_angle_deg = max(15.0, min(60.0, float(values.get("SpeedCameraLookaheadAngle", 35))))
+      except (TypeError, ValueError):
+        self.camera_search_angle_deg = 35.0
+    return self.camera_search_angle_deg
+
+  def _filtered_camera_pointer_angle(self) -> float:
+    target_angle = (self.camera_relative_angle_deg + 180.0) % 360.0 - 180.0
+    if not self._camera_pointer_angle_filter.initialized:
+      return self._camera_pointer_angle_filter.update(target_angle)
+
+    angle_diff = (target_angle - self._camera_pointer_angle_filter.x + 180.0) % 360.0 - 180.0
+    return self._camera_pointer_angle_filter.update(self._camera_pointer_angle_filter.x + angle_diff)
 
   def _camera_sign_lines(self) -> tuple[str, str]:
     if self._is_speed_camera_category(self.camera_category, self.camera_type):
