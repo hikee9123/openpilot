@@ -146,13 +146,15 @@ class ButtonAction(ItemAction):
 
 
 class TextAction(ItemAction):
-  def __init__(self, text: str | Callable[[], str], color: rl.Color = ITEM_TEXT_COLOR, enabled: bool | Callable[[], bool] = True):
+  def __init__(self, text: str | Callable[[], str], color: rl.Color = ITEM_TEXT_COLOR, enabled: bool | Callable[[], bool] = True,
+               font_size: int = ITEM_TEXT_FONT_SIZE):
     self._text_source = text
     self.color = color
+    self.font_size = font_size
 
     self._font = gui_app.font(FontWeight.NORMAL)
     initial_text = _resolve_value(text, "")
-    text_width = measure_text_cached(self._font, initial_text, ITEM_TEXT_FONT_SIZE).x
+    text_width = measure_text_cached(self._font, initial_text, self.font_size).x
     super().__init__(int(text_width + TEXT_PADDING), enabled)
 
   @property
@@ -160,11 +162,11 @@ class TextAction(ItemAction):
     return _resolve_value(self._text_source, tr("Error"))
 
   def get_width_hint(self) -> float:
-    text_width = measure_text_cached(self._font, self.text, ITEM_TEXT_FONT_SIZE).x
+    text_width = measure_text_cached(self._font, self.text, self.font_size).x
     return text_width + TEXT_PADDING
 
   def _render(self, rect: rl.Rectangle) -> bool:
-    gui_label(self._rect, self.text, font_size=ITEM_TEXT_FONT_SIZE, color=self.color,
+    gui_label(self._rect, self.text, font_size=self.font_size, color=self.color,
               font_weight=FontWeight.NORMAL, alignment=rl.GuiTextAlignment.TEXT_ALIGN_RIGHT,
               alignment_vertical=rl.GuiTextAlignmentVertical.TEXT_ALIGN_MIDDLE)
     return False
@@ -450,8 +452,9 @@ def button_item(title: str | Callable[[], str], button_text: str | Callable[[], 
 
 
 def text_item(title: str | Callable[[], str], value: str | Callable[[], str], description: str | Callable[[], str] | None = None,
-              callback: Callable | None = None, enabled: bool | Callable[[], bool] = True) -> ListItem:
-  action = TextAction(text=value, color=ITEM_TEXT_VALUE_COLOR, enabled=enabled)
+              callback: Callable | None = None, enabled: bool | Callable[[], bool] = True,
+              font_size: int = ITEM_TEXT_FONT_SIZE) -> ListItem:
+  action = TextAction(text=value, color=ITEM_TEXT_VALUE_COLOR, enabled=enabled, font_size=font_size)
   return ListItem(title=title, description=description, action_item=action, callback=callback)
 
 

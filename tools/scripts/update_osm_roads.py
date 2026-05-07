@@ -2,6 +2,7 @@
 import argparse
 import importlib.util
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -43,21 +44,39 @@ def _osmium_available() -> bool:
   return importlib.util.find_spec("osmium") is not None
 
 
+def _uv_binary() -> str | None:
+  uv = shutil.which("uv")
+  if uv is not None:
+    return uv
+
+  local_uv = Path.home() / ".local/bin/uv"
+  if local_uv.exists():
+    return str(local_uv)
+  return None
+
+
 def _install_osmium(params: Params) -> bool:
   print("osmium not installed; installing osmium", flush=True)
   _put_progress(params, 5)
-  result = subprocess.run(
-    [sys.executable, "-m", "pip", "install", "osmium"],
-    text=True,
-    check=False,
-  )
-  if result.returncode != 0:
-    print(f"osmium install failed: exit code {result.returncode}", flush=True)
-    return False
 
-  print("osmium install completed", flush=True)
-  _put_progress(params, 10)
-  return True
+  commands: list[tuple[str, list[str]]] = []
+  uv = _uv_binary()
+  if uv is not None:
+    commands.append(("uv", [uv, "pip", "install", "--python", sys.executable, "osmium"]))
+  commands.append(("pip", [sys.executable, "-m", "pip", "install", "osmium"]))
+
+  for label, command in commands:
+    print(f"trying {label} install", flush=True)
+    result = subprocess.run(command, text=True, check=False)
+    if result.returncode == 0:
+      print(f"osmium install completed via {label}", flush=True)
+      _put_progress(params, 10)
+      return True
+    print(f"osmium install via {label} failed: exit code {result.returncode}", flush=True)
+
+  print("osmium install failed; install manually with: uv pip install --python "
+        f"{sys.executable} osmium", flush=True)
+  return False
 
 
 def _ensure_osmium(params: Params, auto_install: bool) -> bool:
