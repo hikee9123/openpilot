@@ -13,7 +13,9 @@ from cereal import car, messaging
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
 from openpilot.selfdrive.navd.speed_camera import (
+  DEFAULT_CSV_PATH as SPEED_CAMERA_CSV_PATH,
   DEFAULT_DB_PATH as SPEED_CAMERA_DB_PATH,
+  DEFAULT_REGION_DIR as SPEED_CAMERA_REGION_DIR,
   database_category_counts,
   database_data_date,
   database_region_stats,
@@ -935,6 +937,7 @@ class CustomSettingsLayout(Widget):
 
           count = osm_roads_segment_count(DEFAULT_OSM_ROADS_DB_PATH)
           self._params.put(OSM_ROADS_COUNT_KEY, max(0, count))
+          self._refresh_speed_camera_db_after_osm_update()
           self._params.put(OSM_ROADS_PROGRESS_KEY, 100)
           self._params.put(OSM_ROADS_UPDATED_AT_KEY, time.strftime("%Y-%m-%d %H:%M"))
           self._params.put(OSM_ROADS_STATUS_KEY, STATUS_SUCCESS)
@@ -947,6 +950,49 @@ class CustomSettingsLayout(Widget):
     content = tr("Download South Korea OSM data and rebuild the local roads DB? This can take several minutes.")
     dialog = ConfirmDialog(content, tr("UPDATE"), callback=lambda result: run() if result == DialogResult.CONFIRM else None)
     gui_app.push_widget(dialog)
+
+  def _refresh_speed_camera_db_after_osm_update(self) -> None:
+    if self._speed_camera_update_running():
+      with open(OSM_ROADS_LOG_PATH, "a", encoding="utf-8") as log_file:
+        log_file.write("speed camera DB update already running; skipping OSM road-name refresh\n")
+      return
+
+    self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_RUNNING)
+    self._params.put(SPEED_CAMERA_ERROR_KEY, "")
+    self._params.put(SPEED_CAMERA_PROGRESS_KEY, 0)
+    command = (
+      [sys.executable, "tools/scripts/import_speed_cameras.py"]
+      if SPEED_CAMERA_CSV_PATH.exists() or SPEED_CAMERA_REGION_DIR.exists()
+      else [sys.executable, "tools/scripts/update_speed_cameras.py"]
+    )
+
+    try:
+      with open(OSM_ROADS_LOG_PATH, "a", encoding="utf-8") as log_file:
+        log_file.write("refreshing speed camera DB with OSM road names\n")
+    except OSError:
+      pass
+
+    result = run_logged(command, REPO_ROOT, OSM_ROADS_LOG_PATH)
+    if result.returncode != 0:
+      self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_FAILED)
+      self._params.put(SPEED_CAMERA_ERROR_KEY, f"OSM road-name refresh failed: exit code {result.returncode}")
+      try:
+        with open(OSM_ROADS_LOG_PATH, "a", encoding="utf-8") as log_file:
+          log_file.write(f"speed camera DB refresh failed: exit code {result.returncode}\n")
+      except OSError:
+        pass
+      return
+
+    count = self._speed_camera_db_count_from_log(OSM_ROADS_LOG_PATH)
+    self._params.put(SPEED_CAMERA_COUNT_KEY, max(0, count))
+    self._params.put(SPEED_CAMERA_PROGRESS_KEY, 100)
+    data_date = database_data_date(SPEED_CAMERA_DB_PATH)
+    if data_date:
+      self._params.put(SPEED_CAMERA_DATA_DATE_KEY, data_date)
+    self._refresh_speed_camera_region_counts(force=True)
+    self._params.put(SPEED_CAMERA_UPDATED_AT_KEY, time.strftime("%Y-%m-%d %H:%M"))
+    self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_SUCCESS)
+    self._params.put(SPEED_CAMERA_ERROR_KEY, "")
 
   def _speed_camera_update_status(self) -> str:
     if self._speed_camera_update_running():
@@ -1032,9 +1078,9 @@ class CustomSettingsLayout(Widget):
       return tr("RETRY")
     return tr("UPDATE")
 
-  def _speed_camera_db_count_from_log(self) -> int:
+  def _speed_camera_db_count_from_log(self, log_path: str = SPEED_CAMERA_LOG_PATH) -> int:
     try:
-      with open(SPEED_CAMERA_LOG_PATH, encoding="utf-8", errors="replace") as log_file:
+      with open(log_path, encoding="utf-8", errors="replace") as log_file:
         for line in reversed(log_file.readlines()):
           if line.startswith("imported "):
             return int(line.split()[1])
