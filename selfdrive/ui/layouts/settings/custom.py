@@ -155,6 +155,9 @@ SPEED_CAMERA_REGION_PANEL_HEIGHT = 360
 SPEED_CAMERA_REGION_FONT_SIZE = 22
 SPEED_CAMERA_REGION_LINE_HEIGHT = 32
 SPEED_CAMERA_REGION_PADDING = 20
+SPEED_CAMERA_DETAIL_TAB_HEIGHT = 42
+SPEED_CAMERA_DETAIL_TAB_WIDTH = 120
+SPEED_CAMERA_DETAIL_TAB_GAP = 10
 SPEED_CAMERA_OSM_STATUS_CACHE_INTERVAL = 5.0
 COMPACT_INFO_ROW_HEIGHT = 82
 COMPACT_INFO_PADDING_X = 34
@@ -636,11 +639,18 @@ class SpeedCameraRegionsPanel(Widget):
     self,
     region_stats_callback: Callable[[], list[tuple[str, int, int, str]]],
     category_counts_callback: Callable[[], list[tuple[str, int]]],
+    log_lines_callback: Callable[[], list[str]],
+    log_active_callback: Callable[[], bool],
   ):
     super().__init__()
     self._region_stats_callback = region_stats_callback
     self._category_counts_callback = category_counts_callback
+    self._log_lines_callback = log_lines_callback
+    self._log_active_callback = log_active_callback
     self._font = gui_app.font(FontWeight.NORMAL)
+    self._font_medium = gui_app.font(FontWeight.MEDIUM)
+    self._selected_tab = "stats"
+    self._tab_rects: dict[str, rl.Rectangle] = {}
     self.set_rect(rl.Rectangle(0, 0, 0, SPEED_CAMERA_REGION_PANEL_HEIGHT))
 
   def set_parent_rect(self, parent_rect: rl.Rectangle) -> None:
@@ -656,17 +666,30 @@ class SpeedCameraRegionsPanel(Widget):
     )
     rl.draw_rectangle_rounded(panel_rect, 0.04, 8, COMPILE_LOG_BG)
     rl.draw_rectangle_rounded_lines_ex(panel_rect, 0.04, 8, 2, COMPILE_LOG_BORDER)
+    self._draw_tabs(panel_rect)
 
+    content_rect = rl.Rectangle(
+      panel_rect.x + SPEED_CAMERA_REGION_PADDING,
+      panel_rect.y + SPEED_CAMERA_REGION_PADDING + SPEED_CAMERA_DETAIL_TAB_HEIGHT + 8,
+      panel_rect.width - SPEED_CAMERA_REGION_PADDING * 2,
+      panel_rect.height - SPEED_CAMERA_REGION_PADDING * 2 - SPEED_CAMERA_DETAIL_TAB_HEIGHT - 8,
+    )
+    if self._active_tab() == "log":
+      self._draw_log(content_rect)
+      return
+    self._draw_stats(content_rect)
+
+  def _draw_stats(self, content_rect: rl.Rectangle) -> None:
     region_stats = self._region_stats_callback()
     category_counts = self._category_counts_callback()
     if not region_stats:
-      self._draw_text("--", rl.Vector2(panel_rect.x + SPEED_CAMERA_REGION_PADDING, panel_rect.y + SPEED_CAMERA_REGION_PADDING))
+      self._draw_text("--", rl.Vector2(content_rect.x, content_rect.y))
       return
 
-    content_x = panel_rect.x + SPEED_CAMERA_REGION_PADDING
-    content_y = panel_rect.y + SPEED_CAMERA_REGION_PADDING
-    content_w = panel_rect.width - SPEED_CAMERA_REGION_PADDING * 2
-    content_h = panel_rect.height - SPEED_CAMERA_REGION_PADDING * 2
+    content_x = content_rect.x
+    content_y = content_rect.y
+    content_w = content_rect.width
+    content_h = content_rect.height
     category_h = SPEED_CAMERA_REGION_LINE_HEIGHT
     header_h = SPEED_CAMERA_REGION_LINE_HEIGHT
     max_rows = max(1, int((content_h - category_h - header_h) // SPEED_CAMERA_REGION_LINE_HEIGHT))
@@ -704,6 +727,56 @@ class SpeedCameraRegionsPanel(Widget):
       alert_x = all_x + all_width + field_gap
       self._draw_right_aligned(all_text, rl.Rectangle(all_x, y, all_width, SPEED_CAMERA_REGION_LINE_HEIGHT))
       self._draw_right_aligned(alert_text, rl.Rectangle(alert_x, y, alert_width, SPEED_CAMERA_REGION_LINE_HEIGHT))
+
+  def _draw_log(self, content_rect: rl.Rectangle) -> None:
+    lines = self._fit_log_lines(self._log_lines_callback(), content_rect.width)
+    max_lines = max(1, int(content_rect.height // COMPILE_LOG_LINE_HEIGHT))
+    visible_lines = lines[-max_lines:]
+
+    clip_rect = content_rect
+    if self._parent_rect is not None:
+      clip_rect = rl.get_collision_rec(content_rect, self._parent_rect)
+    if clip_rect.width <= 0 or clip_rect.height <= 0:
+      return
+
+    rl.begin_scissor_mode(int(clip_rect.x), int(clip_rect.y), int(clip_rect.width), int(clip_rect.height))
+    y = content_rect.y
+    for line in visible_lines:
+      rl.draw_text_ex(self._font, line, rl.Vector2(content_rect.x, y), COMPILE_LOG_FONT_SIZE, 0, COMPILE_LOG_TEXT)
+      y += COMPILE_LOG_LINE_HEIGHT
+    rl.end_scissor_mode()
+
+  def _draw_tabs(self, panel_rect: rl.Rectangle) -> None:
+    active_tab = self._active_tab()
+    start_x = panel_rect.x + SPEED_CAMERA_REGION_PADDING
+    y = panel_rect.y + SPEED_CAMERA_REGION_PADDING / 2
+    for idx, (tab_id, label) in enumerate((("stats", "Stats"), ("log", "Log"))):
+      tab_rect = rl.Rectangle(
+        start_x + idx * (SPEED_CAMERA_DETAIL_TAB_WIDTH + SPEED_CAMERA_DETAIL_TAB_GAP),
+        y,
+        SPEED_CAMERA_DETAIL_TAB_WIDTH,
+        SPEED_CAMERA_DETAIL_TAB_HEIGHT,
+      )
+      self._tab_rects[tab_id] = tab_rect
+      color = SECTION_BG if tab_id == active_tab else rl.Color(32, 32, 32, 255)
+      if self.is_pressed and rl.check_collision_point_rec(rl.get_mouse_position(), tab_rect):
+        color = STEPPER_BUTTON_PRESSED
+      rl.draw_rectangle_rounded(tab_rect, 0.25, 8, color)
+      rl.draw_rectangle_rounded_lines_ex(tab_rect, 0.25, 8, 1, COMPILE_LOG_BORDER)
+      text = tr(label)
+      text_size = measure_text_cached(self._font_medium, text, SPEED_CAMERA_REGION_FONT_SIZE)
+      text_pos = rl.Vector2(tab_rect.x + (tab_rect.width - text_size.x) / 2,
+                            tab_rect.y + (tab_rect.height - text_size.y) / 2)
+      rl.draw_text_ex(self._font_medium, text, text_pos, SPEED_CAMERA_REGION_FONT_SIZE, 0, TAB_TEXT)
+
+  def _active_tab(self) -> str:
+    return "log" if self._log_active_callback() else self._selected_tab
+
+  def _handle_mouse_release(self, mouse_pos: MousePos) -> None:
+    for tab_id, tab_rect in self._tab_rects.items():
+      if rl.check_collision_point_rec(mouse_pos, tab_rect):
+        self._selected_tab = tab_id
+        return
 
   def _draw_text(self, text: str, pos: rl.Vector2) -> None:
     rl.draw_text_ex(self._font, text, pos, SPEED_CAMERA_REGION_FONT_SIZE, 0, COMPILE_LOG_TEXT)
@@ -747,6 +820,22 @@ class SpeedCameraRegionsPanel(Widget):
     text_size = measure_text_cached(self._font, text, SPEED_CAMERA_REGION_FONT_SIZE)
     self._draw_text(text, rl.Vector2(rect.x + rect.width - text_size.x, rect.y))
 
+  def _fit_log_lines(self, lines: list[str], max_width: float) -> list[str]:
+    fitted: list[str] = []
+    for line in lines:
+      fitted.append(self._truncate_log_line(line, max_width))
+    return fitted or [tr("No speed camera log yet")]
+
+  def _truncate_log_line(self, line: str, max_width: float) -> str:
+    text = line.expandtabs(2).strip()
+    if measure_text_cached(self._font, text, COMPILE_LOG_FONT_SIZE).x <= max_width:
+      return text
+
+    ellipsis = "..."
+    while text and measure_text_cached(self._font, text + ellipsis, COMPILE_LOG_FONT_SIZE).x > max_width:
+      text = text[:-1]
+    return (text.rstrip() + ellipsis) if text else ellipsis
+
   def _truncate(self, text: str, max_width: float) -> str:
     if measure_text_cached(self._font, text, SPEED_CAMERA_REGION_FONT_SIZE).x <= max_width:
       return text
@@ -767,6 +856,8 @@ class CustomSettingsLayout(Widget):
     self._compile_log_tail = ""
     self._last_osm_roads_log_check = -COMPILE_LOG_CACHE_INTERVAL
     self._osm_roads_log_tail = ""
+    self._last_speed_camera_log_check = -COMPILE_LOG_CACHE_INTERVAL
+    self._speed_camera_log_tail = ""
     self._speed_camera_region_cache_loaded = False
     self._speed_camera_category_counts_cache: list[tuple[str, int]] = []
     self._speed_camera_region_stats_cache: list[tuple[str, int, int, str]] = []
@@ -883,7 +974,12 @@ class CustomSettingsLayout(Widget):
           (tr_noop("Data date"), self._speed_camera_data_date_text),
           (tr_noop("Regions"), self._speed_camera_regions_text),
         ], status_details=[self._speed_camera_updated_status_text, self._speed_camera_osm_status_text]),
-        SpeedCameraRegionsPanel(self._speed_camera_region_stats, self._speed_camera_category_counts),
+        SpeedCameraRegionsPanel(
+          self._speed_camera_region_stats,
+          self._speed_camera_category_counts,
+          self._speed_camera_log_lines,
+          lambda: self._speed_camera_update_status() == STATUS_RUNNING,
+        ),
         self._speed_camera_icon_preview_item(),
         SectionHeader(tr_noop("Speed camera tuning")),
         self._number_item("SpeedCameraLookaheadDistance", tr_noop("Camera search distance"), 500, 3000, 100,
@@ -1480,6 +1576,24 @@ class CustomSettingsLayout(Widget):
     visible_lines = [line for line in lines if line.strip()]
     self._osm_roads_log_tail = "\n".join(visible_lines[-80:])
     return self._osm_roads_log_tail.splitlines()
+
+  def _speed_camera_log_lines(self) -> list[str]:
+    now = time.monotonic()
+    if now - self._last_speed_camera_log_check < COMPILE_LOG_CACHE_INTERVAL:
+      return self._speed_camera_log_tail.splitlines()
+    self._last_speed_camera_log_check = now
+
+    try:
+      with open(SPEED_CAMERA_LOG_PATH, encoding="utf-8", errors="replace") as log_file:
+        lines = [line.rstrip() for line in log_file.readlines()[-120:]]
+    except OSError:
+      error = self._param_text(SPEED_CAMERA_ERROR_KEY)
+      self._speed_camera_log_tail = error or ""
+      return self._speed_camera_log_tail.splitlines()
+
+    visible_lines = [line for line in lines if line.strip()]
+    self._speed_camera_log_tail = "\n".join(visible_lines[-80:])
+    return self._speed_camera_log_tail.splitlines()
 
 
   def _refresh_speed_camera_region_counts(self, force: bool = False) -> None:
