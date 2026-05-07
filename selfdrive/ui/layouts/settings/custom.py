@@ -19,6 +19,7 @@ from openpilot.selfdrive.navd.speed_camera import (
   DEFAULT_REGION_DIR as SPEED_CAMERA_REGION_DIR,
   database_category_counts,
   database_data_date,
+  database_osm_road_enriched_count,
   database_region_stats,
 )
 from openpilot.selfdrive.navd.osm_roads import (
@@ -961,7 +962,12 @@ class CustomSettingsLayout(Widget):
       "Navigation": [
         SectionHeader(tr_noop("OSM roads DB")),
         self._osm_roads_update_item(),
-        CompactStatusProgressGroup(self._osm_roads_status_text, self._osm_roads_progress_text),
+        CompactStatusProgressInfoGroup(
+          self._osm_roads_status_text,
+          self._osm_roads_progress_text,
+          [],
+          status_details=[self._osm_roads_updated_status_text, self._osm_roads_camera_refresh_status_text],
+        ),
         CompileLogPanel(tr_noop("OSM roads detail"), self._osm_roads_log_lines, tr_noop("No OSM roads log yet")),
         SectionHeader(tr_noop("OSM matching")),
         self._toggle_json_item("UseLocalOsmRoads", tr_noop("Use local OSM roads"),
@@ -1511,6 +1517,8 @@ class CustomSettingsLayout(Widget):
   def _osm_roads_progress_text(self) -> str:
     progress = self._param_text(OSM_ROADS_PROGRESS_KEY)
     if not progress:
+      if osm_roads_segment_count(DEFAULT_OSM_ROADS_DB_PATH) > 0:
+        return "100%"
       return "--"
     return f"{progress}%"
 
@@ -1531,6 +1539,23 @@ class CustomSettingsLayout(Widget):
     updated = self._speed_camera_updated_text()
     return f"{tr('Updated')} {updated}" if updated != "--" else f"{tr('Updated')} --"
 
+  def _osm_roads_updated_text(self) -> str:
+    return self._param_text(OSM_ROADS_UPDATED_AT_KEY) or osm_roads_built_at(DEFAULT_OSM_ROADS_DB_PATH) or "--"
+
+  def _osm_roads_updated_status_text(self) -> str:
+    updated = self._osm_roads_updated_text()
+    return f"{tr('Updated')} {updated}" if updated != "--" else f"{tr('Updated')} --"
+
+  def _osm_roads_camera_refresh_status_text(self) -> str:
+    status = self._osm_roads_update_status()
+    if status == STATUS_RUNNING:
+      return tr("Camera DB refreshing") if self._osm_roads_progress_percent() >= 90 else tr("Camera DB refresh pending")
+    if status == STATUS_FAILED:
+      return tr("Camera DB refresh failed")
+    if self._speed_camera_count() > 0:
+      return tr("Camera DB refreshed")
+    return tr("Camera DB refresh pending")
+
   def _format_count_text(self, count: str) -> str:
     try:
       return f"{int(count):,}"
@@ -1543,9 +1568,7 @@ class CustomSettingsLayout(Widget):
       return tr("Camera Refreshing") if self._osm_roads_progress_percent() >= 90 else tr("OSM Building")
     if status == STATUS_SUCCESS:
       count = self._format_count_text(self._param_text(OSM_ROADS_COUNT_KEY) or str(osm_roads_segment_count(DEFAULT_OSM_ROADS_DB_PATH)))
-      updated_at = self._param_text(OSM_ROADS_UPDATED_AT_KEY) or osm_roads_built_at(DEFAULT_OSM_ROADS_DB_PATH)
-      suffix = f" / {updated_at}" if updated_at else ""
-      return f"{tr('Ready')} / {count} segments{suffix}"
+      return f"{tr('Ready')} / {count} segments"
     if status == STATUS_FAILED:
       error = self._param_text(OSM_ROADS_ERROR_KEY)
       if len(error) > 80:
@@ -1554,9 +1577,7 @@ class CustomSettingsLayout(Widget):
 
     count = osm_roads_segment_count(DEFAULT_OSM_ROADS_DB_PATH)
     if count > 0:
-      built_at = osm_roads_built_at(DEFAULT_OSM_ROADS_DB_PATH)
-      suffix = f" / {built_at}" if built_at else ""
-      return f"{tr('Ready')} / {count:,} segments{suffix}"
+      return f"{tr('Ready')} / {count:,} segments"
     return tr("Idle")
 
   def _osm_roads_log_lines(self) -> list[str]:
@@ -1653,14 +1674,8 @@ class CustomSettingsLayout(Widget):
     if not SPEED_CAMERA_DB_PATH.exists():
       return tr("OSM road names: no camera DB")
 
-    try:
-      with sqlite3.connect(SPEED_CAMERA_DB_PATH) as conn:
-        matched = conn.execute("""
-          SELECT COUNT(*)
-          FROM speed_cameras
-          WHERE osm_road_name != '' OR osm_road_ref != ''
-        """).fetchone()[0]
-    except (OSError, sqlite3.Error):
+    matched = database_osm_road_enriched_count(SPEED_CAMERA_DB_PATH)
+    if matched < 0:
       return tr("OSM road names: unavailable")
 
     if matched > 0:

@@ -898,6 +898,8 @@ def create_database_from_csvs(
     if records:
       source_updated_at = str(max(records, key=lambda record: _date_priority(str(record["updated_at"])))["updated_at"])
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("source_updated_at", source_updated_at))
+    conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_enriched_count", "0"))
+    conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_db_path", ""))
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("version", str(DB_VERSION)))
     conn.commit()
     if osm_roads_db_path is not None:
@@ -993,6 +995,33 @@ def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
     return {row[1] for row in conn.execute(f"PRAGMA table_info({table_name})")}
   except sqlite3.Error:
     return set()
+
+
+def database_osm_road_enriched_count(db_path: Path = DEFAULT_DB_PATH) -> int:
+  try:
+    if not db_path.exists():
+      return 0
+  except OSError:
+    return 0
+
+  try:
+    conn = sqlite3.connect(db_path)
+  except sqlite3.Error:
+    return 0
+
+  with closing(conn):
+    columns = _table_columns(conn, "speed_cameras")
+    if not {"osm_road_name", "osm_road_ref"}.issubset(columns):
+      return 0
+    try:
+      row = conn.execute("""
+        SELECT COUNT(*)
+        FROM speed_cameras
+        WHERE COALESCE(osm_road_name, '') != '' OR COALESCE(osm_road_ref, '') != ''
+      """).fetchone()
+      return int(row[0] if row else 0)
+    except (sqlite3.Error, TypeError, ValueError):
+      return 0
 
 
 def database_region_counts(db_path: Path = DEFAULT_DB_PATH) -> list[tuple[str, int]]:

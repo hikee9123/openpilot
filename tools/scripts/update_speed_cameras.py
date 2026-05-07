@@ -23,6 +23,7 @@ try:
     CsvSource,
     create_database_from_csvs,
     database_data_date,
+    database_osm_road_enriched_count,
     database_region_counts,
     download_public_speed_camera_csv,
   )
@@ -36,6 +37,7 @@ except ModuleNotFoundError:
     CsvSource,
     create_database_from_csvs,
     database_data_date,
+    database_osm_road_enriched_count,
     database_region_counts,
     download_public_speed_camera_csv,
   )
@@ -129,6 +131,7 @@ def main() -> None:
   if osm_roads_db is None and DEFAULT_OSM_ROADS_DB_PATH.exists():
     osm_roads_db = DEFAULT_OSM_ROADS_DB_PATH
   imported = create_database_from_csvs(csv_sources, args.db, osm_roads_db_path=osm_roads_db, osm_lookup_radius_m=args.osm_radius)
+  osm_matched = database_osm_road_enriched_count(args.db)
   data_date = database_data_date(args.db)
   region_counts = database_region_counts(args.db)
   source_counts = _source_counts(csv_sources)
@@ -142,6 +145,7 @@ def main() -> None:
   print(f"  custom: {source_counts.get('custom', 0)}")
   if osm_roads_db is not None:
     print(f"osm roads {osm_roads_db}")
+  print(f"osm road names matched {osm_matched}")
   print(f"data date {data_date or 'unknown'}")
   print(f"regions {len(region_counts)}")
 
