@@ -105,7 +105,9 @@ class HudRenderer(Widget):
     self.camera_bearing_deg: float = 0.0
     self.camera_relative_angle_deg: float = 0.0
     self.camera_candidates_text: str = ""
+    self.camera_debug_text: str = ""
     self.show_speed_camera_candidates: bool = False
+    self.show_speed_camera_debug_text: bool = False
     self._camera_pointer_angle_filter = FirstOrderFilter(0.0, 0.25, 1 / gui_app.target_fps, initialized=False)
     self.camera_search_angle_deg: float = 35.0
     self._camera_search_angle_last_check: float = 0.0
@@ -172,6 +174,7 @@ class HudRenderer(Widget):
 
     self._draw_current_speed(rect)
     self._draw_speed_camera_alert(rect)
+    self._draw_camera_debug_text(rect)
 
     button_x = rect.x + rect.width - UI_CONFIG.border_size - UI_CONFIG.button_size
     button_y = rect.y + UI_CONFIG.border_size
@@ -242,6 +245,7 @@ class HudRenderer(Widget):
     self.camera_bearing_deg = float(getattr(nav, "camBearingDeg", 0.0))
     self.camera_relative_angle_deg = float(getattr(nav, "camRelativeAngleDeg", 0.0))
     self.camera_candidates_text = str(getattr(nav, "camCandidatesText", ""))
+    self.camera_debug_text = str(getattr(nav, "camDebugText", ""))
     if not self.camera_alert_active and self._speed_camera_preview_active():
       self._apply_speed_camera_preview()
     if not self.camera_alert_active:
@@ -259,6 +263,7 @@ class HudRenderer(Widget):
     self.camera_bearing_deg = 0.0
     self.camera_relative_angle_deg = 0.0
     self.camera_candidates_text = ""
+    self.camera_debug_text = ""
     self._camera_pointer_angle_filter.initialized = False
 
   def _speed_camera_preview_active(self) -> bool:
@@ -287,6 +292,7 @@ class HudRenderer(Widget):
     self.camera_bearing_deg = 0.0
     self.camera_relative_angle_deg = SPEED_CAMERA_DEBUG_PREVIEW_RELATIVE_ANGLE_DEG
     self.camera_candidates_text = SPEED_CAMERA_DEBUG_PREVIEW_CANDIDATES
+    self.camera_debug_text = "CAM SECTION_SPEED c=4 v=50 id=preview\nTYPE preview\nSECT 1 LEN 800\nROAD 고속국도 | preview road\nTEXT preview place d=350m a=+30"
 
   def _draw_speed_camera_alert(self, rect: rl.Rectangle) -> None:
     if not self.camera_alert_active:
@@ -411,9 +417,11 @@ class HudRenderer(Widget):
         values = read_custom_params(self._params)
         self.camera_search_angle_deg = max(15.0, min(60.0, float(values.get("SpeedCameraLookaheadAngle", 35))))
         self.show_speed_camera_candidates = bool(values.get("ShowSpeedCameraCandidates", False))
+        self.show_speed_camera_debug_text = bool(values.get("ShowSpeedCameraDebugText", False))
       except (TypeError, ValueError):
         self.camera_search_angle_deg = 35.0
         self.show_speed_camera_candidates = False
+        self.show_speed_camera_debug_text = False
     return self.camera_search_angle_deg
 
   def _draw_camera_candidates_text(self, x: float, y: float, width: float, max_lines: int, font_size: int, line_height: int) -> None:
@@ -427,6 +435,39 @@ class HudRenderer(Widget):
         self._font_medium,
         line_text,
         rl.Vector2(x, y + idx * line_height),
+        line_font_size,
+        0,
+        COLORS.WHITE_TRANSLUCENT,
+      )
+
+  def _draw_camera_debug_text(self, rect: rl.Rectangle) -> None:
+    self._camera_search_angle()
+    if not self.show_speed_camera_debug_text or not self.camera_debug_text:
+      return
+
+    lines = [line.strip() for line in self.camera_debug_text.splitlines() if line.strip()][:5]
+    if not lines:
+      return
+
+    max_width = min(rect.width * 0.76, 980)
+    font_size = 30
+    line_height = 37
+    padding_x = 24
+    padding_y = 18
+    fitted_lines = [self._fit_text(line, max_width - padding_x * 2, font_size, 22) for line in lines]
+    box_width = min(max_width, max(size.x for _, _, size in fitted_lines) + padding_x * 2)
+    box_height = len(fitted_lines) * line_height + padding_y * 2
+    x = rect.x + (rect.width - box_width) / 2
+    y = rect.y + rect.height * 0.52
+    box_rect = rl.Rectangle(x, y, box_width, box_height)
+    rl.draw_rectangle_rounded(box_rect, 0.18, 8, COLORS.BLACK_TRANSLUCENT)
+    rl.draw_rectangle_rounded_lines_ex(box_rect, 0.18, 8, 2, COLORS.BORDER_TRANSLUCENT)
+
+    for idx, (line, line_font_size, line_size) in enumerate(fitted_lines):
+      rl.draw_text_ex(
+        self._font_medium,
+        line,
+        rl.Vector2(x + (box_width - line_size.x) / 2, y + padding_y + idx * line_height),
         line_font_size,
         0,
         COLORS.WHITE_TRANSLUCENT,

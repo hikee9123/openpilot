@@ -29,6 +29,7 @@ DEFAULT_CUSTOM_PARAMS: dict[str, int | float | bool] = {
   "SpeedCameraPassedIgnoreSeconds": 8,
   "SpeedCameraMinGpsSpeed": 3,
   "ShowSpeedCameraCandidates": False,
+  "ShowSpeedCameraDebugText": False,
   "UseLocalOsmRoads": False,
   "OsmRoadOverlayMode": 0,
   "LocalOsmRoadRadius": 50,

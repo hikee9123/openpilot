@@ -127,6 +127,7 @@ def _send_inactive(pm: messaging.PubMaster, osm_road_overlay_text: str = "") -> 
   nav.camRelativeAngleDeg = 0.0
   nav.camCandidatesText = ""
   nav.osmRoadOverlayText = osm_road_overlay_text
+  nav.camDebugText = ""
   pm.send("naviCustom", msg)
 
 
@@ -196,6 +197,38 @@ def _format_camera_debug_text(candidates, current_road_name: str = "") -> str:
   if candidate_text:
     lines.extend(candidate_text.splitlines())
   return "\n".join(lines)
+
+
+def _format_camera_classification_debug_text(camera, category: str, type_code: int, road_class: str) -> str:
+  def short_raw(value, max_len: int = 32) -> str:
+    text = str(value or "-").strip() or "-"
+    return text if len(text) <= max_len else f"{text[:max_len - 3]}..."
+
+  raw_type = short_raw(getattr(camera, "camera_type", ""), 30)
+  section_type = short_raw(getattr(camera, "section_type", ""), 18)
+  section_length_m = int(getattr(camera, "section_length_m", 0) or 0)
+  speed_limit = int(getattr(camera, "speed_limit", 0) or 0)
+  distance_m = int(max(0.0, float(getattr(camera, "distance_m", 0.0))))
+  angle_deg = float(getattr(camera, "relative_angle_deg", 0.0))
+  road_type = short_raw(getattr(camera, "road_type_raw", ""), 16)
+  road_name = short_raw(getattr(camera, "road_name", ""), 26)
+  place = short_raw(getattr(camera, "place", ""), 34)
+  camera_id = short_raw(getattr(camera, "id", ""), 20)
+  flags = []
+  if speed_limit <= 0:
+    flags.append("!ZERO")
+  if raw_type == "99":
+    flags.append("!99")
+  if not category or category == "UNKNOWN":
+    flags.append("!UNK")
+  flag_text = f" {' '.join(flags)}" if flags else ""
+  return "\n".join((
+    f"CAM {category or 'UNKNOWN'} c={type_code} v={speed_limit}{flag_text} id={camera_id}",
+    f"TYPE {raw_type}",
+    f"SECT {section_type} LEN {section_length_m}",
+    f"ROAD {road_type} | {road_name}",
+    f"TEXT {place} d={distance_m}m a={angle_deg:+.0f}",
+  ))
 
 
 def _camera_overlay_label(camera) -> str:
@@ -285,6 +318,7 @@ def _send_camera(pm: messaging.PubMaster, camera, candidates=(), current_road_na
   nav.camRelativeAngleDeg = float(getattr(camera, "relative_angle_deg", 0.0))
   nav.camCandidatesText = _format_camera_debug_text(candidates, current_road_name)
   nav.osmRoadOverlayText = osm_road_overlay_text
+  nav.camDebugText = _format_camera_classification_debug_text(camera, category, type_code, road_class)
   nav.camLimitSpeed = camera.speed_limit
   nav.camLimitSpeedLeftDist = max(0, int(camera.distance_m))
   nav.sectionLimitSpeed = camera.speed_limit if type_code == 4 else 0

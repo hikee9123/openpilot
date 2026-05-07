@@ -67,3 +67,27 @@ def test_format_debug_road_name_truncates_long_names() -> None:
   road_line = navid._format_debug_road_name("1234567890123456789012345")
 
   assert road_line == "ROAD 1234567890123456789..."
+
+
+def test_format_camera_classification_debug_text() -> None:
+  navid = _load_navid_module()
+  camera = types.SimpleNamespace(
+    camera_type="02",
+    section_type="",
+    section_length_m=0,
+    speed_limit=0,
+    distance_m=42.4,
+    relative_angle_deg=-12.0,
+    road_type_raw="시도",
+    road_name="중앙사거리",
+    place="",
+    id="ICHEON118",
+  )
+
+  assert navid._format_camera_classification_debug_text(camera, "SIGNAL", 2, "CITY_ROAD").splitlines() == [
+    "CAM SIGNAL c=2 v=0 !ZERO id=ICHEON118",
+    "TYPE 02",
+    "SECT - LEN 0",
+    "ROAD 시도 | 중앙사거리",
+    "TEXT - d=42m a=-12",
+  ]

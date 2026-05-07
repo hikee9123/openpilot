@@ -1019,6 +1019,8 @@ class CustomSettingsLayout(Widget):
         SectionHeader(tr_noop("Speed camera debug")),
         self._toggle_json_item("ShowSpeedCameraCandidates", tr_noop("Show camera candidates"),
                                tr_noop("Shows up to three selected speed camera candidates on the onroad HUD for debugging.")),
+        self._toggle_json_item("ShowSpeedCameraDebugText", tr_noop("Show camera debug text"),
+                               tr_noop("Shows camera classification debug text in the center of the onroad HUD.")),
         SectionHeader(tr_noop("External navigation")),
         self._toggle_param_item("UseExternalNaviRoutes", tr_noop("Use external navi routes"),
                                 tr_noop("Allows navigation to use routes from an external navigation provider.")),
