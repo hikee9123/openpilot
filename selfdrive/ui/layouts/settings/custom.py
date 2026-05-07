@@ -387,7 +387,13 @@ class CompileLogPanel(Widget):
     max_lines = max(1, int((log_rect.height - COMPILE_LOG_PADDING * 2) // COMPILE_LOG_LINE_HEIGHT))
     visible_lines = lines[-max_lines:]
 
-    rl.begin_scissor_mode(int(log_rect.x), int(log_rect.y), int(log_rect.width), int(log_rect.height))
+    clip_rect = log_rect
+    if self._parent_rect is not None:
+      clip_rect = rl.get_collision_rec(log_rect, self._parent_rect)
+    if clip_rect.width <= 0 or clip_rect.height <= 0:
+      return
+
+    rl.begin_scissor_mode(int(clip_rect.x), int(clip_rect.y), int(clip_rect.width), int(clip_rect.height))
     y = log_rect.y + COMPILE_LOG_PADDING
     for line in visible_lines:
       rl.draw_text_ex(self._font_regular, line, rl.Vector2(log_rect.x + COMPILE_LOG_PADDING, y),
@@ -691,7 +697,8 @@ class CustomSettingsLayout(Widget):
         self._cycle_param_int_item("ExternalNaviType", tr_noop("External navi type"), EXTERNAL_NAVI_OPTIONS,
                                    tr_noop("Selects the external navigation provider type.")),
         self._text_edit_item("MapboxToken", tr_noop("Mapbox token"),
-                             tr_noop("Sets the Mapbox access token used by map and navigation features.")),
+                             tr_noop("Sets the Mapbox access token used by map and navigation features."),
+                             value_font_size=25, value_lines=2),
       ],
     }
     self._scrollers = {name: Scroller(items, line_separator=True, spacing=0) for name, items in self._sections.items()}
@@ -1301,10 +1308,13 @@ class CustomSettingsLayout(Widget):
       return f"{tr('Failed')}: {error}".strip(": ")
     return tr("Idle")
 
-  def _text_edit_item(self, key: str, title: str, description: str | None = None):
+  def _text_edit_item(self, key: str, title: str, description: str | None = None, value_font_size: int = 50,
+                      value_lines: int = 1):
     item = button_item(lambda: tr(title), lambda: tr("EDIT"),
                        description=(lambda: tr(description)) if description else None,
-                       callback=lambda k=key, t=title: self._show_keyboard(k, t))
+                       callback=lambda k=key, t=title: self._show_keyboard(k, t),
+                       value_font_size=value_font_size,
+                       value_lines=value_lines)
     item.action_item.set_value(lambda k=key: self._param_text(k, return_default=True))
     return item
 

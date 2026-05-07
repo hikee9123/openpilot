@@ -130,6 +130,9 @@ class UIState:
   def is_offroad(self) -> bool:
     return not self.started
 
+  def _camera_sim_ready(self) -> bool:
+    return self.sm.seen["roadCameraState"] and self.sm.alive["roadCameraState"] and self.sm.valid["roadCameraState"]
+
   def update(self) -> None:
     self.prime_state.start()  # start thread after manager forks ui
     self.sm.update(0)
@@ -170,7 +173,7 @@ class UIState:
     # Update started state
     if CAMERA_SIM:
       self.ignition = True
-      self.started = True
+      self.started = self._camera_sim_ready()
     else:
       self.started = self.sm["deviceState"].started and self.ignition
 

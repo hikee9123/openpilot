@@ -79,10 +79,13 @@ class ToggleAction(ItemAction):
 
 
 class ButtonAction(ItemAction):
-  def __init__(self, text: str | Callable[[], str], width: int = BUTTON_WIDTH, enabled: bool | Callable[[], bool] = True):
+  def __init__(self, text: str | Callable[[], str], width: int = BUTTON_WIDTH, enabled: bool | Callable[[], bool] = True,
+               value_font_size: int = ITEM_TEXT_FONT_SIZE, value_lines: int = 1):
     super().__init__(width, enabled)
     self._text_source = text
     self._value_source: str | Callable[[], str] | None = None
+    self.value_font_size = value_font_size
+    self.value_lines = max(1, value_lines)
     self._pressed = False
     self._font = gui_app.font(FontWeight.NORMAL)
 
@@ -103,7 +106,7 @@ class ButtonAction(ItemAction):
   def get_width_hint(self) -> float:
     value_text = self.value
     if value_text:
-      text_width = measure_text_cached(self._font, value_text, ITEM_TEXT_FONT_SIZE).x
+      text_width = measure_text_cached(self._font, value_text, self.value_font_size).x
       return text_width + BUTTON_WIDTH + TEXT_PADDING
     else:
       return BUTTON_WIDTH
@@ -126,6 +129,53 @@ class ButtonAction(ItemAction):
   def value(self):
     return _resolve_value(self._value_source, "")
 
+  def _fit_text(self, text: str, width: float) -> str:
+    if not text or measure_text_cached(self._font, text, self.value_font_size).x <= width:
+      return text
+
+    left, right = 0, len(text)
+    while left < right:
+      mid = (left + right + 1) // 2
+      if measure_text_cached(self._font, text[:mid], self.value_font_size).x <= width:
+        left = mid
+      else:
+        right = mid - 1
+    return text[:left]
+
+  def _elide_text(self, text: str, width: float) -> str:
+    ellipsis = "..."
+    if measure_text_cached(self._font, text, self.value_font_size).x <= width:
+      return text
+    if measure_text_cached(self._font, ellipsis, self.value_font_size).x > width:
+      return ellipsis
+
+    left, right = 0, len(text)
+    while left < right:
+      mid = (left + right + 1) // 2
+      candidate = text[:mid] + ellipsis
+      if measure_text_cached(self._font, candidate, self.value_font_size).x <= width:
+        left = mid
+      else:
+        right = mid - 1
+    return text[:left] + ellipsis
+
+  def _wrap_value_lines(self, text: str, width: float) -> list[str]:
+    lines: list[str] = []
+    remaining = text
+    for line_idx in range(self.value_lines):
+      if not remaining:
+        break
+      if line_idx == self.value_lines - 1:
+        lines.append(self._elide_text(remaining, width))
+        break
+
+      fitted = self._fit_text(remaining, width)
+      if not fitted:
+        fitted = remaining[:1]
+      lines.append(fitted)
+      remaining = remaining[len(fitted):]
+    return lines
+
   def _render(self, rect: rl.Rectangle) -> bool:
     self._button.set_text(self.text)
     self._button.set_enabled(_resolve_value(self.enabled))
@@ -135,9 +185,17 @@ class ButtonAction(ItemAction):
     value_text = self.value
     if value_text:
       value_rect = rl.Rectangle(rect.x, rect.y, rect.width - BUTTON_WIDTH - TEXT_PADDING, rect.height)
-      gui_label(value_rect, value_text, font_size=ITEM_TEXT_FONT_SIZE, color=ITEM_TEXT_VALUE_COLOR,
-                font_weight=FontWeight.NORMAL, alignment=rl.GuiTextAlignment.TEXT_ALIGN_LEFT,
-                alignment_vertical=rl.GuiTextAlignmentVertical.TEXT_ALIGN_MIDDLE)
+      if self.value_lines == 1:
+        gui_label(value_rect, value_text, font_size=self.value_font_size, color=ITEM_TEXT_VALUE_COLOR,
+                  font_weight=FontWeight.NORMAL, alignment=rl.GuiTextAlignment.TEXT_ALIGN_LEFT,
+                  alignment_vertical=rl.GuiTextAlignmentVertical.TEXT_ALIGN_MIDDLE)
+      else:
+        lines = self._wrap_value_lines(value_text, value_rect.width)
+        line_height = self.value_font_size * 1.15
+        start_y = value_rect.y + (value_rect.height - line_height * len(lines)) / 2
+        for i, line in enumerate(lines):
+          rl.draw_text_ex(self._font, line, rl.Vector2(value_rect.x, start_y + i * line_height),
+                          self.value_font_size, 0, ITEM_TEXT_VALUE_COLOR)
 
     # TODO: just use the generic Widget click callbacks everywhere, no returning from render
     pressed = self._pressed
@@ -446,8 +504,9 @@ def toggle_item(title: str | Callable[[], str], description: str | Callable[[], 
 
 
 def button_item(title: str | Callable[[], str], button_text: str | Callable[[], str], description: str | Callable[[], str] | None = None,
-                callback: Callable | None = None, enabled: bool | Callable[[], bool] = True) -> ListItem:
-  action = ButtonAction(text=button_text, enabled=enabled)
+                callback: Callable | None = None, enabled: bool | Callable[[], bool] = True,
+                value_font_size: int = ITEM_TEXT_FONT_SIZE, value_lines: int = 1) -> ListItem:
+  action = ButtonAction(text=button_text, enabled=enabled, value_font_size=value_font_size, value_lines=value_lines)
   return ListItem(title=title, description=description, action_item=action, callback=callback)
 
 

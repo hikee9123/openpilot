@@ -74,6 +74,8 @@ class Scroller(Widget):
       item.set_position(x, y)
       item.set_parent_rect(self._rect)
       item.render()
+      rl.begin_scissor_mode(int(self._rect.x), int(self._rect.y),
+                            int(self._rect.width), int(self._rect.height))
 
     rl.end_scissor_mode()
 
