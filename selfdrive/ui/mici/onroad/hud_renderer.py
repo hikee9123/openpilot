@@ -516,11 +516,11 @@ class HudRenderer(Widget):
 
     lines = [line.strip() for line in self.camera_candidates_text.splitlines() if line.strip()][:max_lines]
     for idx, line in enumerate(lines):
-      line_text, line_font_size, line_size = self._fit_text(line, width, font_size, max(10, font_size - 3))
+      line_text, line_font_size, _ = self._fit_text(line, width, font_size, max(10, font_size - 3))
       rl.draw_text_ex(
         self._font_medium,
         line_text,
-        rl.Vector2(x + (width - line_size.x) / 2, y + idx * line_height),
+        rl.Vector2(x, y + idx * line_height),
         line_font_size,
         0,
         COLORS.WHITE_TRANSLUCENT,
