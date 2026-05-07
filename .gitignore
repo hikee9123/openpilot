@@ -45,6 +45,7 @@ config.json
 compile_commands.json
 compare_runtime*.html
 selfdrive/modeld/models/tg_compiled_flags.json
+selfdrive/navd/data/osm_roads_kr.sqlite3
 
 # build artifacts
 docs_site/
