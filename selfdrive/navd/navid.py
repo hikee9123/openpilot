@@ -7,6 +7,10 @@ from pathlib import Path
 import cereal.messaging as messaging
 from openpilot.common.realtime import Ratekeeper
 from openpilot.common.swaglog import cloudlog
+try:
+  from openpilot.selfdrive.navd.osm_roads import DEFAULT_LOOKUP_RADIUS_M, DEFAULT_OSM_ROADS_DB_PATH, find_current_road
+except ModuleNotFoundError:
+  from selfdrive.navd.osm_roads import DEFAULT_LOOKUP_RADIUS_M, DEFAULT_OSM_ROADS_DB_PATH, find_current_road
 from openpilot.selfdrive.navd.speed_camera import (
   DEFAULT_CSV_PATH,
   DEFAULT_DB_PATH,
@@ -25,6 +29,7 @@ from openpilot.selfdrive.ui.custom import read_custom_params
 
 DB_RETRY_SECONDS = 60.0
 LOOKUP_INTERVAL_SECONDS = 0.5
+OSM_ROAD_LOOKUP_INTERVAL_SECONDS = 2.0
 KPH_TO_MPS = 1000.0 / 3600.0
 MAX_CAMERA_CANDIDATES = 3
 
@@ -33,7 +38,7 @@ def _clip(value: float, min_value: float, max_value: float) -> float:
   return max(min_value, min(max_value, value))
 
 
-def _speed_camera_tuning() -> dict[str, float]:
+def _speed_camera_tuning() -> dict[str, float | bool]:
   try:
     values = read_custom_params()
   except Exception:
@@ -47,6 +52,8 @@ def _speed_camera_tuning() -> dict[str, float]:
     "passing_distance_m": _clip(float(values.get("SpeedCameraPassingDistance", 30)), 10.0, 80.0),
     "passed_ignore_seconds": _clip(float(values.get("SpeedCameraPassedIgnoreSeconds", 8)), 3.0, 30.0),
     "min_gps_speed_mps": _clip(float(values.get("SpeedCameraMinGpsSpeed", 3)), 0.0, 10.0) * KPH_TO_MPS,
+    "use_local_osm_roads": bool(values.get("UseLocalOsmRoads", False)),
+    "local_osm_road_radius_m": _clip(float(values.get("LocalOsmRoadRadius", DEFAULT_LOOKUP_RADIUS_M)), 20.0, 100.0),
   }
 
 
@@ -56,6 +63,10 @@ def _db_path() -> Path:
 
 def _csv_path() -> Path:
   return Path(os.getenv("SPEED_CAMERA_CSV", str(DEFAULT_CSV_PATH)))
+
+
+def _osm_roads_db_path() -> Path:
+  return Path(os.getenv("OSM_ROADS_DB", str(DEFAULT_OSM_ROADS_DB_PATH)))
 
 
 def _ensure_database(db_path: Path, csv_path: Path) -> bool:
@@ -130,6 +141,10 @@ def _candidate_corridor_marker(camera) -> str:
   return ""
 
 
+def _candidate_local_road_marker(camera) -> str:
+  return " O" if bool(getattr(camera, "local_road_match", False)) else ""
+
+
 def _format_candidate_text(candidates) -> str:
   lines = []
   for idx, camera in enumerate(candidates[:MAX_CAMERA_CANDIDATES], start=1):
@@ -137,12 +152,33 @@ def _format_candidate_text(candidates) -> str:
       f"{idx} {_candidate_category_label(camera)} "
       f"{_format_candidate_distance(float(getattr(camera, 'distance_m', 0.0)))} "
       f"{float(getattr(camera, 'relative_angle_deg', 0.0)):+.0f}"
+      f"{_candidate_local_road_marker(camera)}"
       f"{_candidate_corridor_marker(camera)}"
     )
   return "\n".join(lines)
 
 
-def _send_camera(pm: messaging.PubMaster, camera, candidates=()) -> None:
+def _format_debug_road_name(road_name: str, max_len: int = 22) -> str:
+  road_name = (road_name or "").strip()
+  if not road_name:
+    return ""
+  if len(road_name) > max_len:
+    road_name = f"{road_name[:max_len - 3]}..."
+  return f"ROAD {road_name}"
+
+
+def _format_camera_debug_text(candidates, current_road_name: str = "") -> str:
+  lines = []
+  road_line = _format_debug_road_name(current_road_name)
+  if road_line:
+    lines.append(road_line)
+  candidate_text = _format_candidate_text(candidates)
+  if candidate_text:
+    lines.extend(candidate_text.splitlines())
+  return "\n".join(lines)
+
+
+def _send_camera(pm: messaging.PubMaster, camera, candidates=(), current_road_name: str = "") -> None:
   msg = messaging.new_message("naviCustom")
   nav = msg.naviCustom.naviData
 
@@ -170,7 +206,7 @@ def _send_camera(pm: messaging.PubMaster, camera, candidates=()) -> None:
   nav.roadClassCode = road_class_code_value
   nav.camBearingDeg = float(getattr(camera, "bearing_deg", 0.0))
   nav.camRelativeAngleDeg = float(getattr(camera, "relative_angle_deg", 0.0))
-  nav.camCandidatesText = _format_candidate_text(candidates)
+  nav.camCandidatesText = _format_camera_debug_text(candidates, current_road_name)
   nav.camLimitSpeed = camera.speed_limit
   nav.camLimitSpeedLeftDist = max(0, int(camera.distance_m))
   nav.sectionLimitSpeed = camera.speed_limit if type_code == 4 else 0
@@ -179,7 +215,7 @@ def _send_camera(pm: messaging.PubMaster, camera, candidates=()) -> None:
   nav.sectionLeftTime = 0
   nav.sectionAdjustSpeed = False
   nav.camSpeedFactor = 1.0
-  nav.currentRoadName = camera.road_name or camera.place
+  nav.currentRoadName = current_road_name or camera.road_name or camera.place
   nav.isHighway = bool(getattr(camera, "is_expressway", False)) or "고속" in camera.road_name or "고속" in camera.place
   nav.isNda2 = False
 
@@ -210,6 +246,8 @@ def main() -> None:
   active_candidates = []
   tuning = _speed_camera_tuning()
   last_lookup_t = 0.0
+  last_osm_lookup_t = 0.0
+  current_road_name = ""
 
   while True:
     sm.update(0)
@@ -228,6 +266,7 @@ def main() -> None:
       active_camera_id = None
       active_camera = None
       active_candidates = []
+      current_road_name = ""
       _send_inactive(pm)
       rk.keep_time()
       continue
@@ -237,6 +276,20 @@ def main() -> None:
       tuning = _speed_camera_tuning()
       ignored_ids = {camera_id for camera_id, until in ignored_until.items() if until > now}
       ignored_until = {camera_id: until for camera_id, until in ignored_until.items() if until > now}
+
+      if bool(tuning["use_local_osm_roads"]) and now - last_osm_lookup_t >= OSM_ROAD_LOOKUP_INTERVAL_SECONDS:
+        last_osm_lookup_t = now
+        match = find_current_road(
+          _osm_roads_db_path(),
+          gps.latitude,
+          gps.longitude,
+          gps.bearingDeg,
+          float(tuning["local_osm_road_radius_m"]),
+          previous_name=current_road_name,
+        )
+        current_road_name = match.display_name if match is not None else ""
+      elif not bool(tuning["use_local_osm_roads"]):
+        current_road_name = ""
 
       active_candidates = find_lead_cameras(
         db_path,
@@ -248,6 +301,7 @@ def main() -> None:
         tuning["camera_direction_angle_deg"],
         ignored_ids,
         limit=MAX_CAMERA_CANDIDATES,
+        current_road_name=current_road_name,
       )
       active_camera = active_candidates[0] if active_candidates else None
 
@@ -276,7 +330,7 @@ def main() -> None:
         f"{active_camera.camera_type} limit={active_camera.speed_limit}"
       )
 
-    _send_camera(pm, active_camera, active_candidates)
+    _send_camera(pm, active_camera, active_candidates, current_road_name)
     rk.keep_time()
 
 

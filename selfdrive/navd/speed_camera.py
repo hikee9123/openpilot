@@ -13,8 +13,13 @@ from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+try:
+  from openpilot.selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH, find_current_road, road_name_matches
+except ModuleNotFoundError:
+  from selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH, find_current_road, road_name_matches
 
-DB_VERSION = 5
+
+DB_VERSION = 6
 PUBLIC_DATA_PK = "15028200"
 PUBLIC_DATA_BASE_URL = "https://www.data.go.kr"
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -184,6 +189,10 @@ SPEED_CAMERA_COLUMNS = (
   "source_type",
   "source_file",
   "dedup_key",
+  "osm_road_name",
+  "osm_road_ref",
+  "osm_road_match_dist_m",
+  "osm_road_match_heading_deg",
 )
 
 
@@ -219,6 +228,11 @@ class SpeedCamera:
   is_national_road: bool = False
   source_type: str = ""
   source_file: str = ""
+  osm_road_name: str = ""
+  osm_road_ref: str = ""
+  osm_road_match_dist_m: float = 0.0
+  osm_road_match_heading_deg: float = 0.0
+  local_road_match: bool = False
 
 
 def _first(row: dict[str, str], field: str) -> str:
@@ -388,9 +402,10 @@ def same_corridor_likely(camera: "SpeedCamera") -> bool:
   return False
 
 
-def _alert_priority(camera: "SpeedCamera") -> tuple[int, int, float, float]:
+def _alert_priority(camera: "SpeedCamera") -> tuple[int, int, int, float, float]:
   return (
     0 if is_speed_category(camera.camera_category) else 1,
+    0 if camera.local_road_match else 1,
     0 if same_corridor_likely(camera) else 1,
     camera.distance_m,
     abs(camera.relative_angle_deg),
@@ -507,7 +522,11 @@ def init_db(conn: sqlite3.Connection, backfill: bool = True) -> None:
       updated_at TEXT NOT NULL,
       source_type TEXT NOT NULL,
       source_file TEXT NOT NULL,
-      dedup_key TEXT NOT NULL
+      dedup_key TEXT NOT NULL,
+      osm_road_name TEXT NOT NULL,
+      osm_road_ref TEXT NOT NULL,
+      osm_road_match_dist_m REAL NOT NULL,
+      osm_road_match_heading_deg REAL NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS speed_camera_region_counts (
@@ -533,6 +552,10 @@ def init_db(conn: sqlite3.Connection, backfill: bool = True) -> None:
     "source_type": "TEXT NOT NULL DEFAULT 'public'",
     "source_file": "TEXT NOT NULL DEFAULT ''",
     "dedup_key": "TEXT NOT NULL DEFAULT ''",
+    "osm_road_name": "TEXT NOT NULL DEFAULT ''",
+    "osm_road_ref": "TEXT NOT NULL DEFAULT ''",
+    "osm_road_match_dist_m": "REAL NOT NULL DEFAULT 0.0",
+    "osm_road_match_heading_deg": "REAL NOT NULL DEFAULT 0.0",
   }
   columns = {row[1] for row in conn.execute("PRAGMA table_info(speed_cameras)")}
   for column, definition in column_defaults.items():
@@ -569,6 +592,9 @@ def init_db(conn: sqlite3.Connection, backfill: bool = True) -> None:
 
     CREATE INDEX IF NOT EXISTS idx_speed_cameras_dedup
     ON speed_cameras(dedup_key);
+
+    CREATE INDEX IF NOT EXISTS idx_speed_cameras_osm_road_name
+    ON speed_cameras(osm_road_name);
   """)
   if backfill:
     _backfill_derived_columns(conn)
@@ -811,6 +837,10 @@ def _standardize_csv_row(row: dict[str, str], csv_source: CsvSource, idx: int) -
     "source_type": source_type,
     "source_file": source_file,
     "dedup_key": dedup_key,
+    "osm_road_name": "",
+    "osm_road_ref": "",
+    "osm_road_match_dist_m": 0.0,
+    "osm_road_match_heading_deg": 0.0,
     "_manage_no": manage_no,
   }
 
@@ -819,7 +849,12 @@ def create_database_from_csv(csv_path: Path = DEFAULT_CSV_PATH, db_path: Path = 
   return create_database_from_csvs([CsvSource(csv_path, "public")], db_path)
 
 
-def create_database_from_csvs(csv_sources: list[CsvSource], db_path: Path = DEFAULT_DB_PATH) -> int:
+def create_database_from_csvs(
+  csv_sources: list[CsvSource],
+  db_path: Path = DEFAULT_DB_PATH,
+  osm_roads_db_path: Path | None = None,
+  osm_lookup_radius_m: float = 60.0,
+) -> int:
   merged: dict[str, dict[str, object]] = {}
   manage_no_clusters: dict[str, list[dict[str, object]]] = {}
   for csv_source in csv_sources:
@@ -865,7 +900,65 @@ def create_database_from_csvs(csv_sources: list[CsvSource], db_path: Path = DEFA
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("source_updated_at", source_updated_at))
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("version", str(DB_VERSION)))
     conn.commit()
+    if osm_roads_db_path is not None:
+      enrich_speed_camera_osm_roads(conn, osm_roads_db_path, osm_lookup_radius_m)
     return conn.execute("SELECT COUNT(*) FROM speed_cameras").fetchone()[0]
+
+
+def enrich_speed_camera_osm_roads(
+  conn: sqlite3.Connection,
+  osm_roads_db_path: Path = DEFAULT_OSM_ROADS_DB_PATH,
+  lookup_radius_m: float = 60.0,
+) -> int:
+  if not osm_roads_db_path.exists():
+    return 0
+
+  init_db(conn, backfill=False)
+  conn.row_factory = sqlite3.Row
+  rows = conn.execute("""
+    SELECT id, lat, lon, direction, road_name, place
+    FROM speed_cameras
+  """).fetchall()
+
+  updates = []
+  for row in rows:
+    camera_direction = direction_bearing_deg(str(_row_get(row, "direction", "")))
+    previous_name = f"{_row_get(row, 'road_name', '')} {_row_get(row, 'place', '')}"
+    match = find_current_road(
+      osm_roads_db_path,
+      float(row["lat"]),
+      float(row["lon"]),
+      camera_direction,
+      lookup_radius_m,
+      previous_name=previous_name,
+    )
+    if match is None:
+      continue
+    updates.append((
+      match.display_name,
+      match.ref,
+      float(match.distance_m),
+      float(match.heading_diff_deg),
+      row["id"],
+    ))
+
+  if not updates:
+    conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_enriched_count", "0"))
+    conn.commit()
+    return 0
+
+  conn.executemany("""
+    UPDATE speed_cameras
+    SET osm_road_name = ?,
+        osm_road_ref = ?,
+        osm_road_match_dist_m = ?,
+        osm_road_match_heading_deg = ?
+    WHERE id = ?
+  """, updates)
+  conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_enriched_count", str(len(updates))))
+  conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_db_path", str(osm_roads_db_path)))
+  conn.commit()
+  return len(updates)
 
 
 def database_data_date(db_path: Path = DEFAULT_DB_PATH) -> str:
@@ -1274,6 +1367,10 @@ def _row_to_camera(row: sqlite3.Row, distance_m: float, bearing: float, angle_di
     is_national_road=is_national_road,
     source_type=str(_row_get(row, "source_type", "")),
     source_file=str(_row_get(row, "source_file", "")),
+    osm_road_name=str(_row_get(row, "osm_road_name", "")),
+    osm_road_ref=str(_row_get(row, "osm_road_ref", "")),
+    osm_road_match_dist_m=float(_row_get(row, "osm_road_match_dist_m", 0.0)),
+    osm_road_match_heading_deg=float(_row_get(row, "osm_road_match_heading_deg", 0.0)),
   )
 
 
@@ -1334,6 +1431,7 @@ def find_lead_cameras(
   camera_direction_angle_deg: float = CAMERA_DIRECTION_ANGLE_DEG,
   ignored_ids: set[str] | None = None,
   limit: int = 3,
+  current_road_name: str = "",
 ) -> list[SpeedCamera]:
   if not db_path.exists():
     return []
@@ -1365,6 +1463,16 @@ def find_lead_cameras(
       continue
 
     camera = _row_to_camera(row, distance, cam_bearing, diff, relative_angle)
+    if current_road_name:
+      camera_road_names = (
+        (camera.osm_road_name, camera.osm_road_ref)
+        if (camera.osm_road_name or camera.osm_road_ref)
+        else (camera.road_name, camera.place)
+      )
+      camera = replace(
+        camera,
+        local_road_match=road_name_matches(current_road_name, *camera_road_names),
+      )
     if _is_alertable_category(camera.camera_category):
       candidates.append(camera)
 
@@ -1380,6 +1488,7 @@ def find_lead_camera(
   max_angle_deg: float = LOOKAHEAD_ANGLE_DEG,
   camera_direction_angle_deg: float = CAMERA_DIRECTION_ANGLE_DEG,
   ignored_ids: set[str] | None = None,
+  current_road_name: str = "",
 ) -> SpeedCamera | None:
   cameras = find_lead_cameras(
     db_path,
@@ -1391,5 +1500,6 @@ def find_lead_camera(
     camera_direction_angle_deg,
     ignored_ids,
     limit=1,
+    current_road_name=current_road_name,
   )
   return cameras[0] if cameras else None

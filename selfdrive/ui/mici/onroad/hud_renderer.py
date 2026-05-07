@@ -396,7 +396,7 @@ class HudRenderer(Widget):
       0,
       COLORS.WHITE_TRANSLUCENT,
     )
-    self._draw_camera_candidates_text(x, y + 190, width, 2, 13, 16)
+    self._draw_camera_candidates_text(x, y + 190, width, 3, 13, 16)
 
   def _draw_speed_limit_sign(self, center_x: float, center_y: float, radius: int, sign_lines: tuple[str, str]) -> None:
     is_speed = self._is_speed_camera_category(self.camera_category, self.camera_type)

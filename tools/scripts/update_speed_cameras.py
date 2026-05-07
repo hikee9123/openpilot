@@ -17,6 +17,7 @@ try:
   from openpilot.selfdrive.navd.speed_camera import (
     DEFAULT_CSV_PATH,
     DEFAULT_DB_PATH,
+    DEFAULT_OSM_ROADS_DB_PATH,
     DEFAULT_REGION_DIR,
     PUBLIC_DATA_PK,
     CsvSource,
@@ -29,6 +30,7 @@ except ModuleNotFoundError:
   from selfdrive.navd.speed_camera import (
     DEFAULT_CSV_PATH,
     DEFAULT_DB_PATH,
+    DEFAULT_OSM_ROADS_DB_PATH,
     DEFAULT_REGION_DIR,
     PUBLIC_DATA_PK,
     CsvSource,
@@ -84,6 +86,13 @@ def main() -> None:
   parser.add_argument("--extra-csv", type=Path, action="append", help="Additional custom CSV path; can be repeated")
   parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH, help=f"SQLite DB path (default: {DEFAULT_DB_PATH})")
   parser.add_argument(
+    "--osm-roads-db",
+    type=Path,
+    default=None,
+    help=f"Optional local OSM roads DB used to enrich camera road names (default: {DEFAULT_OSM_ROADS_DB_PATH})",
+  )
+  parser.add_argument("--osm-radius", type=float, default=60.0, help="OSM road-name enrichment radius in meters")
+  parser.add_argument(
     "--public-data-pk",
     default=PUBLIC_DATA_PK,
     help=f"Public data portal PK (default: {PUBLIC_DATA_PK})",
@@ -116,7 +125,10 @@ def main() -> None:
 
   _put_progress(params, 95)
   csv_sources = _csv_sources(args.csv, args.region_dir, args.extra_csv)
-  imported = create_database_from_csvs(csv_sources, args.db)
+  osm_roads_db = args.osm_roads_db
+  if osm_roads_db is None and DEFAULT_OSM_ROADS_DB_PATH.exists():
+    osm_roads_db = DEFAULT_OSM_ROADS_DB_PATH
+  imported = create_database_from_csvs(csv_sources, args.db, osm_roads_db_path=osm_roads_db, osm_lookup_radius_m=args.osm_radius)
   data_date = database_data_date(args.db)
   region_counts = database_region_counts(args.db)
   source_counts = _source_counts(csv_sources)
@@ -128,6 +140,8 @@ def main() -> None:
   print(f"  public: {source_counts.get('public', 0)}")
   print(f"  region: {source_counts.get('region', 0)}")
   print(f"  custom: {source_counts.get('custom', 0)}")
+  if osm_roads_db is not None:
+    print(f"osm roads {osm_roads_db}")
   print(f"data date {data_date or 'unknown'}")
   print(f"regions {len(region_counts)}")
 

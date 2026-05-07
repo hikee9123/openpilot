@@ -34,9 +34,44 @@ normalize_camera_category = speed_camera.normalize_camera_category
 normalize_road_class = speed_camera.normalize_road_class
 same_corridor_likely = speed_camera.same_corridor_likely
 
+try:
+  from openpilot.selfdrive.navd.osm_roads import insert_road_segments
+except ModuleNotFoundError:
+  from selfdrive.navd.osm_roads import insert_road_segments
+
 
 def _write_csv(path: Path, body: str) -> None:
   path.write_text(body, encoding="utf-8-sig")
+
+
+def _build_test_osm_roads_db(db_path: Path) -> None:
+  with sqlite3.connect(db_path) as conn:
+    insert_road_segments(conn, [
+      {
+        "osm_id": 101,
+        "name": "Current Road",
+        "ref": "E1",
+        "highway": "motorway",
+        "road_class": "EXPRESSWAY",
+        "oneway": 0,
+        "lat1": 37.0000,
+        "lon1": 127.0000,
+        "lat2": 37.0100,
+        "lon2": 127.0000,
+      },
+      {
+        "osm_id": 102,
+        "name": "Other Road",
+        "ref": "",
+        "highway": "primary",
+        "road_class": "NATIONAL_ROAD",
+        "oneway": 0,
+        "lat1": 37.0000,
+        "lon1": 127.0010,
+        "lat2": 37.0100,
+        "lon2": 127.0010,
+      },
+    ])
 
 
 def _fetch_row(db_path: Path, camera_id_prefix: str) -> sqlite3.Row:
@@ -197,7 +232,7 @@ def test_import_stores_camera_category_and_road_class_columns(tmp_path: Path) ->
 
   with sqlite3.connect(db_path) as conn:
     version = conn.execute("SELECT value FROM metadata WHERE key = 'version'").fetchone()[0]
-  assert version == "5"
+  assert version == str(speed_camera.DB_VERSION)
 
 
 def test_find_lead_camera_prioritizes_speed_camera_over_nearest_signal(tmp_path: Path) -> None:
@@ -518,6 +553,54 @@ def test_speed_camera_dataclass_contains_ui_fields(tmp_path: Path) -> None:
   assert camera.road_class_code == 1
   assert camera.is_expressway is True
   assert camera.is_national_road is False
+  assert camera.osm_road_name == ""
+  assert camera.osm_road_ref == ""
+
+
+def test_create_database_enriches_camera_osm_road_name(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  osm_db_path = tmp_path / "osm_roads.sqlite3"
+  _build_test_osm_roads_db(osm_db_path)
+  csv_path.write_text(
+    "MNLSS_REGLT_CAMERA_MANAGE_NO,LATITUDE,LONGITUDE,REGLT_SE,LMTT_VE,ROAD_ROUTE_NM\n"
+    "A1,37.004,127.0,01,80,Public DB Road\n",
+    encoding="utf-8",
+  )
+
+  assert create_database_from_csvs([CsvSource(csv_path, "public")], db_path, osm_roads_db_path=osm_db_path) == 1
+
+  row = _fetch_row(db_path, "A1")
+  assert row["osm_road_name"] == "Current Road"
+  assert row["osm_road_ref"] == "E1"
+  assert row["osm_road_match_dist_m"] < 5.0
+
+  camera = find_lead_camera(db_path, 37.0, 127.0, 0.0, current_road_name="Current Road")
+  assert camera is not None
+  assert camera.local_road_match
+  assert camera.osm_road_name == "Current Road"
+
+
+def test_osm_enriched_road_name_prioritizes_camera_with_mismatched_public_name(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  osm_db_path = tmp_path / "osm_roads.sqlite3"
+  _build_test_osm_roads_db(osm_db_path)
+  csv_path.write_text(
+    "MNLSS_REGLT_CAMERA_MANAGE_NO,LATITUDE,LONGITUDE,REGLT_SE,LMTT_VE,ROAD_ROUTE_NM\n"
+    "A1,37.002,127.001,01,80,Current Road\n"
+    "A2,37.004,127.0,01,80,Public DB Road\n",
+    encoding="utf-8",
+  )
+
+  assert create_database_from_csvs([CsvSource(csv_path, "public")], db_path, osm_roads_db_path=osm_db_path) == 2
+
+  camera = find_lead_camera(db_path, 37.0, 127.0, 0.0, current_road_name="Current Road")
+  assert camera is not None
+  assert camera.id.startswith("A2-")
+  assert camera.road_name == "Public DB Road"
+  assert camera.osm_road_name == "Current Road"
+  assert camera.local_road_match
 
 
 def test_init_db_backfills_old_database_speed_flags(tmp_path: Path) -> None:
@@ -621,6 +704,42 @@ def test_public_data_portal_column_codes(tmp_path: Path) -> None:
   assert camera.speed_limit == 40
   assert camera.camera_type == "01"
   assert database_data_date(db_path) == "2026-01-29"
+
+
+def test_find_lead_camera_prioritizes_local_road_match_within_speed_category(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  csv_path.write_text(
+    "MNLSS_REGLT_CAMERA_MANAGE_NO,LATITUDE,LONGITUDE,REGLT_SE,LMTT_VE,ROAD_ROUTE_NM\n"
+    "A1,37.001,127.0,01,80,Other Road\n"
+    "A2,37.002,127.0,01,80,Current Road\n",
+    encoding="utf-8",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 2
+
+  camera = find_lead_camera(db_path, 37.0, 127.0, 0.0, current_road_name="Current Road")
+  assert camera is not None
+  assert camera.id.startswith("A2-")
+  assert camera.local_road_match
+
+
+def test_find_lead_camera_keeps_speed_category_ahead_of_local_road_signal(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  csv_path.write_text(
+    "MNLSS_REGLT_CAMERA_MANAGE_NO,LATITUDE,LONGITUDE,REGLT_SE,LMTT_VE,ROAD_ROUTE_NM\n"
+    "A1,37.001,127.0,02,0,Current Road\n"
+    "A2,37.002,127.0,01,80,Other Road\n",
+    encoding="utf-8",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 2
+
+  camera = find_lead_camera(db_path, 37.0, 127.0, 0.0, current_road_name="Current Road")
+  assert camera is not None
+  assert camera.id.startswith("A2-")
+  assert not camera.local_road_match
 
 
 def test_region_counts_from_address(tmp_path: Path) -> None:

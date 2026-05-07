@@ -29,6 +29,8 @@ DEFAULT_CUSTOM_PARAMS: dict[str, int | float | bool] = {
   "SpeedCameraPassedIgnoreSeconds": 8,
   "SpeedCameraMinGpsSpeed": 3,
   "ShowSpeedCameraCandidates": False,
+  "UseLocalOsmRoads": False,
+  "LocalOsmRoadRadius": 50,
   SPEED_CAMERA_DEBUG_PREVIEW_UNTIL_KEY: 0.0,
   "ParamAutoScreenOff": 8,
   "ParamScreenOffAfterFade": True,

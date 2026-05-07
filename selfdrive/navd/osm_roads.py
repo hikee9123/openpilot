@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+import math
+import os
+import re
+import sqlite3
+from collections.abc import Iterable
+from contextlib import closing
+from dataclasses import dataclass
+from pathlib import Path
+
+
+DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data"
+DEFAULT_OSM_ROADS_DB_PATH = Path(os.getenv("OSM_ROADS_DB", str(DEFAULT_DATA_DIR / "osm_roads_kr.sqlite3")))
+
+METERS_PER_DEG_LAT = 111320.0
+DEFAULT_LOOKUP_RADIUS_M = 50.0
+MAX_HEADING_DIFF_DEG = 60.0
+
+ROAD_NAME_SUFFIXES = (
+  "EXPRESSWAY",
+  "HIGHWAY",
+  "ROAD",
+  "RO",
+  "GIL",
+  "DAERO",
+  "STREET",
+)
+
+
+@dataclass(frozen=True)
+class OSMRoadMatch:
+  road_id: int
+  osm_id: int
+  name: str
+  ref: str
+  highway: str
+  road_class: str
+  distance_m: float
+  heading_diff_deg: float
+  bearing_deg: float
+  score: float
+
+  @property
+  def display_name(self) -> str:
+    return self.name or self.ref
+
+
+def normalize_road_name(value: str) -> str:
+  normalized = (value or "").strip().upper()
+  normalized = re.sub(r"\s+", "", normalized)
+  normalized = re.sub(r"[\(\)\[\]\{\},._\-]", "", normalized)
+  for suffix in ROAD_NAME_SUFFIXES:
+    if normalized.endswith(suffix) and len(normalized) > len(suffix):
+      normalized = normalized[: -len(suffix)]
+  return normalized
+
+
+def road_name_matches(current_road_name: str, *candidate_names: str) -> bool:
+  current = normalize_road_name(current_road_name)
+  if not current:
+    return False
+
+  for candidate_name in candidate_names:
+    candidate = normalize_road_name(candidate_name)
+    if not candidate:
+      continue
+    if current == candidate:
+      return True
+    if len(current) >= 3 and len(candidate) >= 3 and (current in candidate or candidate in current):
+      return True
+  return False
+
+
+def road_bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+  phi1 = math.radians(lat1)
+  phi2 = math.radians(lat2)
+  dlon = math.radians(lon2 - lon1)
+  y = math.sin(dlon) * math.cos(phi2)
+  x = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(dlon)
+  return (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+
+
+def angle_diff_deg(a: float, b: float) -> float:
+  return abs((a - b + 180.0) % 360.0 - 180.0)
+
+
+def bidirectional_heading_diff_deg(segment_bearing_deg: float, heading_deg: float) -> float:
+  return min(angle_diff_deg(segment_bearing_deg, heading_deg), angle_diff_deg((segment_bearing_deg + 180.0) % 360.0, heading_deg))
+
+
+def _lon_scale(lat: float) -> float:
+  return METERS_PER_DEG_LAT * max(0.1, math.cos(math.radians(lat)))
+
+
+def _distance_point_to_segment_m(lat: float, lon: float, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+  lon_scale = _lon_scale(lat)
+  x1 = (lon1 - lon) * lon_scale
+  y1 = (lat1 - lat) * METERS_PER_DEG_LAT
+  x2 = (lon2 - lon) * lon_scale
+  y2 = (lat2 - lat) * METERS_PER_DEG_LAT
+  dx = x2 - x1
+  dy = y2 - y1
+  length_sq = dx * dx + dy * dy
+  if length_sq <= 0.0:
+    return math.hypot(x1, y1)
+  t = max(0.0, min(1.0, -(x1 * dx + y1 * dy) / length_sq))
+  closest_x = x1 + t * dx
+  closest_y = y1 + t * dy
+  return math.hypot(closest_x, closest_y)
+
+
+def _bounding_box(lat: float, lon: float, radius_m: float) -> tuple[float, float, float, float]:
+  lat_delta = radius_m / METERS_PER_DEG_LAT
+  lon_delta = radius_m / _lon_scale(lat)
+  return lat - lat_delta, lat + lat_delta, lon - lon_delta, lon + lon_delta
+
+
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+  row = conn.execute("SELECT 1 FROM sqlite_master WHERE name = ? LIMIT 1", (name,)).fetchone()
+  return row is not None
+
+
+def init_db(conn: sqlite3.Connection) -> None:
+  conn.execute("""
+    CREATE TABLE IF NOT EXISTS metadata (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  """)
+  conn.execute("""
+    CREATE TABLE IF NOT EXISTS roads (
+      id INTEGER PRIMARY KEY,
+      osm_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      ref TEXT NOT NULL,
+      highway TEXT NOT NULL,
+      road_class TEXT NOT NULL,
+      oneway INTEGER NOT NULL,
+      lat1 REAL NOT NULL,
+      lon1 REAL NOT NULL,
+      lat2 REAL NOT NULL,
+      lon2 REAL NOT NULL,
+      bearing_deg REAL NOT NULL,
+      min_lat REAL NOT NULL,
+      max_lat REAL NOT NULL,
+      min_lon REAL NOT NULL,
+      max_lon REAL NOT NULL
+    )
+  """)
+  conn.execute("""
+    CREATE VIRTUAL TABLE IF NOT EXISTS roads_rtree
+    USING rtree(id, min_lat, max_lat, min_lon, max_lon)
+  """)
+  conn.execute("CREATE INDEX IF NOT EXISTS idx_roads_name ON roads(name)")
+  conn.execute("CREATE INDEX IF NOT EXISTS idx_roads_ref ON roads(ref)")
+  conn.execute("CREATE INDEX IF NOT EXISTS idx_roads_highway ON roads(highway)")
+  conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("version", "1"))
+
+
+def insert_road_segments(
+  conn: sqlite3.Connection,
+  rows: Iterable[dict[str, object]],
+  batch_size: int = 20000,
+  replace: bool = True,
+) -> int:
+  init_db(conn)
+  if replace:
+    conn.execute("DELETE FROM roads")
+    conn.execute("DELETE FROM roads_rtree")
+
+  count = 0
+  batch: list[tuple[object, ...]] = []
+  for row in rows:
+    lat1 = float(row["lat1"])
+    lon1 = float(row["lon1"])
+    lat2 = float(row["lat2"])
+    lon2 = float(row["lon2"])
+    min_lat = min(lat1, lat2)
+    max_lat = max(lat1, lat2)
+    min_lon = min(lon1, lon2)
+    max_lon = max(lon1, lon2)
+    batch.append((
+      int(row["osm_id"]),
+      str(row.get("name", "") or ""),
+      str(row.get("ref", "") or ""),
+      str(row.get("highway", "") or ""),
+      str(row.get("road_class", "") or ""),
+      int(row.get("oneway", 0) or 0),
+      lat1,
+      lon1,
+      lat2,
+      lon2,
+      road_bearing_deg(lat1, lon1, lat2, lon2),
+      min_lat,
+      max_lat,
+      min_lon,
+      max_lon,
+    ))
+    if len(batch) >= batch_size:
+      count += _flush_segments(conn, batch)
+      batch.clear()
+
+  count += _flush_segments(conn, batch)
+  if replace:
+    conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("segment_count", str(count)))
+  return count
+
+
+def _flush_segments(conn: sqlite3.Connection, batch: list[tuple[object, ...]]) -> int:
+  if not batch:
+    return 0
+  cursor = conn.executemany("""
+    INSERT INTO roads(
+      osm_id, name, ref, highway, road_class, oneway,
+      lat1, lon1, lat2, lon2, bearing_deg,
+      min_lat, max_lat, min_lon, max_lon
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  """, batch)
+  first_id = cursor.lastrowid - len(batch) + 1 if cursor.lastrowid else None
+  if first_id is None:
+    ids = [row[0] for row in conn.execute("SELECT id FROM roads ORDER BY id DESC LIMIT ?", (len(batch),))]
+    ids.reverse()
+  else:
+    ids = range(first_id, first_id + len(batch))
+  conn.executemany(
+    "INSERT INTO roads_rtree(id, min_lat, max_lat, min_lon, max_lon) VALUES (?, ?, ?, ?, ?)",
+    ((road_id, row[11], row[12], row[13], row[14]) for road_id, row in zip(ids, batch, strict=False)),
+  )
+  return len(batch)
+
+
+def find_current_road(
+  db_path: Path = DEFAULT_OSM_ROADS_DB_PATH,
+  lat: float = 0.0,
+  lon: float = 0.0,
+  heading_deg: float | None = 0.0,
+  radius_m: float = DEFAULT_LOOKUP_RADIUS_M,
+  previous_name: str = "",
+) -> OSMRoadMatch | None:
+  if not db_path.exists():
+    return None
+
+  lat_min, lat_max, lon_min, lon_max = _bounding_box(lat, lon, radius_m)
+  try:
+    with closing(sqlite3.connect(db_path)) as conn:
+      conn.row_factory = sqlite3.Row
+      if not _table_exists(conn, "roads") or not _table_exists(conn, "roads_rtree"):
+        return None
+      rows = conn.execute("""
+        SELECT roads.*
+        FROM roads
+        JOIN roads_rtree ON roads.id = roads_rtree.id
+        WHERE roads_rtree.min_lat <= ?
+          AND roads_rtree.max_lat >= ?
+          AND roads_rtree.min_lon <= ?
+          AND roads_rtree.max_lon >= ?
+      """, (lat_max, lat_min, lon_max, lon_min)).fetchall()
+  except sqlite3.Error:
+    return None
+
+  best: OSMRoadMatch | None = None
+  for row in rows:
+    distance_m = _distance_point_to_segment_m(lat, lon, row["lat1"], row["lon1"], row["lat2"], row["lon2"])
+    if distance_m > radius_m:
+      continue
+
+    heading_diff = 0.0
+    if heading_deg is not None:
+      heading_diff = bidirectional_heading_diff_deg(row["bearing_deg"], heading_deg)
+      if heading_diff > MAX_HEADING_DIFF_DEG:
+        continue
+
+    name = str(row["name"] or "")
+    ref = str(row["ref"] or "")
+    name_bonus = -8.0 if road_name_matches(previous_name, name, ref) else 0.0
+    highway_bonus = -4.0 if str(row["highway"] or "") in ("motorway", "trunk", "primary") else 0.0
+    score = distance_m + heading_diff * 0.8 + name_bonus + highway_bonus
+    match = OSMRoadMatch(
+      road_id=int(row["id"]),
+      osm_id=int(row["osm_id"]),
+      name=name,
+      ref=ref,
+      highway=str(row["highway"] or ""),
+      road_class=str(row["road_class"] or ""),
+      distance_m=distance_m,
+      heading_diff_deg=heading_diff,
+      bearing_deg=float(row["bearing_deg"]),
+      score=score,
+    )
+    if best is None or match.score < best.score:
+      best = match
+
+  return best

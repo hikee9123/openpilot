@@ -10,6 +10,7 @@ try:
     DEFAULT_CSV_PATH,
     DEFAULT_DB_PATH,
     DEFAULT_REGION_DIR,
+    DEFAULT_OSM_ROADS_DB_PATH,
     CsvSource,
     create_database_from_csvs,
     find_lead_camera,
@@ -19,6 +20,7 @@ except ModuleNotFoundError:
     DEFAULT_CSV_PATH,
     DEFAULT_DB_PATH,
     DEFAULT_REGION_DIR,
+    DEFAULT_OSM_ROADS_DB_PATH,
     CsvSource,
     create_database_from_csvs,
     find_lead_camera,
@@ -65,6 +67,13 @@ def main() -> None:
   )
   parser.add_argument("--extra-csv", type=Path, action="append", help="Additional custom CSV path; can be repeated")
   parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH, help=f"SQLite DB path (default: {DEFAULT_DB_PATH})")
+  parser.add_argument(
+    "--osm-roads-db",
+    type=Path,
+    default=None,
+    help=f"Optional local OSM roads DB used to enrich camera road names (default: {DEFAULT_OSM_ROADS_DB_PATH})",
+  )
+  parser.add_argument("--osm-radius", type=float, default=60.0, help="OSM road-name enrichment radius in meters")
   parser.add_argument("--check", action="store_true", help="Run a lookup after import")
   parser.add_argument("--lat", type=float, help="Latitude for --check")
   parser.add_argument("--lon", type=float, help="Longitude for --check")
@@ -75,13 +84,19 @@ def main() -> None:
   if not csv_sources:
     parser.error("no CSV sources found")
 
-  count = create_database_from_csvs(csv_sources, args.db)
+  osm_roads_db = args.osm_roads_db
+  if osm_roads_db is None and DEFAULT_OSM_ROADS_DB_PATH.exists():
+    osm_roads_db = DEFAULT_OSM_ROADS_DB_PATH
+
+  count = create_database_from_csvs(csv_sources, args.db, osm_roads_db_path=osm_roads_db, osm_lookup_radius_m=args.osm_radius)
   counts = _source_counts(csv_sources)
   print(f"imported {count} speed cameras into {args.db}")
   print("sources:")
   print(f"  public: {counts.get('public', 0)}")
   print(f"  region: {counts.get('region', 0)}")
   print(f"  custom: {counts.get('custom', 0)}")
+  if osm_roads_db is not None:
+    print(f"osm roads: {osm_roads_db}")
 
   if args.check:
     if args.lat is None or args.lon is None:
