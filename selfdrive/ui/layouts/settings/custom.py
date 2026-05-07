@@ -169,6 +169,9 @@ COMPACT_PROGRESS_BAR_HEIGHT = 18
 COMPACT_PROGRESS_BAR_WIDTH = 300
 COMPACT_PROGRESS_PERCENT_WIDTH = 86
 COMPACT_PROGRESS_GAP = 22
+COMPACT_STATUS_FONT_SIZE = 30
+COMPACT_STATUS_MIN_FONT_SIZE = 24
+COMPACT_STATUS_LINE_HEIGHT = 34
 
 
 def run_logged(command: list[str], cwd: Path, log_path: str) -> subprocess.CompletedProcess:
@@ -403,11 +406,81 @@ class CompactStatusProgressGroup(CompactInfoGroup):
       return None
 
   def _draw_inline_status(self, status: str, x: float, y: float, max_width: float) -> None:
-    text, font_size = self._fit_text(status, self._font_regular, COMPACT_INFO_VALUE_FONT_SIZE,
-                                     COMPACT_INFO_VALUE_MIN_FONT_SIZE, max_width)
-    text_size = measure_text_cached(self._font_regular, text, font_size)
-    text_pos = rl.Vector2(x, y + (COMPACT_INFO_ROW_HEIGHT - text_size.y) / 2)
-    rl.draw_text_ex(self._font_regular, text, text_pos, font_size, 0, COMPACT_INFO_VALUE_COLOR)
+    lines, font_size = self._wrap_status(status, max_width)
+    line_height = COMPACT_STATUS_LINE_HEIGHT
+    start_y = y + (COMPACT_INFO_ROW_HEIGHT - line_height * len(lines)) / 2
+    for i, line in enumerate(lines):
+      rl.draw_text_ex(self._font_regular, line, rl.Vector2(x, start_y + i * line_height),
+                      font_size, 0, COMPACT_INFO_VALUE_COLOR)
+
+  def _wrap_status(self, status: str, max_width: float) -> tuple[list[str], int]:
+    font_size = COMPACT_STATUS_FONT_SIZE
+    while font_size > COMPACT_STATUS_MIN_FONT_SIZE and not self._status_fits(status, font_size, max_width):
+      font_size -= 2
+
+    if measure_text_cached(self._font_regular, status, font_size).x <= max_width:
+      return [status], font_size
+
+    parts = status.split(" / ")
+    if len(parts) > 1:
+      lines: list[str] = []
+      current = ""
+      for part in parts:
+        candidate = part if not current else f"{current} / {part}"
+        if len(lines) < 1 and measure_text_cached(self._font_regular, candidate, font_size).x <= max_width:
+          current = candidate
+          continue
+        if current:
+          lines.append(current)
+        current = part
+      if current:
+        lines.append(current)
+      if len(lines) <= 2:
+        return [self._elide_status_line(line, font_size, max_width) for line in lines], font_size
+      return [lines[0], self._elide_status_line(" / ".join(lines[1:]), font_size, max_width)], font_size
+
+    first = self._fit_status_prefix(status, font_size, max_width)
+    second = status[len(first):].strip()
+    return [first, self._elide_status_line(second, font_size, max_width)] if second else [first], font_size
+
+  def _status_fits(self, status: str, font_size: int, max_width: float) -> bool:
+    if measure_text_cached(self._font_regular, status, font_size).x <= max_width:
+      return True
+    parts = status.split(" / ")
+    if len(parts) > 1:
+      lines: list[str] = []
+      current = ""
+      for part in parts:
+        candidate = part if not current else f"{current} / {part}"
+        if len(lines) < 1 and measure_text_cached(self._font_regular, candidate, font_size).x <= max_width:
+          current = candidate
+        else:
+          if current:
+            lines.append(current)
+          current = part
+      if current:
+        lines.append(current)
+      return len(lines) <= 2 and all(measure_text_cached(self._font_regular, line, font_size).x <= max_width for line in lines)
+    return True
+
+  def _fit_status_prefix(self, text: str, font_size: int, max_width: float) -> str:
+    left, right = 1, len(text)
+    while left < right:
+      mid = (left + right + 1) // 2
+      if measure_text_cached(self._font_regular, text[:mid], font_size).x <= max_width:
+        left = mid
+      else:
+        right = mid - 1
+    return text[:left].rstrip()
+
+  def _elide_status_line(self, text: str, font_size: int, max_width: float) -> str:
+    if measure_text_cached(self._font_regular, text, font_size).x <= max_width:
+      return text
+    ellipsis = "..."
+    fitted = text
+    while fitted and measure_text_cached(self._font_regular, fitted + ellipsis, font_size).x > max_width:
+      fitted = fitted[:-1]
+    return (fitted.rstrip() + ellipsis) if fitted else ellipsis
 
   def _draw_inline_percent(self, percent: str, x: float, y: float, max_width: float) -> None:
     text_size = measure_text_cached(self._font_regular, percent, COMPACT_INFO_VALUE_FONT_SIZE)
