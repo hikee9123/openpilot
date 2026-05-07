@@ -32,6 +32,7 @@ find_lead_camera = speed_camera.find_lead_camera
 find_lead_cameras = speed_camera.find_lead_cameras
 normalize_camera_category = speed_camera.normalize_camera_category
 normalize_road_class = speed_camera.normalize_road_class
+same_corridor_likely = speed_camera.same_corridor_likely
 
 
 def _write_csv(path: Path, body: str) -> None:
@@ -218,6 +219,24 @@ def test_find_lead_camera_prioritizes_speed_camera_over_nearest_signal(tmp_path:
 
   cameras = find_lead_cameras(db_path, 37.0, 127.0, 0.0, limit=2)
   assert [camera.camera_category for camera in cameras] == ["SPEED", "SIGNAL"]
+
+
+def test_find_lead_camera_prefers_same_corridor_within_speed_candidates(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,설치장소\n"
+    "A1,37.0005,127.0005,속도위반,80,측방도로\n"
+    "A2,37.0010,127.0000,속도위반,80,직진도로\n",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 2
+  cameras = find_lead_cameras(db_path, 37.0, 127.0, 0.0, max_angle_deg=60.0, limit=2)
+  assert len(cameras) == 2
+  assert cameras[0].id.startswith("A2-")
+  assert same_corridor_likely(cameras[0])
+  assert not same_corridor_likely(cameras[1])
 
 
 def test_speed_camera_without_limit_keeps_speed_category(tmp_path: Path) -> None:

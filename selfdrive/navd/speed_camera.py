@@ -379,9 +379,19 @@ def _is_alertable_category(camera_category: str) -> bool:
   )
 
 
-def _alert_priority(camera: "SpeedCamera") -> tuple[int, float, float]:
+def same_corridor_likely(camera: "SpeedCamera") -> bool:
+  angle = abs(camera.relative_angle_deg)
+  if angle <= 15.0:
+    return True
+  if camera.is_expressway and angle <= 25.0:
+    return True
+  return False
+
+
+def _alert_priority(camera: "SpeedCamera") -> tuple[int, int, float, float]:
   return (
     0 if is_speed_category(camera.camera_category) else 1,
+    0 if same_corridor_likely(camera) else 1,
     camera.distance_m,
     abs(camera.relative_angle_deg),
   )

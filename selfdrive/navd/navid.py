@@ -121,6 +121,15 @@ def _format_candidate_distance(distance_m: float) -> str:
   return f"{int(distance_m)}m"
 
 
+def _candidate_corridor_marker(camera) -> str:
+  angle = abs(float(getattr(camera, "relative_angle_deg", 0.0)))
+  if angle <= 15.0:
+    return " R"
+  if bool(getattr(camera, "is_expressway", False)) and angle <= 25.0:
+    return " R"
+  return ""
+
+
 def _format_candidate_text(candidates) -> str:
   lines = []
   for idx, camera in enumerate(candidates[:MAX_CAMERA_CANDIDATES], start=1):
@@ -128,6 +137,7 @@ def _format_candidate_text(candidates) -> str:
       f"{idx} {_candidate_category_label(camera)} "
       f"{_format_candidate_distance(float(getattr(camera, 'distance_m', 0.0)))} "
       f"{float(getattr(camera, 'relative_angle_deg', 0.0)):+.0f}"
+      f"{_candidate_corridor_marker(camera)}"
     )
   return "\n".join(lines)
 
