@@ -19,7 +19,7 @@ from openpilot.selfdrive.navd.speed_camera import (
   DEFAULT_REGION_DIR as SPEED_CAMERA_REGION_DIR,
   database_category_counts,
   database_data_date,
-  database_osm_road_enriched_count,
+  database_osm_road_enrichment_stats,
   database_region_stats,
 )
 from openpilot.selfdrive.navd.osm_roads import (
@@ -386,7 +386,7 @@ class CompactStatusProgressGroup(CompactInfoGroup):
   def _draw_status_progress_row(self, panel_rect: rl.Rectangle, row_y: float) -> None:
     label_x = panel_rect.x + COMPACT_INFO_PADDING_X
     value_right = panel_rect.x + panel_rect.width - COMPACT_INFO_PADDING_X
-    value_x = panel_rect.x + panel_rect.width * 0.30
+    value_x = panel_rect.x + panel_rect.width * 0.27
     self._draw_label(tr("Status"), label_x, row_y, value_x - label_x - COMPACT_INFO_PADDING_X)
 
     progress = self._progress_percent()
@@ -540,7 +540,7 @@ class CompactStatusProgressInfoGroup(CompactStatusProgressGroup):
   def _draw_status_progress_info_row(self, panel_rect: rl.Rectangle, row_y: float) -> None:
     label_x = panel_rect.x + COMPACT_INFO_PADDING_X
     value_right = panel_rect.x + panel_rect.width - COMPACT_INFO_PADDING_X
-    value_x = panel_rect.x + panel_rect.width * 0.30
+    value_x = panel_rect.x + panel_rect.width * 0.27
     self._draw_label(tr("Status"), label_x, row_y, value_x - label_x - COMPACT_INFO_PADDING_X)
 
     progress = self._progress_percent()
@@ -864,6 +864,7 @@ class CustomSettingsLayout(Widget):
     self._speed_camera_region_stats_cache: list[tuple[str, int, int, str]] = []
     self._last_speed_camera_osm_status_check = -SPEED_CAMERA_OSM_STATUS_CACHE_INTERVAL
     self._speed_camera_osm_status_cache = ""
+    self._speed_camera_verify_log_until = 0.0
     self._speed_camera_preview_callback: Callable | None = None
     self._current_tab = "UI"
     self._tab_rects: dict[str, rl.Rectangle] = {}
@@ -976,6 +977,7 @@ class CustomSettingsLayout(Widget):
                           description=tr_noop("Sets the local OSM road lookup radius used to infer the current road name."), unit="m"),
         SectionHeader(tr_noop("Speed camera DB")),
         self._speed_camera_update_item(),
+        self._speed_camera_verify_item(),
         CompactStatusProgressInfoGroup(self._speed_camera_status_text, self._speed_camera_progress_text, [
           (tr_noop("Data date"), self._speed_camera_data_date_text),
           (tr_noop("Regions"), self._speed_camera_regions_text),
@@ -984,7 +986,7 @@ class CustomSettingsLayout(Widget):
           self._speed_camera_region_stats,
           self._speed_camera_category_counts,
           self._speed_camera_log_lines,
-          lambda: self._speed_camera_update_status() == STATUS_RUNNING,
+          self._speed_camera_log_active,
         ),
         self._speed_camera_icon_preview_item(),
         SectionHeader(tr_noop("Speed camera tuning")),
@@ -1225,6 +1227,15 @@ class CustomSettingsLayout(Widget):
       enabled=lambda: self._speed_camera_update_status() != STATUS_RUNNING,
     )
 
+  def _speed_camera_verify_item(self):
+    return button_item(
+      lambda: tr("Verify DB"),
+      lambda: tr("VERIFY"),
+      description=lambda: tr("Checks speed camera DB records, data date, regions, and OSM road-name matching without changing the DB."),
+      callback=self._handle_speed_camera_verify,
+      enabled=lambda: self._speed_camera_update_status() != STATUS_RUNNING,
+    )
+
   def _speed_camera_icon_preview_item(self):
     def callback() -> None:
       write_custom_params({SPEED_CAMERA_DEBUG_PREVIEW_UNTIL_KEY: time.time() + SPEED_CAMERA_DEBUG_PREVIEW_DURATION_SECONDS}, self._params)
@@ -1297,6 +1308,21 @@ class CustomSettingsLayout(Widget):
     content = tr("Download public speed camera CSV and replace the local DB?")
     dialog = ConfirmDialog(content, tr("UPDATE"), callback=lambda result: run() if result == DialogResult.CONFIRM else None)
     gui_app.push_widget(dialog)
+
+  def _handle_speed_camera_verify(self) -> None:
+    self._refresh_speed_camera_region_counts(force=True)
+    self._refresh_speed_camera_osm_status(force=True)
+    lines = self._speed_camera_verify_lines()
+    try:
+      with open(SPEED_CAMERA_LOG_PATH, "a", encoding="utf-8") as log_file:
+        log_file.write(f"$ verify speed camera DB {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        for line in lines:
+          log_file.write(f"{line}\n")
+    except OSError as e:
+      self._params.put(SPEED_CAMERA_ERROR_KEY, f"verify log failed: {e}")
+    self._speed_camera_log_tail = "\n".join(lines)
+    self._last_speed_camera_log_check = time.monotonic()
+    self._speed_camera_verify_log_until = time.monotonic() + 15.0
 
   def _handle_osm_roads_update(self) -> None:
     def run() -> None:
@@ -1616,6 +1642,36 @@ class CustomSettingsLayout(Widget):
     self._speed_camera_log_tail = "\n".join(visible_lines[-80:])
     return self._speed_camera_log_tail.splitlines()
 
+  def _speed_camera_log_active(self) -> bool:
+    return self._speed_camera_update_status() == STATUS_RUNNING or time.monotonic() < self._speed_camera_verify_log_until
+
+  def _speed_camera_verify_lines(self) -> list[str]:
+    stats = database_osm_road_enrichment_stats(SPEED_CAMERA_DB_PATH)
+    region_stats = self._speed_camera_region_stats()
+    alert_total = sum(alert_count for _, _, alert_count, _ in region_stats)
+    total_count = stats.total_count or self._speed_camera_count()
+
+    lines = [
+      f"db: {SPEED_CAMERA_DB_PATH}",
+      f"cameras {total_count:,}",
+      f"data date {self._speed_camera_data_date_text()}",
+      f"regions {len(region_stats)} / alerts {alert_total:,}",
+    ]
+
+    if DEFAULT_OSM_ROADS_DB_PATH.exists():
+      lines.append(f"osm roads DB: {DEFAULT_OSM_ROADS_DB_PATH} ({osm_roads_segment_count(DEFAULT_OSM_ROADS_DB_PATH):,} segments)")
+    else:
+      lines.append("osm roads DB: missing")
+
+    lines.extend([
+      f"osm road names matched {stats.matched_count:,} ({stats.match_percent}%)",
+      f"osm road names unmatched {stats.unmatched_count:,}",
+    ])
+    if stats.unmatched_by_category:
+      category_text = ", ".join(f"{category} {count:,}" for category, count in stats.unmatched_by_category[:8])
+      lines.append(f"unmatched by category: {category_text}")
+    return lines
+
 
   def _refresh_speed_camera_region_counts(self, force: bool = False) -> None:
     if force or not self._speed_camera_region_cache_loaded:
@@ -1674,12 +1730,12 @@ class CustomSettingsLayout(Widget):
     if not SPEED_CAMERA_DB_PATH.exists():
       return tr("OSM road names: no camera DB")
 
-    matched = database_osm_road_enriched_count(SPEED_CAMERA_DB_PATH)
-    if matched < 0:
+    stats = database_osm_road_enrichment_stats(SPEED_CAMERA_DB_PATH)
+    if stats.total_count <= 0:
       return tr("OSM road names: unavailable")
 
-    if matched > 0:
-      return f"{tr('OSM road names')}: {matched:,} {tr('matched')}"
+    if stats.matched_count > 0:
+      return f"{tr('OSM road names')}: {stats.matched_count:,} {tr('matched')} / {stats.unmatched_count:,} empty"
     return tr("OSM road names: not applied")
 
   def _speed_camera_osm_status_text(self) -> str:

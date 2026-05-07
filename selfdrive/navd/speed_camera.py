@@ -235,6 +235,20 @@ class SpeedCamera:
   local_road_match: bool = False
 
 
+@dataclass(frozen=True)
+class OsmRoadEnrichmentStats:
+  total_count: int = 0
+  matched_count: int = 0
+  unmatched_count: int = 0
+  unmatched_by_category: tuple[tuple[str, int], ...] = ()
+
+  @property
+  def match_percent(self) -> int:
+    if self.total_count <= 0:
+      return 0
+    return int(round(self.matched_count * 100 / self.total_count))
+
+
 def _first(row: dict[str, str], field: str) -> str:
   aliases = FIELD_ALIASES[field]
   for key in aliases:
@@ -998,30 +1012,53 @@ def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
 
 
 def database_osm_road_enriched_count(db_path: Path = DEFAULT_DB_PATH) -> int:
+  return database_osm_road_enrichment_stats(db_path).matched_count
+
+
+def database_osm_road_enrichment_stats(db_path: Path = DEFAULT_DB_PATH) -> OsmRoadEnrichmentStats:
   try:
     if not db_path.exists():
-      return 0
+      return OsmRoadEnrichmentStats()
   except OSError:
-    return 0
+    return OsmRoadEnrichmentStats()
 
   try:
     conn = sqlite3.connect(db_path)
   except sqlite3.Error:
-    return 0
+    return OsmRoadEnrichmentStats()
 
   with closing(conn):
     columns = _table_columns(conn, "speed_cameras")
     if not {"osm_road_name", "osm_road_ref"}.issubset(columns):
-      return 0
+      return OsmRoadEnrichmentStats()
     try:
       row = conn.execute("""
-        SELECT COUNT(*)
+        SELECT
+          COUNT(*) AS total_count,
+          SUM(CASE WHEN COALESCE(osm_road_name, '') != '' OR COALESCE(osm_road_ref, '') != '' THEN 1 ELSE 0 END) AS matched_count
         FROM speed_cameras
-        WHERE COALESCE(osm_road_name, '') != '' OR COALESCE(osm_road_ref, '') != ''
       """).fetchone()
-      return int(row[0] if row else 0)
+      total_count = int(row[0] if row else 0)
+      matched_count = int(row[1] if row and row[1] is not None else 0)
     except (sqlite3.Error, TypeError, ValueError):
-      return 0
+      return OsmRoadEnrichmentStats()
+
+    unmatched_count = max(0, total_count - matched_count)
+    unmatched_by_category: tuple[tuple[str, int], ...] = ()
+    if unmatched_count > 0 and "camera_category" in columns:
+      try:
+        rows = conn.execute("""
+          SELECT camera_category, COUNT(*)
+          FROM speed_cameras
+          WHERE COALESCE(osm_road_name, '') = '' AND COALESCE(osm_road_ref, '') = ''
+          GROUP BY camera_category
+          ORDER BY COUNT(*) DESC, camera_category
+        """).fetchall()
+        unmatched_by_category = tuple((str(category or "UNKNOWN"), int(count)) for category, count in rows)
+      except (sqlite3.Error, TypeError, ValueError):
+        unmatched_by_category = ()
+
+    return OsmRoadEnrichmentStats(total_count, matched_count, unmatched_count, unmatched_by_category)
 
 
 def database_region_counts(db_path: Path = DEFAULT_DB_PATH) -> list[tuple[str, int]]:
