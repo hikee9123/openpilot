@@ -17,6 +17,7 @@ from openpilot.selfdrive.navd.speed_camera import (
   DEFAULT_CSV_PATH as SPEED_CAMERA_CSV_PATH,
   DEFAULT_DB_PATH as SPEED_CAMERA_DB_PATH,
   DEFAULT_REGION_DIR as SPEED_CAMERA_REGION_DIR,
+  OsmRoadEnrichmentStats,
   database_category_counts,
   database_data_date,
   database_osm_road_enrichment_stats,
@@ -159,7 +160,6 @@ SPEED_CAMERA_REGION_PADDING = 20
 SPEED_CAMERA_DETAIL_TAB_HEIGHT = 42
 SPEED_CAMERA_DETAIL_TAB_WIDTH = 120
 SPEED_CAMERA_DETAIL_TAB_GAP = 10
-SPEED_CAMERA_OSM_STATUS_CACHE_INTERVAL = 5.0
 COMPACT_INFO_ROW_HEIGHT = 82
 COMPACT_INFO_PADDING_X = 34
 COMPACT_INFO_PADDING_Y = 8
@@ -862,8 +862,10 @@ class CustomSettingsLayout(Widget):
     self._speed_camera_region_cache_loaded = False
     self._speed_camera_category_counts_cache: list[tuple[str, int]] = []
     self._speed_camera_region_stats_cache: list[tuple[str, int, int, str]] = []
-    self._last_speed_camera_osm_status_check = -SPEED_CAMERA_OSM_STATUS_CACHE_INTERVAL
+    self._speed_camera_osm_status_loaded = False
     self._speed_camera_osm_status_cache = ""
+    self._speed_camera_osm_stats_loaded = False
+    self._speed_camera_osm_stats_cache = OsmRoadEnrichmentStats()
     self._speed_camera_verify_log_until = 0.0
     self._speed_camera_preview_callback: Callable | None = None
     self._current_tab = "UI"
@@ -1650,7 +1652,7 @@ class CustomSettingsLayout(Widget):
     return self._speed_camera_update_status() == STATUS_RUNNING or time.monotonic() < self._speed_camera_verify_log_until
 
   def _speed_camera_verify_lines(self) -> list[str]:
-    stats = database_osm_road_enrichment_stats(SPEED_CAMERA_DB_PATH)
+    stats = self._speed_camera_osm_stats(force=True)
     region_stats = self._speed_camera_region_stats()
     alert_total = sum(alert_count for _, _, alert_count, _ in region_stats)
     total_count = stats.total_count or self._speed_camera_count()
@@ -1721,13 +1723,19 @@ class CustomSettingsLayout(Widget):
   def _format_speed_camera_count(self) -> str:
     return f"{self._speed_camera_count():,}"
 
-  def _refresh_speed_camera_osm_status(self, force: bool = False) -> str:
-    now = time.monotonic()
-    if not force and now - self._last_speed_camera_osm_status_check < SPEED_CAMERA_OSM_STATUS_CACHE_INTERVAL:
-      return self._speed_camera_osm_status_cache
+  def _speed_camera_osm_stats(self, force: bool = False) -> OsmRoadEnrichmentStats:
+    if force or not self._speed_camera_osm_stats_loaded:
+      self._speed_camera_osm_stats_cache = database_osm_road_enrichment_stats(SPEED_CAMERA_DB_PATH)
+      self._speed_camera_osm_stats_loaded = True
+    return self._speed_camera_osm_stats_cache
 
-    self._last_speed_camera_osm_status_check = now
+  def _refresh_speed_camera_osm_status(self, force: bool = False) -> str:
+    if not force and self._speed_camera_osm_status_loaded:
+      return self._speed_camera_osm_status_cache
+    if force:
+      self._speed_camera_osm_stats(force=True)
     self._speed_camera_osm_status_cache = self._read_speed_camera_osm_status()
+    self._speed_camera_osm_status_loaded = True
     return self._speed_camera_osm_status_cache
 
   def _read_speed_camera_osm_status(self) -> str:
@@ -1736,7 +1744,7 @@ class CustomSettingsLayout(Widget):
     if not SPEED_CAMERA_DB_PATH.exists():
       return tr("OSM road names: no camera DB")
 
-    stats = database_osm_road_enrichment_stats(SPEED_CAMERA_DB_PATH)
+    stats = self._speed_camera_osm_stats()
     if stats.total_count <= 0:
       return tr("OSM road names: unavailable")
 
@@ -1756,7 +1764,7 @@ class CustomSettingsLayout(Widget):
         return tr("Applying OSM road names")
       return tr("OSM road names: pending")
 
-    stats = database_osm_road_enrichment_stats(SPEED_CAMERA_DB_PATH)
+    stats = self._speed_camera_osm_stats()
     if stats.total_count <= 0:
       return self._refresh_speed_camera_osm_status()
     extended_text = f" / +{stats.extended_match_count:,} ext" if stats.extended_match_count > 0 else ""
@@ -1766,7 +1774,7 @@ class CustomSettingsLayout(Widget):
     if self._speed_camera_update_status() == STATUS_RUNNING:
       return tr("OSM empty: calculating")
 
-    stats = database_osm_road_enrichment_stats(SPEED_CAMERA_DB_PATH)
+    stats = self._speed_camera_osm_stats()
     if stats.total_count <= 0:
       return ""
     return f"OSM empty {stats.unmatched_count:,}"
