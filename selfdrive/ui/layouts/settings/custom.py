@@ -562,7 +562,7 @@ class CompactStatusProgressInfoGroup(CompactStatusProgressGroup):
     self._draw_progress_bar(rl.Rectangle(bar_x, row_y, bar_width, COMPACT_INFO_ROW_HEIGHT), progress)
 
   def _draw_status_detail_lines(self, lines: list[str], x: float, y: float, max_width: float) -> None:
-    visible_lines = [line for line in lines if line][:3]
+    visible_lines = [line for line in lines if line]
     start_y = y + (self._status_row_height - COMPACT_STATUS_LINE_HEIGHT * len(visible_lines)) / 2
     for i, line in enumerate(visible_lines):
       fitted = self._elide_status_line(line, COMPACT_STATUS_FONT_SIZE, max_width)

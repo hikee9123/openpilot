@@ -984,6 +984,8 @@ def enrich_speed_camera_osm_roads(
     )
     if match is None:
       continue
+    if not road_name_matches(previous_name, match.display_name, match.ref):
+      continue
     extended_updates.append((
       match.display_name,
       match.ref,
