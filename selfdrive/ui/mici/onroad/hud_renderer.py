@@ -139,6 +139,8 @@ class HudRenderer(Widget):
     self.road_class_code: int = 0
     self.camera_bearing_deg: float = 0.0
     self.camera_relative_angle_deg: float = 0.0
+    self.camera_candidates_text: str = ""
+    self.show_speed_camera_candidates: bool = False
     self._camera_pointer_angle_filter = FirstOrderFilter(0.0, 0.25, 1 / gui_app.target_fps, initialized=False)
     self.camera_search_angle_deg: float = 35.0
     self._camera_search_angle_last_check: float = 0.0
@@ -326,6 +328,7 @@ class HudRenderer(Widget):
     self.road_class_code = int(getattr(nav, "roadClassCode", 0))
     self.camera_bearing_deg = float(getattr(nav, "camBearingDeg", 0.0))
     self.camera_relative_angle_deg = float(getattr(nav, "camRelativeAngleDeg", 0.0))
+    self.camera_candidates_text = str(getattr(nav, "camCandidatesText", ""))
     if not self.camera_alert_active and self._speed_camera_preview_active():
       self._apply_speed_camera_preview()
     if not self.camera_alert_active:
@@ -393,6 +396,7 @@ class HudRenderer(Widget):
       0,
       COLORS.WHITE_TRANSLUCENT,
     )
+    self._draw_camera_candidates_text(x, y + 190, width, 2, 13, 16)
 
   def _draw_speed_limit_sign(self, center_x: float, center_y: float, radius: int, sign_lines: tuple[str, str]) -> None:
     is_speed = self._is_speed_camera_category(self.camera_category, self.camera_type)
@@ -478,9 +482,27 @@ class HudRenderer(Widget):
       try:
         values = read_custom_params(self._params)
         self.camera_search_angle_deg = max(15.0, min(60.0, float(values.get("SpeedCameraLookaheadAngle", 35))))
+        self.show_speed_camera_candidates = bool(values.get("ShowSpeedCameraCandidates", False))
       except (TypeError, ValueError):
         self.camera_search_angle_deg = 35.0
+        self.show_speed_camera_candidates = False
     return self.camera_search_angle_deg
+
+  def _draw_camera_candidates_text(self, x: float, y: float, width: float, max_lines: int, font_size: int, line_height: int) -> None:
+    if not self.show_speed_camera_candidates or not self.camera_candidates_text:
+      return
+
+    lines = [line.strip() for line in self.camera_candidates_text.splitlines() if line.strip()][:max_lines]
+    for idx, line in enumerate(lines):
+      line_text, line_font_size, line_size = self._fit_text(line, width, font_size, max(10, font_size - 3))
+      rl.draw_text_ex(
+        self._font_medium,
+        line_text,
+        rl.Vector2(x + (width - line_size.x) / 2, y + idx * line_height),
+        line_font_size,
+        0,
+        COLORS.WHITE_TRANSLUCENT,
+      )
 
   def _filtered_camera_pointer_angle(self) -> float:
     target_angle = (self.camera_relative_angle_deg + 180.0) % 360.0 - 180.0

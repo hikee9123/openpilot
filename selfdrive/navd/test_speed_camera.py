@@ -29,6 +29,7 @@ database_region_stats = speed_camera.database_region_stats
 direction_bearing_deg = speed_camera.direction_bearing_deg
 download_public_speed_camera_csv = speed_camera.download_public_speed_camera_csv
 find_lead_camera = speed_camera.find_lead_camera
+find_lead_cameras = speed_camera.find_lead_cameras
 normalize_camera_category = speed_camera.normalize_camera_category
 normalize_road_class = speed_camera.normalize_road_class
 
@@ -198,7 +199,7 @@ def test_import_stores_camera_category_and_road_class_columns(tmp_path: Path) ->
   assert version == "5"
 
 
-def test_find_lead_camera_returns_nearest_signal_or_speed_camera(tmp_path: Path) -> None:
+def test_find_lead_camera_prioritizes_speed_camera_over_nearest_signal(tmp_path: Path) -> None:
   csv_path = tmp_path / "speed_cameras.csv"
   db_path = tmp_path / "speed_cameras.sqlite3"
   _write_csv(
@@ -211,9 +212,12 @@ def test_find_lead_camera_returns_nearest_signal_or_speed_camera(tmp_path: Path)
   assert create_database_from_csv(csv_path, db_path) == 2
   camera = find_lead_camera(db_path, 37.0, 127.0, 0.0)
   assert camera is not None
-  assert camera.id.startswith("A1-")
-  assert camera.camera_category == "SIGNAL"
-  assert camera.camera_type_code == 2
+  assert camera.id.startswith("A2-")
+  assert camera.camera_category == "SPEED"
+  assert camera.camera_type_code == 1
+
+  cameras = find_lead_cameras(db_path, 37.0, 127.0, 0.0, limit=2)
+  assert [camera.camera_category for camera in cameras] == ["SPEED", "SIGNAL"]
 
 
 def test_speed_camera_without_limit_keeps_speed_category(tmp_path: Path) -> None:

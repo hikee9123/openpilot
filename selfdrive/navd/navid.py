@@ -13,7 +13,7 @@ from openpilot.selfdrive.navd.speed_camera import (
   DB_VERSION,
   camera_type_code,
   create_database_from_csv,
-  find_lead_camera,
+  find_lead_cameras,
   init_db,
   normalize_camera_category,
   normalize_road_class,
@@ -26,6 +26,7 @@ from openpilot.selfdrive.ui.custom import read_custom_params
 DB_RETRY_SECONDS = 60.0
 LOOKUP_INTERVAL_SECONDS = 0.5
 KPH_TO_MPS = 1000.0 / 3600.0
+MAX_CAMERA_CANDIDATES = 3
 
 
 def _clip(value: float, min_value: float, max_value: float) -> float:
@@ -94,10 +95,44 @@ def _send_inactive(pm: messaging.PubMaster) -> None:
   nav.roadClassCode = 0
   nav.camBearingDeg = 0.0
   nav.camRelativeAngleDeg = 0.0
+  nav.camCandidatesText = ""
   pm.send("naviCustom", msg)
 
 
-def _send_camera(pm: messaging.PubMaster, camera) -> None:
+def _candidate_category_label(camera) -> str:
+  category = str(getattr(camera, "camera_category", ""))
+  type_code = int(getattr(camera, "camera_type_code", 0))
+  if category == "SECTION_SPEED" or type_code == 4:
+    return "AVG"
+  if category in ("SPEED", "SPEED_SIGNAL") or type_code in (1, 3):
+    return "SPD"
+  if category == "SIGNAL" or type_code == 2:
+    return "SIG"
+  if category == "PROTECTED_ZONE" or type_code == 10:
+    return "ZON"
+  if category == "SECURITY" or type_code == 8:
+    return "SEC"
+  return "CAM"
+
+
+def _format_candidate_distance(distance_m: float) -> str:
+  if distance_m >= 1000.0:
+    return f"{distance_m / 1000.0:.1f}k"
+  return f"{int(distance_m)}m"
+
+
+def _format_candidate_text(candidates) -> str:
+  lines = []
+  for idx, camera in enumerate(candidates[:MAX_CAMERA_CANDIDATES], start=1):
+    lines.append(
+      f"{idx} {_candidate_category_label(camera)} "
+      f"{_format_candidate_distance(float(getattr(camera, 'distance_m', 0.0)))} "
+      f"{float(getattr(camera, 'relative_angle_deg', 0.0)):+.0f}"
+    )
+  return "\n".join(lines)
+
+
+def _send_camera(pm: messaging.PubMaster, camera, candidates=()) -> None:
   msg = messaging.new_message("naviCustom")
   nav = msg.naviCustom.naviData
 
@@ -125,6 +160,7 @@ def _send_camera(pm: messaging.PubMaster, camera) -> None:
   nav.roadClassCode = road_class_code_value
   nav.camBearingDeg = float(getattr(camera, "bearing_deg", 0.0))
   nav.camRelativeAngleDeg = float(getattr(camera, "relative_angle_deg", 0.0))
+  nav.camCandidatesText = _format_candidate_text(candidates)
   nav.camLimitSpeed = camera.speed_limit
   nav.camLimitSpeedLeftDist = max(0, int(camera.distance_m))
   nav.sectionLimitSpeed = camera.speed_limit if type_code == 4 else 0
@@ -161,6 +197,7 @@ def main() -> None:
   ignored_until: dict[str, float] = {}
   active_camera_id: str | None = None
   active_camera = None
+  active_candidates = []
   tuning = _speed_camera_tuning()
   last_lookup_t = 0.0
 
@@ -180,6 +217,7 @@ def main() -> None:
     if gps is None or gps.speed < tuning["min_gps_speed_mps"]:
       active_camera_id = None
       active_camera = None
+      active_candidates = []
       _send_inactive(pm)
       rk.keep_time()
       continue
@@ -190,7 +228,7 @@ def main() -> None:
       ignored_ids = {camera_id for camera_id, until in ignored_until.items() if until > now}
       ignored_until = {camera_id: until for camera_id, until in ignored_until.items() if until > now}
 
-      active_camera = find_lead_camera(
+      active_candidates = find_lead_cameras(
         db_path,
         gps.latitude,
         gps.longitude,
@@ -199,19 +237,24 @@ def main() -> None:
         tuning["lookahead_angle_deg"],
         tuning["camera_direction_angle_deg"],
         ignored_ids,
+        limit=MAX_CAMERA_CANDIDATES,
       )
+      active_camera = active_candidates[0] if active_candidates else None
 
     if active_camera is None:
       active_camera_id = None
+      active_candidates = []
       _send_inactive(pm)
       rk.keep_time()
       continue
 
-    active_camera = update_camera_position(active_camera, gps.latitude, gps.longitude, gps.bearingDeg)
+    active_candidates = [update_camera_position(camera, gps.latitude, gps.longitude, gps.bearingDeg) for camera in active_candidates]
+    active_camera = active_candidates[0]
     if active_camera.distance_m <= tuning["passing_distance_m"]:
       ignored_until[active_camera.id] = now + tuning["passed_ignore_seconds"]
       active_camera = None
       active_camera_id = None
+      active_candidates = []
       _send_inactive(pm)
       rk.keep_time()
       continue
@@ -223,7 +266,7 @@ def main() -> None:
         f"{active_camera.camera_type} limit={active_camera.speed_limit}"
       )
 
-    _send_camera(pm, active_camera)
+    _send_camera(pm, active_camera, active_candidates)
     rk.keep_time()
 
 

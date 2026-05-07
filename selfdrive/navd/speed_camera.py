@@ -379,6 +379,14 @@ def _is_alertable_category(camera_category: str) -> bool:
   )
 
 
+def _alert_priority(camera: "SpeedCamera") -> tuple[int, float, float]:
+  return (
+    0 if is_speed_category(camera.camera_category) else 1,
+    camera.distance_m,
+    abs(camera.relative_angle_deg),
+  )
+
+
 def camera_type_code(camera_type: str, section_type: str = "") -> int:
   category = normalize_camera_category(camera_type, section_type)
   return camera_category_code(category)
@@ -1306,7 +1314,7 @@ def _candidate_rows(
   """, (lat_min, lat_max, lon_min, lon_max)).fetchall()
 
 
-def find_lead_camera(
+def find_lead_cameras(
   db_path: Path,
   lat: float,
   lon: float,
@@ -1315,9 +1323,10 @@ def find_lead_camera(
   max_angle_deg: float = LOOKAHEAD_ANGLE_DEG,
   camera_direction_angle_deg: float = CAMERA_DIRECTION_ANGLE_DEG,
   ignored_ids: set[str] | None = None,
-) -> SpeedCamera | None:
+  limit: int = 3,
+) -> list[SpeedCamera]:
   if not db_path.exists():
-    return None
+    return []
 
   ignored_ids = ignored_ids or set()
   lat_min, lat_max, lon_min, lon_max = _bounding_box(lat, lon, max_distance_m)
@@ -1326,7 +1335,7 @@ def find_lead_camera(
     conn.row_factory = sqlite3.Row
     rows = _candidate_rows(conn, lat_min, lat_max, lon_min, lon_max)
 
-  best: SpeedCamera | None = None
+  candidates: list[SpeedCamera] = []
   for row in rows:
     if row["id"] in ignored_ids:
       continue
@@ -1347,7 +1356,30 @@ def find_lead_camera(
 
     camera = _row_to_camera(row, distance, cam_bearing, diff, relative_angle)
     if _is_alertable_category(camera.camera_category):
-      if best is None or camera.distance_m < best.distance_m:
-        best = camera
+      candidates.append(camera)
 
-  return best
+  return sorted(candidates, key=_alert_priority)[:max(0, limit)]
+
+
+def find_lead_camera(
+  db_path: Path,
+  lat: float,
+  lon: float,
+  heading_deg: float,
+  max_distance_m: float = LOOKAHEAD_DISTANCE_M,
+  max_angle_deg: float = LOOKAHEAD_ANGLE_DEG,
+  camera_direction_angle_deg: float = CAMERA_DIRECTION_ANGLE_DEG,
+  ignored_ids: set[str] | None = None,
+) -> SpeedCamera | None:
+  cameras = find_lead_cameras(
+    db_path,
+    lat,
+    lon,
+    heading_deg,
+    max_distance_m,
+    max_angle_deg,
+    camera_direction_angle_deg,
+    ignored_ids,
+    limit=1,
+  )
+  return cameras[0] if cameras else None
