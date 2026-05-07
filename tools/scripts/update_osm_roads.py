@@ -2,8 +2,10 @@
 import argparse
 import importlib.util
 import os
+import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -27,6 +29,7 @@ DEFAULT_OSM_PBF_PATH = DEFAULT_OSM_ROADS_DB_PATH.with_name("south-korea-latest.o
 OSM_ROADS_PROGRESS_KEY = "OsmRoadsUpdateProgress"
 OSM_ROADS_COUNT_KEY = "OsmRoadsSegmentCount"
 OSM_USER_AGENT = "Mozilla/5.0 (openpilot OSM roads updater)"
+STALE_BUILD_SECONDS = 24 * 60 * 60
 
 
 def _put_progress(params: Params, progress: int) -> None:
@@ -71,23 +74,83 @@ def _ensure_osmium(params: Params, auto_install: bool) -> bool:
 def _download(url: str, output_path: Path, params: Params) -> None:
   output_path.parent.mkdir(parents=True, exist_ok=True)
   tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
-  request = Request(url, headers={"User-Agent": OSM_USER_AGENT})
-  with urlopen(request, timeout=60) as response, tmp_path.open("wb") as out:
-    total = int(response.headers.get("Content-Length") or 0)
-    written = 0
-    while True:
-      chunk = response.read(1024 * 1024)
-      if not chunk:
-        break
-      out.write(chunk)
-      written += len(chunk)
-      if total > 0:
-        progress = int((written / total) * 70)
-        _put_progress(params, progress)
-        print(f"download {progress}% ({written}/{total})", flush=True)
-      else:
-        print(f"downloaded {written}", flush=True)
-  os.replace(tmp_path, output_path)
+  try:
+    request = Request(url, headers={"User-Agent": OSM_USER_AGENT})
+    with urlopen(request, timeout=60) as response, tmp_path.open("wb") as out:
+      total = int(response.headers.get("Content-Length") or 0)
+      written = 0
+      while True:
+        chunk = response.read(1024 * 1024)
+        if not chunk:
+          break
+        out.write(chunk)
+        written += len(chunk)
+        if total > 0:
+          progress = int((written / total) * 70)
+          _put_progress(params, progress)
+          print(f"download {progress}% ({written}/{total})", flush=True)
+        else:
+          print(f"downloaded {written}", flush=True)
+    os.replace(tmp_path, output_path)
+  except Exception:
+    _unlink_if_exists(tmp_path)
+    raise
+
+
+def _unlink_if_exists(path: Path) -> None:
+  try:
+    path.unlink()
+  except FileNotFoundError:
+    pass
+  except OSError as e:
+    print(f"failed to remove {path}: {e}", flush=True)
+
+
+def _cleanup_stale_build_files(db_path: Path) -> None:
+  now = time.time()
+  for path in (db_path.with_suffix(db_path.suffix + ".building"), db_path.with_suffix(db_path.suffix + ".tmp")):
+    try:
+      age = now - os.path.getmtime(path)
+    except OSError:
+      continue
+    if age > STALE_BUILD_SECONDS:
+      print(f"removing stale build file {path}", flush=True)
+      _unlink_if_exists(path)
+
+
+def _validate_osm_db(db_path: Path) -> int:
+  if not db_path.exists():
+    raise RuntimeError(f"temporary DB missing: {db_path}")
+  count = database_segment_count(db_path)
+  if count <= 0:
+    raise RuntimeError(f"temporary DB has no road segments: {db_path}")
+  try:
+    with sqlite3.connect(db_path) as conn:
+      for table in ("roads", "roads_rtree", "metadata"):
+        row = conn.execute("SELECT 1 FROM sqlite_master WHERE name = ? LIMIT 1", (table,)).fetchone()
+        if row is None:
+          raise RuntimeError(f"temporary DB missing table: {table}")
+      conn.execute("SELECT COUNT(*) FROM roads").fetchone()
+      conn.execute("SELECT COUNT(*) FROM roads_rtree").fetchone()
+  except sqlite3.Error as e:
+    raise RuntimeError(f"temporary DB validation failed: {e}") from e
+  return count
+
+
+def _replace_db_atomically(build_path: Path, final_path: Path) -> None:
+  final_path.parent.mkdir(parents=True, exist_ok=True)
+  backup_path = final_path.with_suffix(final_path.suffix + ".bak")
+  if final_path.exists():
+    print(f"backing up existing DB to {backup_path}", flush=True)
+    os.replace(final_path, backup_path)
+  try:
+    print(f"replacing {final_path}", flush=True)
+    os.replace(build_path, final_path)
+  except Exception:
+    if backup_path.exists() and not final_path.exists():
+      print("restore existing DB from backup", flush=True)
+      os.replace(backup_path, final_path)
+    raise
 
 
 def main() -> None:
@@ -113,17 +176,32 @@ def main() -> None:
     parser.error(f"--skip-download requested but PBF does not exist: {args.pbf}")
 
   _put_progress(params, 75)
-  print(f"building OSM roads DB {args.db}", flush=True)
+  _cleanup_stale_build_files(args.db)
+  build_db = args.db.with_suffix(args.db.suffix + ".building")
+  _unlink_if_exists(build_db)
+  print(f"building temporary OSM roads DB {build_db}", flush=True)
   result = subprocess.run(
-    [sys.executable, "tools/scripts/build_osm_roads.py", str(args.pbf), "--db", str(args.db)],
+    [sys.executable, "tools/scripts/build_osm_roads.py", str(args.pbf), "--db", str(build_db)],
     cwd=Path(__file__).resolve().parents[2],
     text=True,
     check=False,
   )
   if result.returncode != 0:
+    print(f"build failed; keeping existing DB {args.db}", flush=True)
+    _unlink_if_exists(build_db)
     return result.returncode
 
-  count = database_segment_count(args.db)
+  try:
+    print("validating temporary OSM roads DB", flush=True)
+    count = _validate_osm_db(build_db)
+    print(f"validated temporary DB: {count} segments", flush=True)
+    _replace_db_atomically(build_db, args.db)
+  except Exception as e:
+    print(f"validation or replace failed: {e}", flush=True)
+    print(f"keeping existing DB {args.db}", flush=True)
+    _unlink_if_exists(build_db)
+    return 1
+
   try:
     params.put(OSM_ROADS_COUNT_KEY, count)
   except Exception:
