@@ -29,6 +29,7 @@ SPEED_CAMERA_DEBUG_PREVIEW_CATEGORY = "SECTION_SPEED"
 SPEED_CAMERA_DEBUG_PREVIEW_ROAD_CLASS = "EXPRESSWAY"
 SPEED_CAMERA_DEBUG_PREVIEW_ROAD_CLASS_CODE = 1
 SPEED_CAMERA_DEBUG_PREVIEW_RELATIVE_ANGLE_DEG = 30.0
+SPEED_CAMERA_DEBUG_PREVIEW_CANDIDATES = "road: preview road\n1 SECTION 350m local\n2 SPEED 620m\n3 SIGNAL 910m"
 
 SET_SPEED_PERSISTENCE = 2.5  # seconds
 
@@ -379,6 +380,7 @@ class HudRenderer(Widget):
     self.road_class_code = SPEED_CAMERA_DEBUG_PREVIEW_ROAD_CLASS_CODE
     self.camera_bearing_deg = 0.0
     self.camera_relative_angle_deg = SPEED_CAMERA_DEBUG_PREVIEW_RELATIVE_ANGLE_DEG
+    self.camera_candidates_text = SPEED_CAMERA_DEBUG_PREVIEW_CANDIDATES
 
   def _draw_speed_camera_alert(self, rect: rl.Rectangle) -> None:
     if not self.camera_alert_active or not self._can_draw_top_icons:

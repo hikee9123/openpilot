@@ -5,6 +5,9 @@
 
 #include "cereal/gen/cpp/log.capnp.h"
 
+inline static const std::string DEFAULT_MAPBOX_TOKEN =
+    "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZGVudGl0eSI6IjllNjgxY2QxMzM5MmJmOTMiLCJuYmYiOjE3MDI3MTE4ODMsImlhdCI6MTcwMjcxMTg4MywiZXhwIjoxNzA1MTMxMDgzfQ.Jwi45iHCwIA49Cme2A0iTfDr4NhFUT4l2R_97ChgKvv3SHeXkJSpWstmJDhkhRVy4fK91C7KOp9X5fKksNtrhMEwh_PCMG_VPibN9hZ5YNhn2D2MHVeiPMq1OLnj09g7qEKRKKKhPSJB4Awy0xXqNxVAVDutPdViQfD33CpMR4T6pPXcjMpxdwHo7O-I-YP4rO2hJl3TUGRmxhwxvuC5hOEylQvV6PV1ZsZV5dGByGR5JPdCb9DO84YRd0F5sJhJtj0HD1sP4LRz5R88lGl3kEmkBWvolVgl7TLMf9rmoL8rbhwb73ANeknt1c92G-MTggTPnpGCmz9jS8qMcEyWmQ";
+
 inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"AccessToken", {CLEAR_ON_MANAGER_START | DONT_LOG, STRING}},
     {"AdbEnabled", {PERSISTENT, BOOL}},
@@ -135,7 +138,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"CustomParam", {PERSISTENT, STRING}},
     {"UseExternalNaviRoutes", {PERSISTENT, BOOL}},
     {"ExternalNaviType", {PERSISTENT, STRING}},
-    {"MapboxToken", {PERSISTENT, STRING}},
+    {"MapboxToken", {PERSISTENT, STRING, DEFAULT_MAPBOX_TOKEN}},
     {"SelectedCar", {PERSISTENT, STRING}},
     {"ActiveModelName", {PERSISTENT, STRING}},
     {"CustomModelCompileStatus", {PERSISTENT, STRING}},

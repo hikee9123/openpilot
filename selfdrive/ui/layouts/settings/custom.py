@@ -154,6 +154,15 @@ SPEED_CAMERA_REGION_PANEL_HEIGHT = 360
 SPEED_CAMERA_REGION_FONT_SIZE = 22
 SPEED_CAMERA_REGION_LINE_HEIGHT = 32
 SPEED_CAMERA_REGION_PADDING = 20
+COMPACT_INFO_ROW_HEIGHT = 82
+COMPACT_INFO_PADDING_X = 34
+COMPACT_INFO_PADDING_Y = 8
+COMPACT_INFO_LABEL_FONT_SIZE = 38
+COMPACT_INFO_VALUE_FONT_SIZE = 38
+COMPACT_INFO_VALUE_MIN_FONT_SIZE = 28
+COMPACT_INFO_BG = rl.Color(35, 35, 35, 255)
+COMPACT_INFO_LABEL_COLOR = rl.WHITE
+COMPACT_INFO_VALUE_COLOR = rl.Color(170, 170, 170, 255)
 
 
 def run_logged(command: list[str], cwd: Path, log_path: str) -> subprocess.CompletedProcess:
@@ -280,6 +289,68 @@ class SectionHeader(Widget):
     text_size = measure_text_cached(self._font, label, SECTION_FONT_SIZE)
     text_pos = rl.Vector2(rect.x + 32, rect.y + (rect.height - text_size.y) / 2)
     rl.draw_text_ex(self._font, label, text_pos, SECTION_FONT_SIZE, 0, TAB_TEXT)
+
+
+class CompactInfoGroup(Widget):
+  def __init__(self, rows: list[tuple[str, Callable[[], str]]]):
+    super().__init__()
+    self._rows = rows
+    self._font_regular = gui_app.font(FontWeight.NORMAL)
+    self._font_medium = gui_app.font(FontWeight.MEDIUM)
+    height = COMPACT_INFO_PADDING_Y * 2 + COMPACT_INFO_ROW_HEIGHT * len(self._rows)
+    self.set_rect(rl.Rectangle(0, 0, 0, height))
+
+  def set_parent_rect(self, parent_rect: rl.Rectangle) -> None:
+    super().set_parent_rect(parent_rect)
+    self._rect.width = parent_rect.width
+
+  def _render(self, rect: rl.Rectangle):
+    panel_rect = rl.Rectangle(
+      rect.x + COMPACT_INFO_PADDING_X / 2,
+      rect.y + COMPACT_INFO_PADDING_Y / 2,
+      rect.width - COMPACT_INFO_PADDING_X,
+      rect.height - COMPACT_INFO_PADDING_Y,
+    )
+    rl.draw_rectangle_rounded(panel_rect, 0.05, 8, COMPACT_INFO_BG)
+
+    label_x = panel_rect.x + COMPACT_INFO_PADDING_X
+    value_right = panel_rect.x + panel_rect.width - COMPACT_INFO_PADDING_X
+    value_x = panel_rect.x + panel_rect.width * 0.38
+    value_width = value_right - value_x
+    row_y = panel_rect.y + COMPACT_INFO_PADDING_Y / 2
+
+    for label_source, value_callback in self._rows:
+      label = tr(label_source)
+      value = value_callback()
+      self._draw_label(label, label_x, row_y, value_x - label_x - COMPACT_INFO_PADDING_X)
+      self._draw_value(value, value_x, row_y, value_width)
+      row_y += COMPACT_INFO_ROW_HEIGHT
+
+  def _draw_label(self, label: str, x: float, y: float, max_width: float) -> None:
+    text, font_size = self._fit_text(label, self._font_medium, COMPACT_INFO_LABEL_FONT_SIZE,
+                                     COMPACT_INFO_LABEL_FONT_SIZE, max_width)
+    text_size = measure_text_cached(self._font_medium, text, font_size)
+    text_pos = rl.Vector2(x, y + (COMPACT_INFO_ROW_HEIGHT - text_size.y) / 2)
+    rl.draw_text_ex(self._font_medium, text, text_pos, font_size, 0, COMPACT_INFO_LABEL_COLOR)
+
+  def _draw_value(self, value: str, x: float, y: float, max_width: float) -> None:
+    text, font_size = self._fit_text(value, self._font_regular, COMPACT_INFO_VALUE_FONT_SIZE,
+                                     COMPACT_INFO_VALUE_MIN_FONT_SIZE, max_width)
+    text_size = measure_text_cached(self._font_regular, text, font_size)
+    text_pos = rl.Vector2(x + max(0, max_width - text_size.x), y + (COMPACT_INFO_ROW_HEIGHT - text_size.y) / 2)
+    rl.draw_text_ex(self._font_regular, text, text_pos, font_size, 0, COMPACT_INFO_VALUE_COLOR)
+
+  def _fit_text(self, text: str, font: rl.Font, font_size: int, min_font_size: int, max_width: float) -> tuple[str, int]:
+    while font_size > min_font_size and measure_text_cached(font, text, font_size).x > max_width:
+      font_size -= 2
+    if measure_text_cached(font, text, font_size).x <= max_width:
+      return text, font_size
+
+    ellipsis = "..."
+    fitted = text
+    while fitted and measure_text_cached(font, fitted + ellipsis, font_size).x > max_width:
+      fitted = fitted[:-1]
+    return ((fitted.rstrip() + ellipsis) if fitted else ellipsis), font_size
 
 
 class CompileLogPanel(Widget):
@@ -578,22 +649,24 @@ class CustomSettingsLayout(Widget):
       "Navigation": [
         SectionHeader(tr_noop("OSM roads DB")),
         self._osm_roads_update_item(),
-        text_item(lambda: tr("OSM roads status"), self._osm_roads_status_text,
-                  description=lambda: tr("Shows the local OSM road-name DB build result."),
-                  font_size=25),
-        text_item(lambda: tr("OSM roads progress"), self._osm_roads_progress_text,
-                  description=lambda: tr("Shows download and build progress for the local OSM roads DB.")),
+        CompactInfoGroup([
+          (tr_noop("Status"), self._osm_roads_status_text),
+          (tr_noop("Progress"), self._osm_roads_progress_text),
+        ]),
         CompileLogPanel(tr_noop("OSM roads detail"), self._osm_roads_log_lines, tr_noop("No OSM roads log yet")),
+        SectionHeader(tr_noop("OSM matching")),
+        self._toggle_json_item("UseLocalOsmRoads", tr_noop("Use local OSM roads"),
+                               tr_noop("Uses an offline OSM road DB to prefer speed camera candidates on the current road.")),
+        self._number_item("LocalOsmRoadRadius", tr_noop("OSM road search radius"), 20, 100, 5,
+                          description=tr_noop("Sets the local OSM road lookup radius used to infer the current road name."), unit="m"),
         SectionHeader(tr_noop("Speed camera DB")),
         self._speed_camera_update_item(),
-        text_item(lambda: tr("Speed camera status"), self._speed_camera_status_text,
-                  description=lambda: tr("Shows the last public speed camera CSV download and DB import result.")),
-        text_item(lambda: tr("Speed camera progress"), self._speed_camera_progress_text,
-                  description=lambda: tr("Shows download and import progress for the speed camera DB update.")),
-        text_item(lambda: tr("Speed camera data date"), self._speed_camera_data_date_text,
-                  description=lambda: tr("Shows the public data reference date stored in the local speed camera DB.")),
-        text_item(lambda: tr("Speed camera regions"), self._speed_camera_regions_text,
-                  description=lambda: tr("Shows saved speed camera counts by category and region.")),
+        CompactInfoGroup([
+          (tr_noop("Status"), self._speed_camera_status_text),
+          (tr_noop("Progress"), self._speed_camera_progress_text),
+          (tr_noop("Data date"), self._speed_camera_data_date_text),
+          (tr_noop("Regions"), self._speed_camera_regions_text),
+        ]),
         SpeedCameraRegionsPanel(self._speed_camera_region_stats, self._speed_camera_category_counts),
         self._speed_camera_icon_preview_item(),
         SectionHeader(tr_noop("Speed camera tuning")),
@@ -609,12 +682,10 @@ class CustomSettingsLayout(Widget):
                           description=tr_noop("Sets how long, in seconds, a passed camera is hidden from repeated alerts."), unit="s"),
         self._number_item("SpeedCameraMinGpsSpeed", tr_noop("Minimum GPS speed"), 0, 10, 1,
                           description=tr_noop("Sets the minimum vehicle speed, in km/h, required before speed camera lookup runs."), unit="km/h"),
+        SectionHeader(tr_noop("Speed camera debug")),
         self._toggle_json_item("ShowSpeedCameraCandidates", tr_noop("Show camera candidates"),
                                tr_noop("Shows up to three selected speed camera candidates on the onroad HUD for debugging.")),
-        self._toggle_json_item("UseLocalOsmRoads", tr_noop("Use local OSM roads"),
-                               tr_noop("Uses an offline OSM road DB to prefer speed camera candidates on the current road.")),
-        self._number_item("LocalOsmRoadRadius", tr_noop("OSM road search radius"), 20, 100, 5,
-                          description=tr_noop("Sets the local OSM road lookup radius used to infer the current road name."), unit="m"),
+        SectionHeader(tr_noop("External navigation")),
         self._toggle_param_item("UseExternalNaviRoutes", tr_noop("Use external navi routes"),
                                 tr_noop("Allows navigation to use routes from an external navigation provider.")),
         self._cycle_param_int_item("ExternalNaviType", tr_noop("External navi type"), EXTERNAL_NAVI_OPTIONS,
@@ -828,7 +899,7 @@ class CustomSettingsLayout(Widget):
 
   def _speed_camera_update_item(self):
     return button_item(
-      lambda: tr("Speed camera DB"),
+      lambda: tr("Update DB"),
       self._speed_camera_button_text,
       description=lambda: tr("Downloads the national public unmanned traffic enforcement camera CSV and imports it into the local navigation DB."),
       callback=self._handle_speed_camera_update,
@@ -851,7 +922,7 @@ class CustomSettingsLayout(Widget):
 
   def _osm_roads_update_item(self):
     return button_item(
-      lambda: tr("OSM roads DB"),
+      lambda: tr("Update DB"),
       self._osm_roads_button_text,
       description=lambda: tr("Downloads the South Korea OSM PBF and builds the offline road-name DB used by speed camera matching."),
       callback=self._handle_osm_roads_update,
@@ -1125,15 +1196,21 @@ class CustomSettingsLayout(Widget):
     data_date = self._param_text(SPEED_CAMERA_DATA_DATE_KEY) or database_data_date(SPEED_CAMERA_DB_PATH)
     return data_date or "--"
 
+  def _format_count_text(self, count: str) -> str:
+    try:
+      return f"{int(count):,}"
+    except ValueError:
+      return count
+
   def _osm_roads_status_text(self) -> str:
     status = self._osm_roads_update_status()
     if status == STATUS_RUNNING:
       return tr("Building")
     if status == STATUS_SUCCESS:
-      count = self._param_text(OSM_ROADS_COUNT_KEY) or str(osm_roads_segment_count(DEFAULT_OSM_ROADS_DB_PATH))
+      count = self._format_count_text(self._param_text(OSM_ROADS_COUNT_KEY) or str(osm_roads_segment_count(DEFAULT_OSM_ROADS_DB_PATH)))
       updated_at = self._param_text(OSM_ROADS_UPDATED_AT_KEY) or osm_roads_built_at(DEFAULT_OSM_ROADS_DB_PATH)
-      suffix = f" {updated_at}" if updated_at else ""
-      return f"{tr('Ready')} {count}{suffix}"
+      suffix = f" / {updated_at}" if updated_at else ""
+      return f"{tr('Ready')} / {count} segments{suffix}"
     if status == STATUS_FAILED:
       error = self._param_text(OSM_ROADS_ERROR_KEY)
       if len(error) > 80:
@@ -1143,8 +1220,8 @@ class CustomSettingsLayout(Widget):
     count = osm_roads_segment_count(DEFAULT_OSM_ROADS_DB_PATH)
     if count > 0:
       built_at = osm_roads_built_at(DEFAULT_OSM_ROADS_DB_PATH)
-      suffix = f" {built_at}" if built_at else ""
-      return f"{tr('Ready')} {count}{suffix}"
+      suffix = f" / {built_at}" if built_at else ""
+      return f"{tr('Ready')} / {count:,} segments{suffix}"
     return tr("Idle")
 
   def _osm_roads_log_lines(self) -> list[str]:
@@ -1186,17 +1263,20 @@ class CustomSettingsLayout(Widget):
     region_total = len(region_stats)
     camera_total = sum(total_count for _, total_count, _, _ in region_stats)
     alert_total = sum(alert_count for _, _, alert_count, _ in region_stats)
-    return f"{region_total} regions / {camera_total:,} all / {alert_total:,} alerts"
+    return f"{region_total} regions / {camera_total:,} cameras / {alert_total:,} alerts"
+
+  def _format_speed_camera_count(self) -> str:
+    return self._format_count_text(self._param_text(SPEED_CAMERA_COUNT_KEY) or "0")
 
   def _speed_camera_status_text(self) -> str:
     status = self._speed_camera_update_status()
     if status == STATUS_RUNNING:
       return tr("Downloading")
     if status == STATUS_SUCCESS:
-      count = self._param_text(SPEED_CAMERA_COUNT_KEY) or "0"
+      count = self._format_speed_camera_count()
       updated_at = self._param_text(SPEED_CAMERA_UPDATED_AT_KEY)
-      suffix = f" {updated_at}" if updated_at else ""
-      return f"{tr('Ready')} {count}{suffix}"
+      suffix = f" / {updated_at}" if updated_at else ""
+      return f"{tr('Ready')} / {count} cameras{suffix}"
     if status == STATUS_FAILED:
       error = self._param_text(SPEED_CAMERA_ERROR_KEY)
       if len(error) > 80:
@@ -1225,21 +1305,21 @@ class CustomSettingsLayout(Widget):
     item = button_item(lambda: tr(title), lambda: tr("EDIT"),
                        description=(lambda: tr(description)) if description else None,
                        callback=lambda k=key, t=title: self._show_keyboard(k, t))
-    item.action_item.set_value(lambda k=key: self._param_text(k))
+    item.action_item.set_value(lambda k=key: self._param_text(k, return_default=True))
     return item
 
   def _show_keyboard(self, key: str, title: str) -> None:
     keyboard = Keyboard(max_text_size=512, callback=lambda result, k=key: self._handle_keyboard_result(k, keyboard, result))
     keyboard.set_title(tr(title), "")
-    keyboard.set_text(self._param_text(key))
+    keyboard.set_text(self._param_text(key, return_default=True))
     gui_app.push_widget(keyboard)
 
   def _handle_keyboard_result(self, key: str, keyboard: Keyboard, result: DialogResult) -> None:
     if result == DialogResult.CONFIRM:
       self._params.put(key, keyboard.text)
 
-  def _param_text(self, key: str) -> str:
-    raw = self._params.get(key)
+  def _param_text(self, key: str, return_default: bool = False) -> str:
+    raw = self._params.get(key, return_default=return_default)
     if raw is None:
       return ""
     return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
@@ -1507,9 +1587,9 @@ class CustomSettingsLayout(Widget):
     self._scrollers[self._current_tab].hide_event()
 
   def _render(self, rect: rl.Rectangle):
-    self._draw_tabs(rect)
     scroller_rect = rl.Rectangle(rect.x, rect.y + TAB_HEIGHT + TAB_GAP, rect.width, rect.height - TAB_HEIGHT - TAB_GAP)
     self._scrollers[self._current_tab].render(scroller_rect)
+    self._draw_tabs(rect)
 
   def _draw_tabs(self, rect: rl.Rectangle):
     self._tab_rects.clear()
