@@ -438,10 +438,10 @@ class HudRenderer(Widget):
     direction_y = -math.cos(angle_rad)
     perpendicular_x = math.cos(angle_rad)
     perpendicular_y = math.sin(angle_rad)
-    pointer_length = max(16.0, radius * 0.38)
-    pointer_half_width = max(9.0, radius * 0.18)
-    base_radius = radius + 1.0
-    tip_radius = radius + pointer_length
+    pointer_length = max(12.0, radius * 0.28)
+    pointer_half_width = max(7.0, radius * 0.13)
+    tip_radius = radius - 10.0
+    base_radius = max(0.0, tip_radius - pointer_length)
 
     tip = rl.Vector2(center_x + direction_x * tip_radius, center_y + direction_y * tip_radius)
     base_center_x = center_x + direction_x * base_radius
@@ -565,14 +565,14 @@ class HudRenderer(Widget):
 
   def _speed_sign_radius(self) -> int:
     if self._is_speed_camera_category(self.camera_category, self.camera_type):
-      return 55
+      return 66
     if self._is_signal_camera_category(self.camera_category, self.camera_type):
-      return 48
+      return 58
     if self._is_security_camera_category(self.camera_category, self.camera_type):
-      return 48
+      return 58
     if self._is_protected_zone_category(self.camera_category, self.camera_type):
-      return 51
-    return 43
+      return 61
+    return 52
 
   def _fit_text(self, text: str, max_width: float, font_size: int, min_font_size: int) -> tuple[str, int, rl.Vector2]:
     for size in range(font_size, min_font_size - 1, -1):
