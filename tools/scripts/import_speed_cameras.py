@@ -100,6 +100,8 @@ def main() -> None:
   print(f"  custom: {counts.get('custom', 0)}")
   if osm_roads_db is not None:
     print(f"osm roads: {osm_roads_db}")
+  print(f"osm road names primary matched {osm_stats.primary_match_count}")
+  print(f"osm road names extended matched {osm_stats.extended_match_count} radius {osm_stats.extended_radius_m:.1f}m")
   print(f"osm road names matched {osm_stats.matched_count}")
   print(f"osm road names unmatched {osm_stats.unmatched_count}")
   if osm_stats.unmatched_by_category:

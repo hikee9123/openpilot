@@ -39,6 +39,7 @@ LOOKAHEAD_DISTANCE_M = 2500.0
 LOOKAHEAD_ANGLE_DEG = 45.0
 CAMERA_DIRECTION_ANGLE_DEG = 70.0
 MANAGE_NO_DEDUP_DISTANCE_M = 50.0
+OSM_EXTENDED_LOOKUP_RADIUS_MULTIPLIER = 1.8
 EARTH_RADIUS_M = 6371000.0
 DATA_GO_KR_TIMEOUT_SECONDS = 30
 DATA_GO_KR_RETRY_COUNT = 3
@@ -240,6 +241,9 @@ class OsmRoadEnrichmentStats:
   total_count: int = 0
   matched_count: int = 0
   unmatched_count: int = 0
+  primary_match_count: int = 0
+  extended_match_count: int = 0
+  extended_radius_m: float = 0.0
   unmatched_by_category: tuple[tuple[str, int], ...] = ()
 
   @property
@@ -913,6 +917,10 @@ def create_database_from_csvs(
       source_updated_at = str(max(records, key=lambda record: _date_priority(str(record["updated_at"])))["updated_at"])
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("source_updated_at", source_updated_at))
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_enriched_count", "0"))
+    conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_primary_match_count", "0"))
+    conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_extended_match_count", "0"))
+    conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_unmatched_count", str(len(records))))
+    conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_extended_radius_m", "0"))
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_db_path", ""))
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("version", str(DB_VERSION)))
     conn.commit()
@@ -937,6 +945,7 @@ def enrich_speed_camera_osm_roads(
   """).fetchall()
 
   updates = []
+  unmatched_rows = []
   for row in rows:
     camera_direction = direction_bearing_deg(str(_row_get(row, "direction", "")))
     previous_name = f"{_row_get(row, 'road_name', '')} {_row_get(row, 'place', '')}"
@@ -949,6 +958,7 @@ def enrich_speed_camera_osm_roads(
       previous_name=previous_name,
     )
     if match is None:
+      unmatched_rows.append(row)
       continue
     updates.append((
       match.display_name,
@@ -958,20 +968,49 @@ def enrich_speed_camera_osm_roads(
       row["id"],
     ))
 
-  if not updates:
-    conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_enriched_count", "0"))
-    conn.commit()
-    return 0
+  primary_match_count = len(updates)
+  extended_radius_m = lookup_radius_m * OSM_EXTENDED_LOOKUP_RADIUS_MULTIPLIER
+  extended_updates = []
+  for row in unmatched_rows:
+    camera_direction = direction_bearing_deg(str(_row_get(row, "direction", "")))
+    previous_name = f"{_row_get(row, 'road_name', '')} {_row_get(row, 'place', '')}"
+    match = find_current_road(
+      osm_roads_db_path,
+      float(row["lat"]),
+      float(row["lon"]),
+      camera_direction,
+      extended_radius_m,
+      previous_name=previous_name,
+    )
+    if match is None:
+      continue
+    extended_updates.append((
+      match.display_name,
+      match.ref,
+      float(match.distance_m),
+      float(match.heading_diff_deg),
+      row["id"],
+    ))
 
-  conn.executemany("""
-    UPDATE speed_cameras
-    SET osm_road_name = ?,
-        osm_road_ref = ?,
-        osm_road_match_dist_m = ?,
-        osm_road_match_heading_deg = ?
-    WHERE id = ?
-  """, updates)
+  updates.extend(extended_updates)
+  extended_match_count = len(extended_updates)
+  unmatched_count = max(0, len(rows) - len(updates))
+
+  if updates:
+    conn.executemany("""
+      UPDATE speed_cameras
+      SET osm_road_name = ?,
+          osm_road_ref = ?,
+          osm_road_match_dist_m = ?,
+          osm_road_match_heading_deg = ?
+      WHERE id = ?
+    """, updates)
+
   conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_enriched_count", str(len(updates))))
+  conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_primary_match_count", str(primary_match_count)))
+  conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_extended_match_count", str(extended_match_count)))
+  conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_unmatched_count", str(unmatched_count)))
+  conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_extended_radius_m", f"{extended_radius_m:.1f}"))
   conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_db_path", str(osm_roads_db_path)))
   conn.commit()
   return len(updates)
@@ -1031,6 +1070,7 @@ def database_osm_road_enrichment_stats(db_path: Path = DEFAULT_DB_PATH) -> OsmRo
     columns = _table_columns(conn, "speed_cameras")
     if not {"osm_road_name", "osm_road_ref"}.issubset(columns):
       return OsmRoadEnrichmentStats()
+    metadata = _metadata_map(conn)
     try:
       row = conn.execute("""
         SELECT
@@ -1044,6 +1084,14 @@ def database_osm_road_enrichment_stats(db_path: Path = DEFAULT_DB_PATH) -> OsmRo
       return OsmRoadEnrichmentStats()
 
     unmatched_count = max(0, total_count - matched_count)
+    extended_match_count = _metadata_int(metadata, "osm_road_extended_match_count")
+    primary_match_count = _metadata_int(metadata, "osm_road_primary_match_count")
+    if primary_match_count <= 0 and matched_count > 0:
+      primary_match_count = max(0, matched_count - extended_match_count)
+    if primary_match_count + extended_match_count != matched_count and matched_count > 0:
+      extended_match_count = max(0, min(extended_match_count, matched_count))
+      primary_match_count = max(0, matched_count - extended_match_count)
+    extended_radius_m = _metadata_float(metadata, "osm_road_extended_radius_m")
     unmatched_by_category: tuple[tuple[str, int], ...] = ()
     if unmatched_count > 0 and "camera_category" in columns:
       try:
@@ -1058,7 +1106,37 @@ def database_osm_road_enrichment_stats(db_path: Path = DEFAULT_DB_PATH) -> OsmRo
       except (sqlite3.Error, TypeError, ValueError):
         unmatched_by_category = ()
 
-    return OsmRoadEnrichmentStats(total_count, matched_count, unmatched_count, unmatched_by_category)
+    return OsmRoadEnrichmentStats(
+      total_count,
+      matched_count,
+      unmatched_count,
+      primary_match_count,
+      extended_match_count,
+      extended_radius_m,
+      unmatched_by_category,
+    )
+
+
+def _metadata_map(conn: sqlite3.Connection) -> dict[str, str]:
+  try:
+    rows = conn.execute("SELECT key, value FROM metadata").fetchall()
+  except sqlite3.Error:
+    return {}
+  return {str(key): str(value) for key, value in rows}
+
+
+def _metadata_int(metadata: dict[str, str], key: str) -> int:
+  try:
+    return max(0, int(metadata.get(key, "0")))
+  except ValueError:
+    return 0
+
+
+def _metadata_float(metadata: dict[str, str], key: str) -> float:
+  try:
+    return max(0.0, float(metadata.get(key, "0")))
+  except ValueError:
+    return 0.0
 
 
 def database_region_counts(db_path: Path = DEFAULT_DB_PATH) -> list[tuple[str, int]]:

@@ -1665,6 +1665,8 @@ class CustomSettingsLayout(Widget):
 
     lines.extend([
       f"osm road names matched {stats.matched_count:,} ({stats.match_percent}%)",
+      f"osm road names primary {stats.primary_match_count:,}",
+      f"osm road names extended {stats.extended_match_count:,} ({stats.extended_radius_m:.1f}m)",
       f"osm road names unmatched {stats.unmatched_count:,}",
     ])
     if stats.unmatched_by_category:
@@ -1735,7 +1737,8 @@ class CustomSettingsLayout(Widget):
       return tr("OSM road names: unavailable")
 
     if stats.matched_count > 0:
-      return f"{tr('OSM road names')}: {stats.matched_count:,} {tr('matched')} / {stats.unmatched_count:,} empty"
+      extended_text = f" / +{stats.extended_match_count:,} ext" if stats.extended_match_count > 0 else ""
+      return f"{tr('OSM road names')}: {stats.matched_count:,} {tr('matched')}{extended_text} / {stats.unmatched_count:,} empty"
     return tr("OSM road names: not applied")
 
   def _speed_camera_osm_status_text(self) -> str:
