@@ -186,6 +186,25 @@ def test_normalize_road_class(road_type: str, expected: str) -> None:
   assert normalize_road_class(road_type) == expected
 
 
+@pytest.mark.parametrize(
+  ("road_type", "road_name", "place", "expected"),
+  [
+    ("시도", "고속버스터미널 앞", "", "CITY_ROAD"),
+    ("기타", "고속철대로", "", "ETC"),
+    ("지방도", "과천봉담도시고속화대로", "과천-봉담도시고속화도로", "LOCAL_ROAD"),
+    ("일반국도", "분당-수서간도시고속화도로", "", "NATIONAL_ROAD"),
+    ("고속국도", "경부고속도로", "", "EXPRESSWAY"),
+    ("", "경부고속도로", "", "EXPRESSWAY"),
+    ("", "고속철대로", "천안아산역 동편도로 주변", "UNKNOWN"),
+    ("", "갑천도시고속도로", "", "UNKNOWN"),
+  ],
+)
+def test_normalize_road_class_prefers_source_road_type(
+  road_type: str, road_name: str, place: str, expected: str,
+) -> None:
+  assert normalize_road_class(road_type, road_name, place) == expected
+
+
 def test_import_stores_camera_category_and_road_class_columns(tmp_path: Path) -> None:
   csv_path = tmp_path / "speed_cameras.csv"
   db_path = tmp_path / "speed_cameras.sqlite3"

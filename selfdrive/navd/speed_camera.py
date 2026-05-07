@@ -19,7 +19,7 @@ except ModuleNotFoundError:
   from selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH, find_current_road, road_name_matches
 
 
-DB_VERSION = 6
+DB_VERSION = 7
 PUBLIC_DATA_PK = "15028200"
 PUBLIC_DATA_BASE_URL = "https://www.data.go.kr"
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -435,36 +435,72 @@ def camera_type_code(camera_type: str, section_type: str = "") -> int:
   return camera_category_code(category)
 
 
-def normalize_road_class(road_type: str, road_name: str = "", place: str = "") -> str:
-  raw = f"{road_type or ''} {road_name or ''} {place or ''}".strip()
-  compact = raw.replace(" ", "").upper()
+def _compact_road_text(value: str) -> str:
+  return re.sub(r"\s+", "", value or "").upper()
 
-  if not raw:
+
+def _road_class_from_type(road_type: str) -> str:
+  compact = _compact_road_text(road_type)
+  if not compact:
     return "UNKNOWN"
 
-  if "고속국도" in raw or "고속도로" in raw or "고속" in raw:
+  if "고속국도" in compact or compact == "고속도로":
     return "EXPRESSWAY"
 
-  if "일반국도" in raw or "국도" in raw:
+  if "일반국도" in compact or compact == "국도":
     return "NATIONAL_ROAD"
 
-  if "국가지원지방도" in raw or "국지도" in raw:
+  if "국가지원지방도" in compact or "국지도" in compact:
     return "NATIONAL_LOCAL_ROAD"
 
-  if "지방도" in raw:
+  if "지방도" in compact:
     return "LOCAL_ROAD"
 
-  if "특별시도" in raw or "특별광역시도" in raw or "시도" in raw:
+  if "특별시도" in compact or "특별광역시도" in compact or compact == "시도":
     return "CITY_ROAD"
 
-  if "군도" in raw:
+  if "군도" in compact:
     return "COUNTY_ROAD"
 
-  if "구도" in raw:
+  if "구도" in compact:
     return "DISTRICT_ROAD"
 
-  if "기타" in raw or compact == "ETC":
+  if "기타" in compact or compact == "ETC":
     return "ETC"
+
+  return "UNKNOWN"
+
+
+def _looks_like_expressway_name(road_name: str, place: str) -> bool:
+  compact = _compact_road_text(f"{road_name or ''} {place or ''}")
+  if not compact:
+    return False
+
+  if any(excluded in compact for excluded in (
+    "고속버스",
+    "고속터미널",
+    "고속철",
+    "고속주유소",
+    "고속화도로",
+    "도시고속",
+    "고속도로진입",
+    "고속도로방면",
+  )):
+    return False
+
+  return "고속국도" in compact or "고속도로" in compact
+
+
+def normalize_road_class(road_type: str, road_name: str = "", place: str = "") -> str:
+  road_class = _road_class_from_type(road_type)
+  if road_class != "UNKNOWN":
+    return road_class
+
+  if _looks_like_expressway_name(road_name, place):
+    return "EXPRESSWAY"
+
+  if not f"{road_type or ''} {road_name or ''} {place or ''}".strip():
+    return "UNKNOWN"
 
   return "UNKNOWN"
 
@@ -657,9 +693,9 @@ def _backfill_derived_columns(conn: sqlite3.Connection) -> None:
     type_code = camera_category_code(category)
 
     raw_road_type = road_type_raw or ""
-    normalized_road_class = road_class or normalize_road_class(raw_road_type, road_name or "", place or "")
-    if normalized_road_class == "UNKNOWN":
-      normalized_road_class = normalize_road_class(raw_road_type, road_name or "", place or "")
+    normalized_road_class = normalize_road_class(raw_road_type, road_name or "", place or "")
+    if normalized_road_class == "UNKNOWN" and road_class:
+      normalized_road_class = str(road_class)
     road_code = road_class_code(normalized_road_class)
 
     normalized_source_type = _source_type(source_type or "public")
