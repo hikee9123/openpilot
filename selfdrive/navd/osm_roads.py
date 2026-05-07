@@ -3,6 +3,7 @@ import math
 import os
 import re
 import sqlite3
+import time
 from collections.abc import Iterable
 from contextlib import closing
 from dataclasses import dataclass
@@ -155,6 +156,34 @@ def init_db(conn: sqlite3.Connection) -> None:
   conn.execute("CREATE INDEX IF NOT EXISTS idx_roads_ref ON roads(ref)")
   conn.execute("CREATE INDEX IF NOT EXISTS idx_roads_highway ON roads(highway)")
   conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("version", "1"))
+
+
+def _metadata_value(db_path: Path, key: str) -> str:
+  try:
+    if not db_path.exists():
+      return ""
+    with closing(sqlite3.connect(db_path)) as conn:
+      row = conn.execute("SELECT value FROM metadata WHERE key = ?", (key,)).fetchone()
+      return str(row[0]) if row and row[0] is not None else ""
+  except sqlite3.Error:
+    return ""
+
+
+def database_segment_count(db_path: Path = DEFAULT_OSM_ROADS_DB_PATH) -> int:
+  value = _metadata_value(db_path, "segment_count")
+  try:
+    return max(0, int(value))
+  except ValueError:
+    return 0
+
+
+def database_built_at(db_path: Path = DEFAULT_OSM_ROADS_DB_PATH) -> str:
+  value = _metadata_value(db_path, "built_at")
+  try:
+    timestamp = int(value)
+  except ValueError:
+    return ""
+  return time.strftime("%Y-%m-%d %H:%M", time.localtime(timestamp))
 
 
 def insert_road_segments(

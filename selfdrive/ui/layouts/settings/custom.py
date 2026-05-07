@@ -18,6 +18,11 @@ from openpilot.selfdrive.navd.speed_camera import (
   database_data_date,
   database_region_stats,
 )
+from openpilot.selfdrive.navd.osm_roads import (
+  DEFAULT_OSM_ROADS_DB_PATH,
+  database_built_at as osm_roads_built_at,
+  database_segment_count as osm_roads_segment_count,
+)
 from openpilot.selfdrive.ui.custom import (
   SPEED_CAMERA_DEBUG_PREVIEW_UNTIL_KEY,
   read_custom_param_map,
@@ -102,6 +107,14 @@ SPEED_CAMERA_DEBUG_PREVIEW_DURATION_SECONDS = 30
 SPEED_CAMERA_LOG_PATH = str(CUSTOM_TMP_ROOT / "openpilot_speed_camera_update.log")
 SPEED_CAMERA_LOCK_PATH = CUSTOM_TMP_ROOT / "openpilot_speed_camera_update.lock"
 SPEED_CAMERA_LOCK_STALE_SECONDS = 30 * 60
+OSM_ROADS_STATUS_KEY = "OsmRoadsUpdateStatus"
+OSM_ROADS_ERROR_KEY = "OsmRoadsUpdateError"
+OSM_ROADS_COUNT_KEY = "OsmRoadsSegmentCount"
+OSM_ROADS_PROGRESS_KEY = "OsmRoadsUpdateProgress"
+OSM_ROADS_UPDATED_AT_KEY = "OsmRoadsUpdatedAt"
+OSM_ROADS_LOG_PATH = str(CUSTOM_TMP_ROOT / "openpilot_osm_roads_update.log")
+OSM_ROADS_LOCK_PATH = CUSTOM_TMP_ROOT / "openpilot_osm_roads_update.lock"
+OSM_ROADS_LOCK_STALE_SECONDS = 2 * 60 * 60
 REPO_ROOT = Path(BASEDIR)
 MODELD_DIR = REPO_ROOT / "selfdrive/modeld"
 TAB_HEIGHT = 110
@@ -268,10 +281,11 @@ class SectionHeader(Widget):
 
 
 class CompileLogPanel(Widget):
-  def __init__(self, title: str, lines_callback: Callable[[], list[str]]):
+  def __init__(self, title: str, lines_callback: Callable[[], list[str]], empty_text: str = tr_noop("No compile log yet")):
     super().__init__()
     self._title = title
     self._lines_callback = lines_callback
+    self._empty_text = empty_text
     self._font_regular = gui_app.font(FontWeight.NORMAL)
     self._font_bold = gui_app.font(FontWeight.MEDIUM)
     self.set_rect(rl.Rectangle(0, 0, 0, COMPILE_LOG_HEIGHT))
@@ -312,7 +326,7 @@ class CompileLogPanel(Widget):
     fitted: list[str] = []
     for line in lines:
       fitted.append(self._truncate_line(line, max_width))
-    return fitted or [tr("No compile log yet")]
+    return fitted or [tr(self._empty_text)]
 
   def _truncate_line(self, line: str, max_width: float) -> str:
     text = line.expandtabs(2).strip()
@@ -459,6 +473,8 @@ class CustomSettingsLayout(Widget):
     self._last_compile_status_check = -COMPILE_STATUS_CHECK_INTERVAL
     self._last_compile_log_check = -COMPILE_LOG_CACHE_INTERVAL
     self._compile_log_tail = ""
+    self._last_osm_roads_log_check = -COMPILE_LOG_CACHE_INTERVAL
+    self._osm_roads_log_tail = ""
     self._speed_camera_region_cache_loaded = False
     self._speed_camera_category_counts_cache: list[tuple[str, int]] = []
     self._speed_camera_region_stats_cache: list[tuple[str, int, int, str]] = []
@@ -569,6 +585,12 @@ class CustomSettingsLayout(Widget):
                   description=lambda: tr("Shows saved speed camera counts by category and region.")),
         SpeedCameraRegionsPanel(self._speed_camera_region_stats, self._speed_camera_category_counts),
         self._speed_camera_icon_preview_item(),
+        self._osm_roads_update_item(),
+        text_item(lambda: tr("OSM roads status"), self._osm_roads_status_text,
+                  description=lambda: tr("Shows the local OSM road-name DB build result.")),
+        text_item(lambda: tr("OSM roads progress"), self._osm_roads_progress_text,
+                  description=lambda: tr("Shows download and build progress for the local OSM roads DB.")),
+        CompileLogPanel(tr_noop("OSM roads detail"), self._osm_roads_log_lines, tr_noop("No OSM roads log yet")),
         SectionHeader(tr_noop("Speed camera tuning")),
         self._number_item("SpeedCameraLookaheadDistance", tr_noop("Camera search distance"), 500, 3000, 100,
                           description=tr_noop("Sets how far ahead, in meters, the speed camera lookup searches."), unit="m"),
@@ -822,6 +844,15 @@ class CustomSettingsLayout(Widget):
       callback=callback,
     )
 
+  def _osm_roads_update_item(self):
+    return button_item(
+      lambda: tr("OSM roads DB"),
+      self._osm_roads_button_text,
+      description=lambda: tr("Downloads the South Korea OSM PBF and builds the offline road-name DB used by speed camera matching."),
+      callback=self._handle_osm_roads_update,
+      enabled=lambda: self._osm_roads_update_status() != STATUS_RUNNING,
+    )
+
   def _handle_speed_camera_update(self) -> None:
     def run() -> None:
       if self._speed_camera_update_running():
@@ -871,10 +902,64 @@ class CustomSettingsLayout(Widget):
     dialog = ConfirmDialog(content, tr("UPDATE"), callback=lambda result: run() if result == DialogResult.CONFIRM else None)
     gui_app.push_widget(dialog)
 
+  def _handle_osm_roads_update(self) -> None:
+    def run() -> None:
+      if self._osm_roads_update_running():
+        return
+
+      try:
+        self._write_osm_roads_update_lock()
+      except OSError as e:
+        self._set_osm_roads_failed(f"lock open failed: {e}")
+        return
+
+      def worker() -> None:
+        try:
+          self._params.put(OSM_ROADS_STATUS_KEY, STATUS_RUNNING)
+          self._params.put(OSM_ROADS_ERROR_KEY, "")
+          self._params.put(OSM_ROADS_PROGRESS_KEY, 0)
+          try:
+            clear_log(OSM_ROADS_LOG_PATH)
+          except OSError as e:
+            self._set_osm_roads_failed(f"log open failed: {e}")
+            return
+
+          try:
+            result = run_logged([sys.executable, "tools/scripts/update_osm_roads.py"], REPO_ROOT, OSM_ROADS_LOG_PATH)
+          except OSError as e:
+            self._set_osm_roads_failed(f"update start failed: {e}")
+            return
+          if result.returncode != 0:
+            self._set_osm_roads_failed(f"exit code {result.returncode}")
+            return
+
+          count = osm_roads_segment_count(DEFAULT_OSM_ROADS_DB_PATH)
+          self._params.put(OSM_ROADS_COUNT_KEY, max(0, count))
+          self._params.put(OSM_ROADS_PROGRESS_KEY, 100)
+          self._params.put(OSM_ROADS_UPDATED_AT_KEY, time.strftime("%Y-%m-%d %H:%M"))
+          self._params.put(OSM_ROADS_STATUS_KEY, STATUS_SUCCESS)
+          self._params.put(OSM_ROADS_ERROR_KEY, "")
+        finally:
+          self._clear_osm_roads_update_lock()
+
+      threading.Thread(target=worker, daemon=True).start()
+
+    content = tr("Download South Korea OSM data and rebuild the local roads DB? This can take several minutes.")
+    dialog = ConfirmDialog(content, tr("UPDATE"), callback=lambda result: run() if result == DialogResult.CONFIRM else None)
+    gui_app.push_widget(dialog)
+
   def _speed_camera_update_status(self) -> str:
     if self._speed_camera_update_running():
       return STATUS_RUNNING
     status = self._param_text(SPEED_CAMERA_STATUS_KEY)
+    if status == STATUS_RUNNING:
+      return STATUS_IDLE
+    return status or STATUS_IDLE
+
+  def _osm_roads_update_status(self) -> str:
+    if self._osm_roads_update_running():
+      return STATUS_RUNNING
+    status = self._param_text(OSM_ROADS_STATUS_KEY)
     if status == STATUS_RUNNING:
       return STATUS_IDLE
     return status or STATUS_IDLE
@@ -905,8 +990,42 @@ class CustomSettingsLayout(Widget):
 
     return True
 
+  def _write_osm_roads_update_lock(self) -> None:
+    OSM_ROADS_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lock_data = {"pid": os.getpid(), "started_at": time.time()}
+    OSM_ROADS_LOCK_PATH.write_text(json.dumps(lock_data, separators=(",", ":")), encoding="utf-8")
+
+  def _clear_osm_roads_update_lock(self) -> None:
+    try:
+      OSM_ROADS_LOCK_PATH.unlink()
+    except OSError:
+      pass
+
+  def _osm_roads_update_running(self) -> bool:
+    try:
+      lock_data = json.loads(OSM_ROADS_LOCK_PATH.read_text(encoding="utf-8"))
+      pid = int(lock_data.get("pid", 0))
+      started_at = float(lock_data.get("started_at", 0.0))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+      self._clear_osm_roads_update_lock()
+      return False
+
+    if time.time() - started_at > OSM_ROADS_LOCK_STALE_SECONDS or not process_alive(pid):
+      self._clear_osm_roads_update_lock()
+      return False
+
+    return True
+
   def _speed_camera_button_text(self) -> str:
     status = self._speed_camera_update_status()
+    if status == STATUS_RUNNING:
+      return tr("WAIT")
+    if status == STATUS_FAILED:
+      return tr("RETRY")
+    return tr("UPDATE")
+
+  def _osm_roads_button_text(self) -> str:
+    status = self._osm_roads_update_status()
     if status == STATUS_RUNNING:
       return tr("WAIT")
     if status == STATUS_FAILED:
@@ -932,8 +1051,23 @@ class CustomSettingsLayout(Widget):
     self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_FAILED)
     self._params.put(SPEED_CAMERA_ERROR_KEY, tail or error)
 
+  def _set_osm_roads_failed(self, error: str) -> None:
+    try:
+      with open(OSM_ROADS_LOG_PATH, encoding="utf-8", errors="replace") as log_file:
+        tail = log_file.read()[-500:].strip()
+    except OSError:
+      tail = ""
+    self._params.put(OSM_ROADS_STATUS_KEY, STATUS_FAILED)
+    self._params.put(OSM_ROADS_ERROR_KEY, tail or error)
+
   def _speed_camera_progress_text(self) -> str:
     progress = self._param_text(SPEED_CAMERA_PROGRESS_KEY)
+    if not progress:
+      return "--"
+    return f"{progress}%"
+
+  def _osm_roads_progress_text(self) -> str:
+    progress = self._param_text(OSM_ROADS_PROGRESS_KEY)
     if not progress:
       return "--"
     return f"{progress}%"
@@ -941,6 +1075,47 @@ class CustomSettingsLayout(Widget):
   def _speed_camera_data_date_text(self) -> str:
     data_date = self._param_text(SPEED_CAMERA_DATA_DATE_KEY) or database_data_date(SPEED_CAMERA_DB_PATH)
     return data_date or "--"
+
+  def _osm_roads_status_text(self) -> str:
+    status = self._osm_roads_update_status()
+    if status == STATUS_RUNNING:
+      return tr("Building")
+    if status == STATUS_SUCCESS:
+      count = self._param_text(OSM_ROADS_COUNT_KEY) or str(osm_roads_segment_count(DEFAULT_OSM_ROADS_DB_PATH))
+      updated_at = self._param_text(OSM_ROADS_UPDATED_AT_KEY) or osm_roads_built_at(DEFAULT_OSM_ROADS_DB_PATH)
+      suffix = f" {updated_at}" if updated_at else ""
+      return f"{tr('Ready')} {count}{suffix}"
+    if status == STATUS_FAILED:
+      error = self._param_text(OSM_ROADS_ERROR_KEY)
+      if len(error) > 80:
+        error = error[-80:]
+      return f"{tr('Failed')}: {error}".strip(": ")
+
+    count = osm_roads_segment_count(DEFAULT_OSM_ROADS_DB_PATH)
+    if count > 0:
+      built_at = osm_roads_built_at(DEFAULT_OSM_ROADS_DB_PATH)
+      suffix = f" {built_at}" if built_at else ""
+      return f"{tr('Ready')} {count}{suffix}"
+    return tr("Idle")
+
+  def _osm_roads_log_lines(self) -> list[str]:
+    now = time.monotonic()
+    if now - self._last_osm_roads_log_check < COMPILE_LOG_CACHE_INTERVAL:
+      return self._osm_roads_log_tail.splitlines()
+    self._last_osm_roads_log_check = now
+
+    try:
+      with open(OSM_ROADS_LOG_PATH, encoding="utf-8", errors="replace") as log_file:
+        lines = [line.rstrip() for line in log_file.readlines()[-120:]]
+    except OSError:
+      error = self._param_text(OSM_ROADS_ERROR_KEY)
+      self._osm_roads_log_tail = error or ""
+      return self._osm_roads_log_tail.splitlines()
+
+    visible_lines = [line for line in lines if line.strip()]
+    self._osm_roads_log_tail = "\n".join(visible_lines[-80:])
+    return self._osm_roads_log_tail.splitlines()
+
 
   def _refresh_speed_camera_region_counts(self, force: bool = False) -> None:
     if force or not self._speed_camera_region_cache_loaded:
