@@ -981,7 +981,11 @@ class CustomSettingsLayout(Widget):
         CompactStatusProgressInfoGroup(self._speed_camera_status_text, self._speed_camera_progress_text, [
           (tr_noop("Data date"), self._speed_camera_data_date_text),
           (tr_noop("Regions"), self._speed_camera_regions_text),
-        ], status_details=[self._speed_camera_updated_status_text, self._speed_camera_osm_status_text]),
+        ], status_details=[
+          self._speed_camera_updated_status_text,
+          self._speed_camera_osm_matched_status_text,
+          self._speed_camera_osm_empty_status_text,
+        ]),
         SpeedCameraRegionsPanel(
           self._speed_camera_region_stats,
           self._speed_camera_category_counts,
@@ -1741,7 +1745,7 @@ class CustomSettingsLayout(Widget):
       return f"{tr('OSM road names')}: {stats.matched_count:,} {tr('matched')}{extended_text} / {stats.unmatched_count:,} empty"
     return tr("OSM road names: not applied")
 
-  def _speed_camera_osm_status_text(self) -> str:
+  def _speed_camera_osm_matched_status_text(self) -> str:
     if self._speed_camera_update_status() == STATUS_RUNNING:
       progress = self._param_text(SPEED_CAMERA_PROGRESS_KEY)
       try:
@@ -1751,7 +1755,21 @@ class CustomSettingsLayout(Widget):
       if progress_value >= 95 and DEFAULT_OSM_ROADS_DB_PATH.exists():
         return tr("Applying OSM road names")
       return tr("OSM road names: pending")
-    return self._refresh_speed_camera_osm_status()
+
+    stats = database_osm_road_enrichment_stats(SPEED_CAMERA_DB_PATH)
+    if stats.total_count <= 0:
+      return self._refresh_speed_camera_osm_status()
+    extended_text = f" / +{stats.extended_match_count:,} ext" if stats.extended_match_count > 0 else ""
+    return f"OSM matched {stats.matched_count:,}{extended_text}"
+
+  def _speed_camera_osm_empty_status_text(self) -> str:
+    if self._speed_camera_update_status() == STATUS_RUNNING:
+      return tr("OSM empty: calculating")
+
+    stats = database_osm_road_enrichment_stats(SPEED_CAMERA_DB_PATH)
+    if stats.total_count <= 0:
+      return ""
+    return f"OSM empty {stats.unmatched_count:,}"
 
   def _speed_camera_status_text(self) -> str:
     status = self._speed_camera_update_status()
