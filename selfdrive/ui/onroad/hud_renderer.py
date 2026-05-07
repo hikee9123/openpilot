@@ -360,6 +360,10 @@ class HudRenderer(Widget):
       return (str(self.camera_limit_speed) if self.camera_limit_speed > 0 else "--", "")
     if self._is_signal_camera_category(self.camera_category, self.camera_type):
       return ("SIG", str(self.camera_limit_speed) if self.camera_limit_speed > 0 else "")
+    if self._is_security_camera_category(self.camera_category, self.camera_type):
+      return ("SEC", "")
+    if self._is_protected_zone_category(self.camera_category, self.camera_type):
+      return ("ZONE", str(self.camera_limit_speed) if self.camera_limit_speed > 0 else "")
     return ("--", "")
 
   def _camera_category_label(self, category: str, cam_type: int) -> str:
@@ -379,6 +383,8 @@ class HudRenderer(Widget):
       return tr("Traffic")
     if category == "SECURITY":
       return tr("Security")
+    if category == "PROTECTED_ZONE":
+      return tr("Protected")
 
     if cam_type == 1:
       return tr("Speed")
@@ -388,6 +394,10 @@ class HudRenderer(Widget):
       return tr("Speed+Signal")
     if cam_type == 4:
       return tr("Section")
+    if cam_type == 8:
+      return tr("Security")
+    if cam_type == 10:
+      return tr("Protected")
 
     return tr("Camera")
 
@@ -440,7 +450,13 @@ class HudRenderer(Widget):
     return False
 
   def _is_signal_camera_category(self, category: str, cam_type: int) -> bool:
-    return category == "SIGNAL" or cam_type == 2
+    return category in ("SIGNAL", "SPEED_SIGNAL") or cam_type in (2, 3)
+
+  def _is_security_camera_category(self, category: str, cam_type: int) -> bool:
+    return category == "SECURITY" or cam_type == 8
+
+  def _is_protected_zone_category(self, category: str, cam_type: int) -> bool:
+    return category == "PROTECTED_ZONE" or cam_type == 10
 
   def _speed_sign_ring_color(self) -> rl.Color:
     if self._is_speed_camera_category(self.camera_category, self.camera_type):
@@ -457,6 +473,10 @@ class HudRenderer(Widget):
       return 64
     if self._is_signal_camera_category(self.camera_category, self.camera_type):
       return 54
+    if self._is_security_camera_category(self.camera_category, self.camera_type):
+      return 54
+    if self._is_protected_zone_category(self.camera_category, self.camera_type):
+      return 58
     return 48
 
   def _fit_text(self, text: str, max_width: float, font_size: int, min_font_size: int) -> tuple[str, int, rl.Vector2]:

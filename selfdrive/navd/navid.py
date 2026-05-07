@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import sqlite3
 import time
 from pathlib import Path
 
@@ -9,9 +10,11 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.navd.speed_camera import (
   DEFAULT_CSV_PATH,
   DEFAULT_DB_PATH,
+  DB_VERSION,
   camera_type_code,
   create_database_from_csv,
   find_lead_camera,
+  init_db,
   normalize_camera_category,
   normalize_road_class,
   road_class_code,
@@ -56,7 +59,18 @@ def _csv_path() -> Path:
 
 def _ensure_database(db_path: Path, csv_path: Path) -> bool:
   if db_path.exists():
-    return True
+    try:
+      with sqlite3.connect(db_path) as conn:
+        row = conn.execute("SELECT value FROM metadata WHERE key = ?", ("version",)).fetchone()
+        version = int(row[0]) if row and row[0] else 0
+        if version < DB_VERSION:
+          init_db(conn)
+          cloudlog.warning(f"navid: migrated speed camera DB from version {version} to {DB_VERSION}")
+      return True
+    except (sqlite3.Error, TypeError, ValueError):
+      cloudlog.exception("navid: failed to migrate speed camera DB")
+      return False
+
   if not csv_path.exists():
     cloudlog.warning(f"navid: speed camera DB missing ({db_path}); put CSV at {csv_path} or set SPEED_CAMERA_CSV")
     return False

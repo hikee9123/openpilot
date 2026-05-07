@@ -14,7 +14,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
-DB_VERSION = 4
+DB_VERSION = 5
 PUBLIC_DATA_PK = "15028200"
 PUBLIC_DATA_BASE_URL = "https://www.data.go.kr"
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -134,6 +134,7 @@ CAMERA_CATEGORY_CODES = {
   "TRAFFIC": 7,
   "SECURITY": 8,
   "UNKNOWN": 9,
+  "PROTECTED_ZONE": 10,
 }
 
 ROAD_CLASS_CODES = {
@@ -290,6 +291,12 @@ def normalize_camera_category(
   if not raw:
     return "UNKNOWN"
 
+  if camera_type in ("03", "3"):
+    return "SECURITY"
+
+  if camera_type in ("04", "4"):
+    return "PROTECTED_ZONE"
+
   has_speed = (
     camera_type in ("01", "1") or
     compact in ("01+02", "1+2", "01/02", "1/02", "01/2") or
@@ -306,7 +313,6 @@ def normalize_camera_category(
   )
 
   has_section = (
-    camera_type in ("03", "3", "04", "4") or
     (camera_type == "99" and section_type in ("01", "1", "02", "2")) or
     (camera_type == "99" and any(keyword in context_raw for keyword in ("구간", "시점", "종점"))) or
     (camera_type == "99" and "어린이보호구역" in context_compact) or
@@ -363,6 +369,14 @@ def is_section_category(camera_category: str) -> bool:
 
 def is_etc_category(camera_category: str) -> bool:
   return camera_category not in ("SPEED", "SIGNAL", "SPEED_SIGNAL", "SECTION_SPEED")
+
+
+def _is_alertable_category(camera_category: str) -> bool:
+  return (
+    is_speed_category(camera_category) or
+    is_signal_category(camera_category) or
+    camera_category in ("SECURITY", "PROTECTED_ZONE")
+  )
 
 
 def camera_type_code(camera_type: str, section_type: str = "") -> int:
@@ -575,13 +589,9 @@ def _backfill_derived_columns(conn: sqlite3.Connection) -> None:
     ) = row
 
     raw_camera_type = camera_type_raw or camera_type or ""
-    category = camera_category or normalize_camera_category(
+    category = normalize_camera_category(
       raw_camera_type, section_type or "", f"{road_name or ''} {place or ''}", int(speed_limit or 0)
     )
-    if category == "UNKNOWN":
-      category = normalize_camera_category(
-        raw_camera_type, section_type or "", f"{road_name or ''} {place or ''}", int(speed_limit or 0)
-      )
     type_code = camera_category_code(category)
 
     raw_road_type = road_type_raw or ""
@@ -991,8 +1001,10 @@ def database_category_counts(db_path: Path = DEFAULT_DB_PATH) -> list[tuple[str,
             WHEN 'SPEED' THEN 1
             WHEN 'SECTION_SPEED' THEN 2
             WHEN 'SIGNAL' THEN 3
-            WHEN 'UNKNOWN' THEN 4
-            ELSE 5
+            WHEN 'SECURITY' THEN 4
+            WHEN 'PROTECTED_ZONE' THEN 5
+            WHEN 'UNKNOWN' THEN 6
+            ELSE 7
           END,
           camera_category
       """).fetchall()
@@ -1264,6 +1276,20 @@ def _candidate_rows(
 ) -> list[sqlite3.Row]:
   columns = _table_columns(conn, "speed_cameras")
   version = _database_version(conn)
+  if {"is_speed_camera", "is_signal_camera", "camera_category"}.issubset(columns):
+    rows = conn.execute("""
+      SELECT * FROM speed_cameras
+      WHERE lat BETWEEN ? AND ?
+        AND lon BETWEEN ? AND ?
+        AND (
+          is_speed_camera = 1 OR
+          is_signal_camera = 1 OR
+          camera_category IN ('SECURITY', 'PROTECTED_ZONE')
+        )
+    """, (lat_min, lat_max, lon_min, lon_max)).fetchall()
+    if rows or version >= DB_VERSION:
+      return rows
+
   if "is_speed_camera" in columns:
     rows = conn.execute("""
       SELECT * FROM speed_cameras
@@ -1320,7 +1346,8 @@ def find_lead_camera(
       continue
 
     camera = _row_to_camera(row, distance, cam_bearing, diff, relative_angle)
-    if best is None or camera.distance_m < best.distance_m:
-      best = camera
+    if _is_alertable_category(camera.camera_category):
+      if best is None or camera.distance_m < best.distance_m:
+        best = camera
 
   return best

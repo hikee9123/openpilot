@@ -82,6 +82,10 @@ def test_import_and_find_lead_camera(tmp_path: Path) -> None:
     ("과속+신호", "SPEED_SIGNAL"),
     ("01+02", "SPEED_SIGNAL"),
     ("구간단속", "SECTION_SPEED"),
+    ("03", "SECURITY"),
+    ("3", "SECURITY"),
+    ("04", "PROTECTED_ZONE"),
+    ("4", "PROTECTED_ZONE"),
     ("99", "UNKNOWN"),
     ("주정차", "PARKING"),
     ("버스전용차로", "BUS_LANE"),
@@ -116,6 +120,7 @@ def test_normalize_camera_category_uses_section_type() -> None:
     ("TRAFFIC", 7),
     ("SECURITY", 8),
     ("UNKNOWN", 9),
+    ("PROTECTED_ZONE", 10),
     ("ETC", 0),
   ],
 )
@@ -190,10 +195,10 @@ def test_import_stores_camera_category_and_road_class_columns(tmp_path: Path) ->
 
   with sqlite3.connect(db_path) as conn:
     version = conn.execute("SELECT value FROM metadata WHERE key = 'version'").fetchone()[0]
-  assert version == "4"
+  assert version == "5"
 
 
-def test_find_lead_camera_ignores_signal_only_camera(tmp_path: Path) -> None:
+def test_find_lead_camera_returns_nearest_signal_or_speed_camera(tmp_path: Path) -> None:
   csv_path = tmp_path / "speed_cameras.csv"
   db_path = tmp_path / "speed_cameras.sqlite3"
   _write_csv(
@@ -206,8 +211,58 @@ def test_find_lead_camera_ignores_signal_only_camera(tmp_path: Path) -> None:
   assert create_database_from_csv(csv_path, db_path) == 2
   camera = find_lead_camera(db_path, 37.0, 127.0, 0.0)
   assert camera is not None
-  assert camera.id.startswith("A2-")
+  assert camera.id.startswith("A1-")
+  assert camera.camera_category == "SIGNAL"
+  assert camera.camera_type_code == 2
+
+
+def test_speed_camera_without_limit_keeps_speed_category(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,설치장소\n"
+    "A1,37.001,127.0,속도위반,0,제한속도누락\n"
+    "A2,37.002,127.0,주정차,0,주차단속\n",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 2
+  row = _fetch_row(db_path, "A1")
+  assert row["camera_category"] == "SPEED"
+  assert row["is_speed_camera"] == 1
+
+  camera = find_lead_camera(db_path, 37.0, 127.0, 0.0)
+  assert camera is not None
   assert camera.camera_category == "SPEED"
+  assert camera.speed_limit == 0
+
+
+def test_type_three_and_four_are_non_speed_categories(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,설치장소\n"
+    "A1,37.001,127.0,3,0,보안구역\n"
+    "A2,37.002,127.0,4,30,어린이보호구역\n",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 2
+  security = _fetch_row(db_path, "A1")
+  assert security["camera_category"] == "SECURITY"
+  assert security["camera_type_code"] == 8
+  assert security["is_speed_camera"] == 0
+  assert security["is_etc_camera"] == 1
+
+  protected = _fetch_row(db_path, "A2")
+  assert protected["camera_category"] == "PROTECTED_ZONE"
+  assert protected["camera_type_code"] == 10
+  assert protected["is_speed_camera"] == 0
+  assert protected["is_etc_camera"] == 1
+
+  camera = find_lead_camera(db_path, 37.0, 127.0, 0.0)
+  assert camera is not None
+  assert camera.camera_category == "SECURITY"
 
 
 def test_speed_signal_category_is_returned(tmp_path: Path) -> None:
@@ -491,6 +546,10 @@ def test_camera_type_code_backward_compatibility() -> None:
   assert camera_type_code("02") == 2
   assert camera_type_code("1") == 1
   assert camera_type_code("2") == 2
+  assert camera_type_code("3") == 8
+  assert camera_type_code("03") == 8
+  assert camera_type_code("4") == 10
+  assert camera_type_code("04") == 10
 
 
 def test_camera_direction_filter(tmp_path: Path) -> None:
