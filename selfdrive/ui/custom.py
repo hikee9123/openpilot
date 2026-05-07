@@ -22,7 +22,7 @@ DEFAULT_CUSTOM_PARAMS: dict[str, int | float | bool] = {
   "ParamSteerRatio": 0.0,
   "ParamStiffnessFactor": 0.0,
   "ParamAngleOffsetDeg": 0.0,
-  "SpeedCameraLookaheadDistance": 2000,
+  "SpeedCameraLookaheadDistance": 1000,
   "SpeedCameraLookaheadAngle": 35,
   "SpeedCameraDirectionAngle": 60,
   "SpeedCameraPassingDistance": 30,

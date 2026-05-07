@@ -46,7 +46,7 @@ def _speed_camera_tuning() -> dict[str, float | bool]:
     values = {}
 
   return {
-    "lookahead_distance_m": _clip(float(values.get("SpeedCameraLookaheadDistance", 2000)), 500.0, 3000.0),
+    "lookahead_distance_m": _clip(float(values.get("SpeedCameraLookaheadDistance", 1000)), 500.0, 3000.0),
     "lookahead_angle_deg": _clip(float(values.get("SpeedCameraLookaheadAngle", 35)), 15.0, 60.0),
     "camera_direction_angle_deg": _clip(float(values.get("SpeedCameraDirectionAngle", 60)), 30.0, 90.0),
     "passing_distance_m": _clip(float(values.get("SpeedCameraPassingDistance", 30)), 10.0, 80.0),
