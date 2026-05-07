@@ -386,7 +386,7 @@ class CompactStatusProgressGroup(CompactInfoGroup):
   def _draw_status_progress_row(self, panel_rect: rl.Rectangle, row_y: float) -> None:
     label_x = panel_rect.x + COMPACT_INFO_PADDING_X
     value_right = panel_rect.x + panel_rect.width - COMPACT_INFO_PADDING_X
-    value_x = panel_rect.x + panel_rect.width * 0.27
+    value_x = panel_rect.x + panel_rect.width * 0.10
     self._draw_label(tr("Status"), label_x, row_y, value_x - label_x - COMPACT_INFO_PADDING_X)
 
     progress = self._progress_percent()
@@ -540,7 +540,7 @@ class CompactStatusProgressInfoGroup(CompactStatusProgressGroup):
   def _draw_status_progress_info_row(self, panel_rect: rl.Rectangle, row_y: float) -> None:
     label_x = panel_rect.x + COMPACT_INFO_PADDING_X
     value_right = panel_rect.x + panel_rect.width - COMPACT_INFO_PADDING_X
-    value_x = panel_rect.x + panel_rect.width * 0.27
+    value_x = panel_rect.x + panel_rect.width * 0.10
     self._draw_label(tr("Status"), label_x, row_y, value_x - label_x - COMPACT_INFO_PADDING_X)
 
     progress = self._progress_percent()
