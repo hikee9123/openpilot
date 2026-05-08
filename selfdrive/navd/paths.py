@@ -37,6 +37,21 @@ def navd_tmp_dir() -> Path:
   return _env_path("NAVD_TMP_ROOT") or navd_root() / "tmp"
 
 
+def ensure_navd_dirs(
+  db_dir: Path | None = None,
+  source_dir: Path | None = None,
+  tmp_dir: Path | None = None,
+  region_dir: Path | None = None,
+) -> None:
+  db_path = Path(db_dir) if db_dir is not None else navd_db_dir()
+  source_path = Path(source_dir) if source_dir is not None else navd_source_dir()
+  tmp_path = Path(tmp_dir) if tmp_dir is not None else navd_tmp_dir()
+  region_path = Path(region_dir) if region_dir is not None else source_path / "region"
+
+  for path in (db_path, source_path, region_path, tmp_path):
+    path.mkdir(parents=True, exist_ok=True)
+
+
 DEFAULT_NAVD_ROOT = navd_root()
 DEFAULT_NAVD_DB_DIR = navd_db_dir()
 DEFAULT_NAVD_SOURCE_DIR = navd_source_dir()

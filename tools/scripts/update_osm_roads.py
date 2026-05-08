@@ -21,10 +21,10 @@ except ModuleNotFoundError:
 
 try:
   from openpilot.selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH, database_segment_count
-  from openpilot.selfdrive.navd.paths import DEFAULT_NAVD_SOURCE_DIR, DEFAULT_NAVD_TMP_DIR
+  from openpilot.selfdrive.navd.paths import DEFAULT_NAVD_SOURCE_DIR, DEFAULT_NAVD_TMP_DIR, ensure_navd_dirs
 except ModuleNotFoundError:
   from selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH, database_segment_count
-  from selfdrive.navd.paths import DEFAULT_NAVD_SOURCE_DIR, DEFAULT_NAVD_TMP_DIR
+  from selfdrive.navd.paths import DEFAULT_NAVD_SOURCE_DIR, DEFAULT_NAVD_TMP_DIR, ensure_navd_dirs
 
 
 DEFAULT_OSM_PBF_URL = "https://download.geofabrik.de/asia/south-korea-latest.osm.pbf"
@@ -191,6 +191,12 @@ def main() -> None:
   parser.add_argument("--keep-pbf", action="store_true", help="Keep the downloaded PBF after building the DB")
   parser.add_argument("--no-auto-install-osmium", action="store_true", help="Fail instead of trying to install osmium when it is missing")
   args = parser.parse_args()
+
+  ensure_navd_dirs(
+    db_dir=args.db.parent,
+    source_dir=args.pbf.parent,
+    tmp_dir=args.tmp_dir,
+  )
 
   params = Params()
   _put_progress(params, 0)

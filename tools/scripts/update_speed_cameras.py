@@ -28,6 +28,7 @@ try:
     database_region_counts,
     download_public_speed_camera_csv,
   )
+  from openpilot.selfdrive.navd.paths import ensure_navd_dirs
 except ModuleNotFoundError:
   from selfdrive.navd.speed_camera import (
     DEFAULT_CSV_PATH,
@@ -43,6 +44,7 @@ except ModuleNotFoundError:
     database_region_counts,
     download_public_speed_camera_csv,
   )
+  from selfdrive.navd.paths import ensure_navd_dirs
 
 SPEED_CAMERA_DATA_DATE_KEY = "SpeedCameraDataDate"
 SPEED_CAMERA_PROGRESS_KEY = "SpeedCameraUpdateProgress"
@@ -106,6 +108,13 @@ def main() -> None:
   parser.add_argument("--max-pages", type=int, help="Limit downloaded pages for testing")
   parser.add_argument("--download-only", action="store_true", help="Download CSV without importing the DB")
   args = parser.parse_args()
+
+  ensure_navd_dirs(
+    db_dir=args.db.parent,
+    source_dir=args.csv.parent,
+    tmp_dir=args.tmp_dir,
+    region_dir=args.region_dir,
+  )
 
   params = Params()
   _put_progress(params, 0)

@@ -53,3 +53,19 @@ def test_navd_specific_env_overrides(tmp_path, monkeypatch) -> None:
     for key in ("NAVD_ROOT", "NAVD_DB_ROOT", "NAVD_SOURCE_ROOT", "NAVD_TMP_ROOT"):
       monkeypatch.delenv(key, raising=False)
     importlib.reload(navd_paths)
+
+
+def test_ensure_navd_dirs_creates_standard_layout(tmp_path, monkeypatch) -> None:
+  monkeypatch.setenv("NAVD_ROOT", str(tmp_path / "navd"))
+
+  paths = importlib.reload(navd_paths)
+  try:
+    paths.ensure_navd_dirs()
+
+    assert (tmp_path / "navd" / "db").is_dir()
+    assert (tmp_path / "navd" / "source").is_dir()
+    assert (tmp_path / "navd" / "source" / "region").is_dir()
+    assert (tmp_path / "navd" / "tmp").is_dir()
+  finally:
+    monkeypatch.delenv("NAVD_ROOT", raising=False)
+    importlib.reload(navd_paths)

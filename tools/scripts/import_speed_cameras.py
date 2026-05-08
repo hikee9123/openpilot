@@ -16,6 +16,7 @@ try:
     database_osm_road_enrichment_stats,
     find_lead_camera,
   )
+  from openpilot.selfdrive.navd.paths import ensure_navd_dirs
 except ModuleNotFoundError:
   from selfdrive.navd.speed_camera import (
     DEFAULT_CSV_PATH,
@@ -27,6 +28,7 @@ except ModuleNotFoundError:
     database_osm_road_enrichment_stats,
     find_lead_camera,
   )
+  from selfdrive.navd.paths import ensure_navd_dirs
 
 
 def _csv_sources(args: argparse.Namespace) -> list[CsvSource]:
@@ -81,6 +83,12 @@ def main() -> None:
   parser.add_argument("--lon", type=float, help="Longitude for --check")
   parser.add_argument("--heading", type=float, default=0.0, help="Heading degrees for --check")
   args = parser.parse_args()
+
+  ensure_navd_dirs(
+    db_dir=args.db.parent,
+    source_dir=args.csv.parent,
+    region_dir=args.region_dir,
+  )
 
   csv_sources = _csv_sources(args)
   if not csv_sources:
