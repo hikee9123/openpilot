@@ -318,24 +318,24 @@ class HudRenderer(Widget):
     if self._is_signal_camera_category(self.camera_category, self.camera_type):
       self._draw_signal_badge(sign_center_x, max(rect.y + 4, sign_center_y - sign_radius - 24))
 
-    label_text, label_font_size, label_size = self._fit_text(info_label, width, 22, 18)
-    rl.draw_text_ex(
-      self._font_medium,
-      label_text,
-      rl.Vector2(x + (width - label_size.x) / 2, y + 176),
-      label_font_size,
-      0,
-      COLORS.SPEED_CAMERA,
-    )
-
     distance_size = measure_text_cached(self._font_medium, distance_text, 30)
     rl.draw_text_ex(
       self._font_medium,
       distance_text,
-      rl.Vector2(x + (width - distance_size.x) / 2, y + 206),
+      rl.Vector2(x + (width - distance_size.x) / 2, y + 176),
       30,
       0,
       COLORS.WHITE_TRANSLUCENT,
+    )
+
+    label_text, label_font_size, label_size = self._fit_text(info_label, width, 22, 18)
+    rl.draw_text_ex(
+      self._font_medium,
+      label_text,
+      rl.Vector2(x + (width - label_size.x) / 2, y + 206),
+      label_font_size,
+      0,
+      COLORS.SPEED_CAMERA,
     )
     self._draw_camera_candidates_text(x, y + 244, width, 4, 18, 22)
 
