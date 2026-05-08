@@ -77,17 +77,21 @@ def test_format_camera_classification_debug_text() -> None:
     section_length_m=0,
     speed_limit=0,
     distance_m=42.4,
+    bearing_deg=93.0,
     relative_angle_deg=-12.0,
     road_type_raw="시도",
     road_name="중앙사거리",
     place="",
     id="ICHEON118",
+    local_road_match=True,
+    is_expressway=False,
   )
 
-  assert navid._format_camera_classification_debug_text(camera, "SIGNAL", 2, "CITY_ROAD").splitlines() == [
-    "CAM SIGNAL c=2 v=0 !ZERO id=ICHEON118",
-    "TYPE 02",
-    "SECT - LEN 0",
-    "ROAD 시도 | 중앙사거리",
-    "TEXT - d=42m a=-12",
+  assert navid._format_camera_classification_debug_text(camera, "SIGNAL", 2, "CITY_ROAD", "중앙사거리").splitlines() == [
+    "CAM SIGNAL c=2 v=0 id=ICHEON118",
+    "POS 42m a=-12 bear=93",
+    "RAW type=02 sect=- len=0",
+    "ROAD CITY_ROAD | 중앙사거리",
+    "OSM Y current=중앙사거리",
+    "WHY corridor=Y local=Y flags=ZERO",
   ]

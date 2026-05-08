@@ -381,7 +381,7 @@ class HudRenderer(Widget):
     self.camera_bearing_deg = 0.0
     self.camera_relative_angle_deg = SPEED_CAMERA_DEBUG_PREVIEW_RELATIVE_ANGLE_DEG
     self.camera_candidates_text = SPEED_CAMERA_DEBUG_PREVIEW_CANDIDATES
-    self.camera_debug_text = "CAM SECTION_SPEED c=4 v=50 id=preview\nTYPE preview\nSECT 1 LEN 800\nROAD 고속국도 | preview road\nTEXT preview place d=350m a=+30"
+    self.camera_debug_text = "CAM SECTION_SPEED c=4 v=50 id=preview\nPOS 350m a=+30 bear=0\nRAW type=preview sect=1 len=800\nROAD EXPRESSWAY | preview road\nOSM Y current=고속국도\nWHY corridor=Y local=Y flags=-"
 
   def _draw_speed_camera_alert(self, rect: rl.Rectangle) -> None:
     if not self.camera_alert_active or not self._can_draw_top_icons:
@@ -557,20 +557,20 @@ class HudRenderer(Widget):
     if not self.show_speed_camera_debug_text or not self.camera_debug_text:
       return
 
-    lines = [line.strip() for line in self.camera_debug_text.splitlines() if line.strip()][:5]
+    lines = [line.strip() for line in self.camera_debug_text.splitlines() if line.strip()][:6]
     if not lines:
       return
 
-    max_width = min(rect.width * 0.74, 820)
-    font_size = 27
-    line_height = 33
-    padding_x = 22
-    padding_y = 16
-    fitted_lines = [self._fit_text(line, max_width - padding_x * 2, font_size, 20) for line in lines]
+    max_width = min(rect.width * 0.84, 1080)
+    font_size = 41
+    line_height = 50
+    padding_x = 28
+    padding_y = 21
+    fitted_lines = [self._fit_text(line, max_width - padding_x * 2, font_size, 30) for line in lines]
     box_width = min(max_width, max(size.x for _, _, size in fitted_lines) + padding_x * 2)
     box_height = len(fitted_lines) * line_height + padding_y * 2
     x = rect.x + (rect.width - box_width) / 2
-    y = rect.y + rect.height * 0.52
+    y = rect.y + rect.height * 0.48
     box_rect = rl.Rectangle(x, y, box_width, box_height)
     rl.draw_rectangle_rounded(box_rect, 0.18, 8, COLORS.BLACK_TRANSLUCENT)
 
@@ -578,7 +578,7 @@ class HudRenderer(Widget):
       rl.draw_text_ex(
         self._font_medium,
         line,
-        rl.Vector2(x + (box_width - line_size.x) / 2, y + padding_y + idx * line_height),
+        rl.Vector2(x + padding_x, y + padding_y + idx * line_height),
         line_font_size,
         0,
         COLORS.WHITE_TRANSLUCENT,

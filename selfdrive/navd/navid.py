@@ -224,7 +224,7 @@ def _format_camera_debug_text(candidates, current_road_name: str = "") -> str:
   return "\n".join(lines)
 
 
-def _format_camera_classification_debug_text(camera, category: str, type_code: int, road_class: str) -> str:
+def _format_camera_classification_debug_text(camera, category: str, type_code: int, road_class: str, current_road_name: str = "") -> str:
   def short_raw(value, max_len: int = 32) -> str:
     text = str(value or "-").strip() or "-"
     return text if len(text) <= max_len else f"{text[:max_len - 3]}..."
@@ -235,24 +235,29 @@ def _format_camera_classification_debug_text(camera, category: str, type_code: i
   speed_limit = int(getattr(camera, "speed_limit", 0) or 0)
   distance_m = int(max(0.0, float(getattr(camera, "distance_m", 0.0))))
   angle_deg = float(getattr(camera, "relative_angle_deg", 0.0))
+  bearing_deg = float(getattr(camera, "bearing_deg", 0.0))
   road_type = short_raw(getattr(camera, "road_type_raw", ""), 16)
   road_name = short_raw(getattr(camera, "road_name", ""), 26)
-  place = short_raw(getattr(camera, "place", ""), 34)
+  current_road = short_raw(current_road_name, 22)
   camera_id = short_raw(getattr(camera, "id", ""), 20)
   flags = []
   if speed_limit <= 0:
-    flags.append("!ZERO")
+    flags.append("ZERO")
   if raw_type == "99":
-    flags.append("!99")
+    flags.append("99")
   if not category or category == "UNKNOWN":
-    flags.append("!UNK")
-  flag_text = f" {' '.join(flags)}" if flags else ""
+    flags.append("UNK")
+  flags_text = ",".join(flags) if flags else "-"
+  osm_text = "Y" if bool(getattr(camera, "local_road_match", False)) else "N"
+  corridor_text = "Y" if _candidate_corridor_marker(camera) else "N"
+
   return "\n".join((
-    f"CAM {category or 'UNKNOWN'} c={type_code} v={speed_limit}{flag_text} id={camera_id}",
-    f"TYPE {raw_type}",
-    f"SECT {section_type} LEN {section_length_m}",
-    f"ROAD {road_type} | {road_name}",
-    f"TEXT {place} d={distance_m}m a={angle_deg:+.0f}",
+    f"CAM {category or 'UNKNOWN'} c={type_code} v={speed_limit} id={camera_id}",
+    f"POS {distance_m}m a={angle_deg:+.0f} bear={bearing_deg:.0f}",
+    f"RAW type={raw_type} sect={section_type} len={section_length_m}",
+    f"ROAD {road_class or road_type or 'UNKNOWN'} | {road_name}",
+    f"OSM {osm_text} current={current_road}",
+    f"WHY corridor={corridor_text} local={osm_text} flags={flags_text}",
   ))
 
 
@@ -540,7 +545,7 @@ def _send_camera(pm: messaging.PubMaster, camera, candidates=(), current_road_na
   nav.camRelativeAngleDeg = float(getattr(camera, "relative_angle_deg", 0.0))
   nav.camCandidatesText = _format_camera_debug_text(candidates, current_road_name)
   nav.osmRoadOverlayText = osm_road_overlay_text
-  nav.camDebugText = _format_camera_classification_debug_text(camera, category, type_code, road_class)
+  nav.camDebugText = _format_camera_classification_debug_text(camera, category, type_code, road_class, current_road_name)
   nav.camLimitSpeed = camera.speed_limit
   nav.camLimitSpeedLeftDist = max(0, int(camera.distance_m))
   nav.sectionLimitSpeed = camera.speed_limit if type_code == 4 else 0
