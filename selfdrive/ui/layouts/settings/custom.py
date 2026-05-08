@@ -29,9 +29,9 @@ from openpilot.selfdrive.navd.osm_roads import (
   database_segment_count as osm_roads_segment_count,
 )
 from openpilot.selfdrive.ui.custom import (
-  SPEED_CAMERA_DEBUG_PREVIEW_UNTIL_KEY,
   read_custom_param_map,
   read_custom_params,
+  start_speed_camera_debug_preview,
   write_custom_params,
 )
 from openpilot.selfdrive.ui.ui_state import ui_state
@@ -1280,8 +1280,7 @@ class CustomSettingsLayout(Widget):
 
   def _speed_camera_icon_preview_item(self):
     def callback() -> None:
-      write_custom_params({SPEED_CAMERA_DEBUG_PREVIEW_UNTIL_KEY: time.time() + SPEED_CAMERA_DEBUG_PREVIEW_DURATION_SECONDS}, self._params)
-      ui_state.custom_publisher.update(force=True)
+      start_speed_camera_debug_preview(SPEED_CAMERA_DEBUG_PREVIEW_DURATION_SECONDS)
       if self._speed_camera_preview_callback is not None:
         self._speed_camera_preview_callback()
 

@@ -9,9 +9,9 @@ from openpilot.common.params import Params
 
 # #custom start: shared custom UI params and publisher
 CUSTOM_PARAM_KEY = "CustomParam"
-SPEED_CAMERA_DEBUG_PREVIEW_UNTIL_KEY = "SpeedCameraDebugPreviewUntil"
 POWER_OFF_MIN_SPEED = 10.0
 POWER_OFF_UPDATE_INTERVAL = 1.0
+_speed_camera_debug_preview_until_monotonic = 0.0
 
 DEFAULT_CUSTOM_PARAMS: dict[str, int | float | bool] = {
   "ParamCruiseMode": 2,
@@ -33,7 +33,6 @@ DEFAULT_CUSTOM_PARAMS: dict[str, int | float | bool] = {
   "UseLocalOsmRoads": False,
   "OsmRoadOverlayMode": 0,
   "LocalOsmRoadRadius": 50,
-  SPEED_CAMERA_DEBUG_PREVIEW_UNTIL_KEY: 0.0,
   "ParamAutoScreenOff": 8,
   "ParamScreenOffAfterFade": True,
   "ParamBrightness": -12,
@@ -133,12 +132,16 @@ def write_custom_params(values: Mapping[str, int | float | bool], params: Params
   params.put(CUSTOM_PARAM_KEY, json.dumps(merged, separators=(",", ":"), sort_keys=True))
 
 
+def start_speed_camera_debug_preview(duration_seconds: float = 30.0, now: float | None = None) -> None:
+  global _speed_camera_debug_preview_until_monotonic
+  current_time = time.monotonic() if now is None else now
+  _speed_camera_debug_preview_until_monotonic = current_time + max(0.0, duration_seconds)
+
+
 def speed_camera_debug_preview_active(params: Params | None = None, now: float | None = None) -> bool:
-  try:
-    values = read_custom_params(params)
-    return float(values.get(SPEED_CAMERA_DEBUG_PREVIEW_UNTIL_KEY, 0.0)) > (time.time() if now is None else now)
-  except (TypeError, ValueError):
-    return False
+  del params
+  current_time = time.monotonic() if now is None else now
+  return current_time < _speed_camera_debug_preview_until_monotonic
 
 
 class CustomPublisher:

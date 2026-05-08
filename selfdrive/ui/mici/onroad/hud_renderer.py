@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import pyray as rl
 from openpilot.common.constants import CV
 from openpilot.common.params import Params
-from openpilot.selfdrive.ui.custom import SPEED_CAMERA_DEBUG_PREVIEW_UNTIL_KEY, read_custom_params
+from openpilot.selfdrive.ui.custom import read_custom_params, speed_camera_debug_preview_active
 from openpilot.selfdrive.ui.mici.onroad.torque_bar import TorqueBar
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
 from openpilot.system.ui.lib.application import gui_app, FontWeight
@@ -153,8 +153,6 @@ class HudRenderer(Widget):
     self.camera_search_angle_deg: float = 35.0
     self._camera_search_angle_last_check: float = 0.0
     self._params = Params()
-    self._camera_preview_until: float = 0.0
-    self._camera_preview_last_check: float = 0.0
 
     self._can_draw_top_icons = True
     self._show_wheel_critical = False
@@ -366,15 +364,7 @@ class HudRenderer(Widget):
     self._camera_pointer_angle_filter.initialized = False
 
   def _speed_camera_preview_active(self) -> bool:
-    now = time.time()
-    if now - self._camera_preview_last_check >= SPEED_CAMERA_DEBUG_PREVIEW_POLL_INTERVAL:
-      self._camera_preview_last_check = now
-      try:
-        values = read_custom_params(self._params)
-        self._camera_preview_until = float(values.get(SPEED_CAMERA_DEBUG_PREVIEW_UNTIL_KEY, 0.0))
-      except (TypeError, ValueError):
-        self._camera_preview_until = 0.0
-    return now < self._camera_preview_until
+    return speed_camera_debug_preview_active()
 
   def speed_camera_preview_active(self) -> bool:
     return self._speed_camera_preview_active()

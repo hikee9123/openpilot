@@ -1,7 +1,6 @@
 import pyray as rl
 from enum import IntEnum
 import cereal.messaging as messaging
-from openpilot.common.params import Params
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.widgets import Widget
 from openpilot.selfdrive.ui.custom import speed_camera_debug_preview_active
@@ -25,7 +24,6 @@ class MainLayout(Widget):
     super().__init__()
 
     self._pm = messaging.PubMaster(['bookmarkButton'])
-    self._params = Params()
 
     self._sidebar = Sidebar()
     self._current_mode = MainState.HOME
@@ -132,7 +130,7 @@ class MainLayout(Widget):
       self._set_mode_for_state()
 
   def _speed_camera_preview_active(self):
-    return speed_camera_debug_preview_active(self._params)
+    return speed_camera_debug_preview_active()
 
   def _on_onroad_clicked(self):
     self._sidebar.set_visible(not self._sidebar.is_visible)
