@@ -16,8 +16,10 @@ MAX_ITEMS = 9
 BASE_PANEL_WIDTH = 180
 BASE_ITEM_HEIGHT = 105
 BASE_PANEL_PADDING = 10
+BASE_COLUMN_GAP = 12
 BASE_MARGIN = 30
 BASE_TOP = 250
+MINIMAP_CLEARANCE = 14
 TPMS_FONT_SIZE = 38
 TPMS_DM_BTN_SIZE = 192
 TPMS_COL_GAP = 80
@@ -39,6 +41,8 @@ BLUE = rl.Color(0, 180, 255, 220)
 PANEL_BG = rl.Color(0, 0, 0, 110)
 PANEL_BORDER = rl.Color(255, 255, 255, 85)
 SEPARATOR = rl.Color(255, 255, 255, 30)
+OSM_OVERLAY_MODE_MINIMAP = 1
+OSM_OVERLAY_MODE_BOTH = 3
 
 
 @dataclass
@@ -81,11 +85,15 @@ class KegmanRenderer(Widget):
     if not measures:
       return
 
-    scale = self._scale_for_rect(rect, len(measures))
+    columns = 1
+    rows = len(measures)
+    scale = self._scale_for_rect(rect, rows)
     margin = max(4.0, BASE_MARGIN * scale)
-    panel_width = max(120.0 if rect.height < 500 else 0.0, BASE_PANEL_WIDTH * scale)
+    cell_width = max(120.0 if rect.height < 500 else 0.0, BASE_PANEL_WIDTH * scale)
     item_height = max(30.0, BASE_ITEM_HEIGHT * scale)
     padding = max(4.0, BASE_PANEL_PADDING * scale)
+    column_gap = 0.0
+    panel_width = cell_width
     panel_height = padding * 2 + item_height * len(measures)
 
     x = rect.x + rect.width - panel_width - margin
@@ -95,22 +103,68 @@ class KegmanRenderer(Widget):
     if y + panel_height > rect.y + rect.height - margin:
       y = max(rect.y + margin, rect.y + rect.height - panel_height - margin)
 
+    minimap_rect = self._minimap_rect(rect)
+    panel_rect = rl.Rectangle(x, y, panel_width, panel_height)
+    if len(measures) >= 5 and minimap_rect is not None and self._rects_overlap(panel_rect, minimap_rect):
+      columns = 2
+      rows = (len(measures) + 1) // 2
+      scale = self._scale_for_rect(rect, rows)
+      margin = max(4.0, BASE_MARGIN * scale)
+      cell_width = max(120.0 if rect.height < 500 else 0.0, BASE_PANEL_WIDTH * scale)
+      item_height = max(30.0, BASE_ITEM_HEIGHT * scale)
+      padding = max(4.0, BASE_PANEL_PADDING * scale)
+      column_gap = max(6.0, BASE_COLUMN_GAP * scale)
+      panel_width = padding * 2 + cell_width * columns + column_gap
+      panel_height = padding * 2 + item_height * rows
+
+      x = rect.x + rect.width - panel_width - margin
+      y = rect.y + BASE_TOP * scale
+      if rect.height < 500:
+        y = rect.y + margin
+
+      max_bottom = minimap_rect.y - max(MINIMAP_CLEARANCE, margin)
+      if y + panel_height > max_bottom:
+        y = max(rect.y + margin, max_bottom - panel_height)
+      if y + panel_height > rect.y + rect.height - margin:
+        y = max(rect.y + margin, rect.y + rect.height - panel_height - margin)
+
     panel_rect = rl.Rectangle(x, y, panel_width, panel_height)
     rl.draw_rectangle_rounded(panel_rect, 0.14, 10, PANEL_BG)
     rl.draw_rectangle_rounded_lines_ex(panel_rect, 0.14, 10, max(1.0, 3.0 * scale), PANEL_BORDER)
 
     for idx, measure in enumerate(measures):
-      row_y = y + padding + idx * item_height
-      row_rect = rl.Rectangle(x, row_y, panel_width, item_height)
+      col = idx // rows if columns > 1 else 0
+      row = idx % rows if columns > 1 else idx
+      row_x = x + padding + col * (cell_width + column_gap) if columns > 1 else x
+      row_y = y + padding + row * item_height
+      row_rect = rl.Rectangle(row_x, row_y, cell_width, item_height)
       self._draw_measure(row_rect, measure, scale)
-      if idx + 1 < len(measures):
+      col_items = max(0, min(rows, len(measures) - col * rows))
+      if row + 1 < col_items:
         sep_y = row_y + item_height
-        rl.draw_line(int(x + panel_width * 0.18), int(sep_y), int(x + panel_width * 0.82), int(sep_y), SEPARATOR)
+        rl.draw_line(int(row_x + cell_width * 0.18), int(sep_y), int(row_x + cell_width * 0.82), int(sep_y), SEPARATOR)
+
+    if columns > 1:
+      sep_x = x + padding + cell_width + column_gap / 2
+      rl.draw_line(int(sep_x), int(y + padding * 1.5), int(sep_x), int(y + panel_height - padding * 1.5), SEPARATOR)
 
   def _scale_for_rect(self, rect: rl.Rectangle, item_count: int) -> float:
     base_height = BASE_PANEL_PADDING * 2 + BASE_ITEM_HEIGHT * item_count
     height_fit = max(0.18, (rect.height - 2 * BASE_MARGIN) / base_height)
     return min(1.0, max(0.18, rect.width / 1860.0, rect.height / 1080.0), height_fit)
+
+  def _minimap_rect(self, rect: rl.Rectangle) -> rl.Rectangle | None:
+    mode = int(ui_state.custom_params.get("OsmRoadOverlayMode", 0))
+    if mode not in (OSM_OVERLAY_MODE_MINIMAP, OSM_OVERLAY_MODE_BOTH):
+      return None
+
+    panel_w = min(360.0, rect.width * 0.30)
+    panel_h = min(260.0, rect.height * 0.30)
+    return rl.Rectangle(rect.x + rect.width - panel_w - 34, rect.y + rect.height - panel_h - 34, panel_w, panel_h)
+
+  @staticmethod
+  def _rects_overlap(a: rl.Rectangle, b: rl.Rectangle) -> bool:
+    return a.x < b.x + b.width and a.x + a.width > b.x and a.y < b.y + b.height and a.y + a.height > b.y
 
   def _draw_measure(self, rect: rl.Rectangle, measure: KegmanMeasure, scale: float) -> None:
     value_font = max(14, round(VALUE_FONT_SIZE * scale))
