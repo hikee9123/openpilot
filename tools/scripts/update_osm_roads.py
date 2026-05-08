@@ -21,12 +21,14 @@ except ModuleNotFoundError:
 
 try:
   from openpilot.selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH, database_segment_count
+  from openpilot.selfdrive.navd.paths import DEFAULT_NAVD_SOURCE_DIR, DEFAULT_NAVD_TMP_DIR
 except ModuleNotFoundError:
   from selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH, database_segment_count
+  from selfdrive.navd.paths import DEFAULT_NAVD_SOURCE_DIR, DEFAULT_NAVD_TMP_DIR
 
 
 DEFAULT_OSM_PBF_URL = "https://download.geofabrik.de/asia/south-korea-latest.osm.pbf"
-DEFAULT_OSM_PBF_PATH = DEFAULT_OSM_ROADS_DB_PATH.with_name("south-korea-latest.osm.pbf")
+DEFAULT_OSM_PBF_PATH = DEFAULT_NAVD_SOURCE_DIR / "south-korea-latest.osm.pbf"
 OSM_ROADS_PROGRESS_KEY = "OsmRoadsUpdateProgress"
 OSM_ROADS_COUNT_KEY = "OsmRoadsSegmentCount"
 OSM_USER_AGENT = "Mozilla/5.0 (openpilot OSM roads updater)"
@@ -90,9 +92,10 @@ def _ensure_osmium(params: Params, auto_install: bool) -> bool:
   return _install_osmium(params)
 
 
-def _download(url: str, output_path: Path, params: Params) -> None:
+def _download(url: str, output_path: Path, params: Params, tmp_dir: Path) -> None:
   output_path.parent.mkdir(parents=True, exist_ok=True)
-  tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
+  tmp_dir.mkdir(parents=True, exist_ok=True)
+  tmp_path = tmp_dir / f"{output_path.name}.tmp"
   try:
     request = Request(url, headers={"User-Agent": OSM_USER_AGENT})
     with urlopen(request, timeout=60) as response, tmp_path.open("wb") as out:
@@ -125,9 +128,15 @@ def _unlink_if_exists(path: Path) -> None:
     print(f"failed to remove {path}: {e}", flush=True)
 
 
-def _cleanup_stale_build_files(db_path: Path) -> None:
+def _cleanup_stale_build_files(db_path: Path, tmp_dir: Path) -> None:
   now = time.time()
-  for path in (db_path.with_suffix(db_path.suffix + ".building"), db_path.with_suffix(db_path.suffix + ".tmp")):
+  paths = (
+    tmp_dir / f"{db_path.name}.building",
+    tmp_dir / f"{db_path.name}.tmp",
+    db_path.with_suffix(db_path.suffix + ".building"),
+    db_path.with_suffix(db_path.suffix + ".tmp"),
+  )
+  for path in paths:
     try:
       age = now - os.path.getmtime(path)
     except OSError:
@@ -177,6 +186,7 @@ def main() -> None:
   parser.add_argument("--url", default=DEFAULT_OSM_PBF_URL, help=f"OSM PBF URL (default: {DEFAULT_OSM_PBF_URL})")
   parser.add_argument("--pbf", type=Path, default=DEFAULT_OSM_PBF_PATH, help=f"OSM PBF path (default: {DEFAULT_OSM_PBF_PATH})")
   parser.add_argument("--db", type=Path, default=DEFAULT_OSM_ROADS_DB_PATH, help=f"Output SQLite DB (default: {DEFAULT_OSM_ROADS_DB_PATH})")
+  parser.add_argument("--tmp-dir", type=Path, default=DEFAULT_NAVD_TMP_DIR, help=f"Temporary build directory (default: {DEFAULT_NAVD_TMP_DIR})")
   parser.add_argument("--skip-download", action="store_true", help="Use the existing PBF file instead of downloading it")
   parser.add_argument("--keep-pbf", action="store_true", help="Keep the downloaded PBF after building the DB")
   parser.add_argument("--no-auto-install-osmium", action="store_true", help="Fail instead of trying to install osmium when it is missing")
@@ -190,13 +200,14 @@ def main() -> None:
 
   if not args.skip_download:
     print(f"downloading {args.url} -> {args.pbf}", flush=True)
-    _download(args.url, args.pbf, params)
+    _download(args.url, args.pbf, params, args.tmp_dir)
   elif not args.pbf.exists():
     parser.error(f"--skip-download requested but PBF does not exist: {args.pbf}")
 
   _put_progress(params, 75)
-  _cleanup_stale_build_files(args.db)
-  build_db = args.db.with_suffix(args.db.suffix + ".building")
+  args.tmp_dir.mkdir(parents=True, exist_ok=True)
+  _cleanup_stale_build_files(args.db, args.tmp_dir)
+  build_db = args.tmp_dir / f"{args.db.name}.building"
   _unlink_if_exists(build_db)
   print(f"building temporary OSM roads DB {build_db}", flush=True)
   result = subprocess.run(

@@ -28,6 +28,7 @@ from openpilot.selfdrive.navd.osm_roads import (
   database_built_at as osm_roads_built_at,
   database_segment_count as osm_roads_segment_count,
 )
+from openpilot.selfdrive.navd.paths import DEFAULT_NAVD_TMP_DIR
 from openpilot.selfdrive.ui.custom import (
   read_custom_param_map,
   read_custom_params,
@@ -100,6 +101,7 @@ COMPILE_FINISHED_AT_KEY = "CustomModelCompileFinishedAt"
 COMPILE_ERROR_KEY = "CustomModelCompileError"
 COMPILE_PROGRESS_KEY = "CustomModelCompileProgress"
 CUSTOM_TMP_ROOT = Path("/tmp") if PC else Path("/data/tmp")
+NAVD_TMP_ROOT = DEFAULT_NAVD_TMP_DIR
 COMPILE_LOG_PATH = str(CUSTOM_TMP_ROOT / "openpilot_custom_model_compile.log")
 COMPILE_STATUS_CHECK_INTERVAL = 5.0
 COMPILE_LOG_CACHE_INTERVAL = 2.0
@@ -115,16 +117,16 @@ SPEED_CAMERA_PROGRESS_KEY = "SpeedCameraUpdateProgress"
 SPEED_CAMERA_UPDATED_AT_KEY = "SpeedCameraUpdatedAt"
 SPEED_CAMERA_DATA_DATE_KEY = "SpeedCameraDataDate"
 SPEED_CAMERA_DEBUG_PREVIEW_DURATION_SECONDS = 30
-SPEED_CAMERA_LOG_PATH = str(CUSTOM_TMP_ROOT / "openpilot_speed_camera_update.log")
-SPEED_CAMERA_LOCK_PATH = CUSTOM_TMP_ROOT / "openpilot_speed_camera_update.lock"
+SPEED_CAMERA_LOG_PATH = str(NAVD_TMP_ROOT / "openpilot_speed_camera_update.log")
+SPEED_CAMERA_LOCK_PATH = NAVD_TMP_ROOT / "openpilot_speed_camera_update.lock"
 SPEED_CAMERA_LOCK_STALE_SECONDS = 30 * 60
 OSM_ROADS_STATUS_KEY = "OsmRoadsUpdateStatus"
 OSM_ROADS_ERROR_KEY = "OsmRoadsUpdateError"
 OSM_ROADS_COUNT_KEY = "OsmRoadsSegmentCount"
 OSM_ROADS_PROGRESS_KEY = "OsmRoadsUpdateProgress"
 OSM_ROADS_UPDATED_AT_KEY = "OsmRoadsUpdatedAt"
-OSM_ROADS_LOG_PATH = str(CUSTOM_TMP_ROOT / "openpilot_osm_roads_update.log")
-OSM_ROADS_LOCK_PATH = CUSTOM_TMP_ROOT / "openpilot_osm_roads_update.lock"
+OSM_ROADS_LOG_PATH = str(NAVD_TMP_ROOT / "openpilot_osm_roads_update.log")
+OSM_ROADS_LOCK_PATH = NAVD_TMP_ROOT / "openpilot_osm_roads_update.lock"
 OSM_ROADS_LOCK_STALE_SECONDS = 2 * 60 * 60
 REPO_ROOT = Path(BASEDIR)
 MODELD_DIR = REPO_ROOT / "selfdrive/modeld"

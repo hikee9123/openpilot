@@ -14,26 +14,47 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 try:
+  from openpilot.selfdrive.navd.paths import (
+    DEFAULT_NAVD_DB_DIR,
+    DEFAULT_NAVD_SOURCE_DIR,
+    DEFAULT_NAVD_TMP_DIR,
+    REPO_NAVD_DATA_DIR,
+  )
   from openpilot.selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH, find_current_road, road_name_matches
 except ModuleNotFoundError:
+  from selfdrive.navd.paths import (
+    DEFAULT_NAVD_DB_DIR,
+    DEFAULT_NAVD_SOURCE_DIR,
+    DEFAULT_NAVD_TMP_DIR,
+    REPO_NAVD_DATA_DIR,
+  )
   from selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH, find_current_road, road_name_matches
 
 
 DB_VERSION = 7
 PUBLIC_DATA_PK = "15028200"
 PUBLIC_DATA_BASE_URL = "https://www.data.go.kr"
-DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data"
+DEFAULT_DATA_DIR = REPO_NAVD_DATA_DIR
 
 
-def _default_data_root() -> Path:
+def _default_source_root() -> Path:
   if "SPEED_CAMERA_ROOT" in os.environ:
     return Path(os.environ["SPEED_CAMERA_ROOT"])
-  return DEFAULT_DATA_DIR
+  return DEFAULT_NAVD_SOURCE_DIR
 
 
-DEFAULT_DB_PATH = _default_data_root() / "speed_cameras.sqlite3"
-DEFAULT_CSV_PATH = _default_data_root() / "speed_cameras.csv"
-DEFAULT_REGION_DIR = _default_data_root() / "region"
+def _default_db_root() -> Path:
+  if "SPEED_CAMERA_DB_ROOT" in os.environ:
+    return Path(os.environ["SPEED_CAMERA_DB_ROOT"])
+  if "SPEED_CAMERA_ROOT" in os.environ:
+    return Path(os.environ["SPEED_CAMERA_ROOT"])
+  return DEFAULT_NAVD_DB_DIR
+
+
+DEFAULT_DB_PATH = Path(os.getenv("SPEED_CAMERA_DB", str(_default_db_root() / "speed_cameras.sqlite3")))
+DEFAULT_CSV_PATH = Path(os.getenv("SPEED_CAMERA_CSV", str(_default_source_root() / "speed_cameras.csv")))
+DEFAULT_REGION_DIR = Path(os.getenv("SPEED_CAMERA_REGION_DIR", str(_default_source_root() / "region")))
+DEFAULT_DOWNLOAD_TMP_DIR = DEFAULT_NAVD_TMP_DIR
 
 LOOKAHEAD_DISTANCE_M = 2500.0
 LOOKAHEAD_ANGLE_DEG = 45.0
@@ -1368,6 +1389,7 @@ def download_public_speed_camera_csv(
   per_page: int = 10000,
   max_pages: int | None = None,
   progress_callback: Callable[[int, int], None] | None = None,
+  tmp_dir: Path | None = None,
 ) -> int:
   header = _fetch_data_go_json("/download/columList.json", {"pk": public_data_pk, "ext": "CSV"})
   column_list = header["columList"]
@@ -1383,31 +1405,42 @@ def download_public_speed_camera_csv(
     page_count = min(page_count, max(0, int(max_pages)))
 
   csv_path.parent.mkdir(parents=True, exist_ok=True)
+  effective_tmp_dir = tmp_dir or csv_path.parent
+  tmp_path = effective_tmp_dir / f"{csv_path.name}.tmp"
+  tmp_path.parent.mkdir(parents=True, exist_ok=True)
   written = 0
   if progress_callback is not None:
     progress_callback(written, total_count)
 
-  with csv_path.open("w", encoding="utf-8-sig", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow(column_names)
+  try:
+    with tmp_path.open("w", encoding="utf-8-sig", newline="") as f:
+      writer = csv.writer(f)
+      writer.writerow(column_names)
 
-    for page in range(1, page_count + 1):
-      rows = _fetch_data_go_json("/download/standard.json", {
-        "publicDataPk": public_data_pk,
-        "colNmList": col_name_list,
-        "totalCount": total_count,
-        "svcTableNm": svc_table_name,
-        "perPage": per_page,
-        "page": page,
-      })
-      if not isinstance(rows, list):
-        raise ValueError(f"unexpected public data response on page {page}: {type(rows).__name__}")
+      for page in range(1, page_count + 1):
+        rows = _fetch_data_go_json("/download/standard.json", {
+          "publicDataPk": public_data_pk,
+          "colNmList": col_name_list,
+          "totalCount": total_count,
+          "svcTableNm": svc_table_name,
+          "perPage": per_page,
+          "page": page,
+        })
+        if not isinstance(rows, list):
+          raise ValueError(f"unexpected public data response on page {page}: {type(rows).__name__}")
 
-      for row in rows:
-        writer.writerow([row.get(code, "") for code in column_codes])
-        written += 1
-      if progress_callback is not None:
-        progress_callback(written, total_count)
+        for row in rows:
+          writer.writerow([row.get(code, "") for code in column_codes])
+          written += 1
+        if progress_callback is not None:
+          progress_callback(written, total_count)
+    os.replace(tmp_path, csv_path)
+  except Exception:
+    try:
+      tmp_path.unlink()
+    except OSError:
+      pass
+    raise
 
   return written
 

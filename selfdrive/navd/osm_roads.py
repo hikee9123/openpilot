@@ -9,9 +9,13 @@ from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
+try:
+  from openpilot.selfdrive.navd.paths import DEFAULT_NAVD_DB_DIR, REPO_NAVD_DATA_DIR
+except ModuleNotFoundError:
+  from selfdrive.navd.paths import DEFAULT_NAVD_DB_DIR, REPO_NAVD_DATA_DIR
 
-DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data"
-DEFAULT_OSM_ROADS_DB_PATH = Path(os.getenv("OSM_ROADS_DB", str(DEFAULT_DATA_DIR / "osm_roads_kr.sqlite3")))
+DEFAULT_DATA_DIR = REPO_NAVD_DATA_DIR
+DEFAULT_OSM_ROADS_DB_PATH = Path(os.getenv("OSM_ROADS_DB", str(DEFAULT_NAVD_DB_DIR / "osm_roads_kr.sqlite3")))
 
 METERS_PER_DEG_LAT = 111320.0
 DEFAULT_LOOKUP_RADIUS_M = 50.0

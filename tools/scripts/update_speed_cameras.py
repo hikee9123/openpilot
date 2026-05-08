@@ -17,6 +17,7 @@ try:
   from openpilot.selfdrive.navd.speed_camera import (
     DEFAULT_CSV_PATH,
     DEFAULT_DB_PATH,
+    DEFAULT_DOWNLOAD_TMP_DIR,
     DEFAULT_OSM_ROADS_DB_PATH,
     DEFAULT_REGION_DIR,
     PUBLIC_DATA_PK,
@@ -31,6 +32,7 @@ except ModuleNotFoundError:
   from selfdrive.navd.speed_camera import (
     DEFAULT_CSV_PATH,
     DEFAULT_DB_PATH,
+    DEFAULT_DOWNLOAD_TMP_DIR,
     DEFAULT_OSM_ROADS_DB_PATH,
     DEFAULT_REGION_DIR,
     PUBLIC_DATA_PK,
@@ -87,6 +89,7 @@ def main() -> None:
   )
   parser.add_argument("--extra-csv", type=Path, action="append", help="Additional custom CSV path; can be repeated")
   parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH, help=f"SQLite DB path (default: {DEFAULT_DB_PATH})")
+  parser.add_argument("--tmp-dir", type=Path, default=DEFAULT_DOWNLOAD_TMP_DIR, help=f"Temporary download directory (default: {DEFAULT_DOWNLOAD_TMP_DIR})")
   parser.add_argument(
     "--osm-roads-db",
     type=Path,
@@ -118,6 +121,7 @@ def main() -> None:
     args.per_page,
     args.max_pages,
     progress_callback=update_download_progress,
+    tmp_dir=args.tmp_dir,
   )
   print(f"downloaded {downloaded} rows into {args.csv}")
 

@@ -4,29 +4,45 @@
 `naviCustom`. The onroad HUD subscribes to `naviCustom` and shows camera category,
 road class, speed limit, and remaining distance.
 
-## 1. Input Data
+## 1. Data Paths
 
-The default public CSV remains:
+On device, navid data is kept outside the git checkout so updater cleanup does
+not remove it:
 
 ```text
-selfdrive/navd/data/speed_cameras.csv
+/data/navd/
+  db/
+    osm_roads_kr.sqlite3
+    speed_cameras.sqlite3
+  source/
+    speed_cameras.csv
+    region/
+    south-korea-latest.osm.pbf
+  tmp/
 ```
 
-Regional CSV files can be added under:
+On PC, the same layout is used under the openpilot PC data root:
 
 ```text
-selfdrive/navd/data/region/
+~/.comma/navd/
+  db/
+    osm_roads_kr.sqlite3
+    speed_cameras.sqlite3
+  source/
+    speed_cameras.csv
+    region/
+    south-korea-latest.osm.pbf
+  tmp/
 ```
 
-Example:
+Regional CSV files can be added under `source/region`.
+
+PC example:
 
 ```text
-selfdrive/navd/data/
-  speed_cameras.csv
-  speed_cameras.sqlite3
-  region/
-    seoul_speed_cameras.csv
-    gyeonggi_speed_cameras.csv
+~/.comma/navd/source/region/
+  seoul_speed_cameras.csv
+  gyeonggi_speed_cameras.csv
 ```
 
 CSV files are read with `utf-8-sig`, `utf-8`, `cp949`, `euc-kr`, then a
@@ -38,24 +54,24 @@ Single public CSV import still works:
 
 ```bash
 .venv/bin/python tools/scripts/import_speed_cameras.py \
-  --csv selfdrive/navd/data/speed_cameras.csv \
-  --db selfdrive/navd/data/speed_cameras.sqlite3
+  --csv /data/navd/source/speed_cameras.csv \
+  --db /data/navd/db/speed_cameras.sqlite3
 ```
 
 To include regional CSVs:
 
 ```bash
 .venv/bin/python tools/scripts/import_speed_cameras.py \
-  --csv selfdrive/navd/data/speed_cameras.csv \
-  --region-dir selfdrive/navd/data/region \
-  --db selfdrive/navd/data/speed_cameras.sqlite3
+  --csv /data/navd/source/speed_cameras.csv \
+  --region-dir /data/navd/source/region \
+  --db /data/navd/db/speed_cameras.sqlite3
 ```
 
 Extra custom CSVs can be provided repeatedly:
 
 ```bash
 .venv/bin/python tools/scripts/import_speed_cameras.py \
-  --csv selfdrive/navd/data/speed_cameras.csv \
+  --csv /data/navd/source/speed_cameras.csv \
   --extra-csv /path/to/custom.csv
 ```
 
