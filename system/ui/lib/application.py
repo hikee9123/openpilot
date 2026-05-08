@@ -100,6 +100,7 @@ class FontWeight(StrEnum):
   BOLD = "Inter-Bold.fnt"
   SEMI_BOLD = "Inter-SemiBold.fnt"
   UNIFONT = "unifont.fnt"
+  KOREAN = "SUIT-Medium.fnt"
 
   # Small UI fonts
   DISPLAY_REGULAR = "Inter-Regular.fnt"
@@ -107,19 +108,28 @@ class FontWeight(StrEnum):
   DISPLAY = "Inter-Bold.fnt"
 
 
-def _text_requires_unifont(text: str) -> bool:
+def _text_requires_korean_font(text: str) -> bool:
   return any(
     "\u1100" <= char <= "\u11ff" or
     "\u3130" <= char <= "\u318f" or
-    "\uac00" <= char <= "\ud7af" or
+    "\uac00" <= char <= "\ud7af"
+    for char in text
+  )
+
+
+def _text_requires_unifont(text: str) -> bool:
+  return any(
     "\u3040" <= char <= "\u30ff" or
-    "\u3400" <= char <= "\u9fff"
+    "\u3400" <= char <= "\u9fff" or
+    "\u0e00" <= char <= "\u0e7f"
     for char in text
   )
 
 
 def font_fallback(font: rl.Font, text: str = "") -> rl.Font:
-  """Fall back to unifont for CJK text or languages that require it."""
+  """Fall back to script-specific fonts for text Inter does not cover."""
+  if multilang.requires_korean_font() or _text_requires_korean_font(text):
+    return gui_app.font(FontWeight.KOREAN)
   if multilang.requires_unifont() or _text_requires_unifont(text):
     return gui_app.font(FontWeight.UNIFONT)
   return font
@@ -699,7 +709,7 @@ class GuiApplication:
       with as_file(FONT_DIR) as fspath:
         fnt_path = fspath / font_weight_file
         font = rl.load_font(fnt_path.as_posix())
-        if font_weight_file != FontWeight.UNIFONT:
+        if font_weight_file not in (FontWeight.UNIFONT, FontWeight.KOREAN):
           rl.gen_texture_mipmaps(font.texture)
           rl.set_texture_filter(font.texture, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
         self._fonts[font_weight_file] = font

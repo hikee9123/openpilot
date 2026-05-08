@@ -10,9 +10,17 @@ TRANSLATIONS_DIR = SELFDRIVE_DIR / "ui" / "translations"
 LANGUAGES_FILE = TRANSLATIONS_DIR / "languages.json"
 
 GLYPH_PADDING = 6
+KOREAN_GLYPH_PADDING = 3
 EXTRA_CHARS = "–‑✓×°§•X⚙✕◀▶✔⌫⇧␣○●↳çêüñ–‑✓×°§•€£¥"
 EXTRA_UNIFONT_CHARS = "강광남별북산역울천충특"
-UNIFONT_LANGUAGES = {"th", "zh-CHT", "zh-CHS", "ko", "ja"}
+UNIFONT_LANGUAGES = {"th", "zh-CHT", "zh-CHS", "ja"}
+KOREAN_LANGUAGES = {"ko"}
+KOREAN_FONT_NAMES = {"SUIT-Medium.otf"}
+HANGUL_RANGES = (
+  range(0x1100, 0x1200),
+  range(0x3130, 0x3190),
+  range(0xAC00, 0xD7A4),
+)
 
 
 def _languages():
@@ -25,17 +33,29 @@ def _languages():
 def _char_sets():
   base = set(map(chr, range(32, 127))) | set(EXTRA_CHARS)
   unifont = set(base) | set(EXTRA_UNIFONT_CHARS)
+  korean = set(base)
+  for hangul_range in HANGUL_RANGES:
+    korean.update(map(chr, hangul_range))
 
   for language, code in _languages().items():
     unifont.update(language)
+    if code in KOREAN_LANGUAGES:
+      korean.update(language)
     po_path = TRANSLATIONS_DIR / f"app_{code}.po"
     try:
       chars = set(po_path.read_text(encoding="utf-8"))
     except FileNotFoundError:
       continue
-    (unifont if code in UNIFONT_LANGUAGES else base).update(chars)
+    if code in KOREAN_LANGUAGES:
+      korean.update(chars)
+    else:
+      (unifont if code in UNIFONT_LANGUAGES else base).update(chars)
 
-  return tuple(sorted(ord(c) for c in base)), tuple(sorted(ord(c) for c in unifont))
+  return (
+    tuple(sorted(ord(c) for c in base)),
+    tuple(sorted(ord(c) for c in unifont)),
+    tuple(sorted(ord(c) for c in korean)),
+  )
 
 
 def _glyph_metrics(glyphs, rects, codepoints):
@@ -92,7 +112,9 @@ def _process_font(font_path: Path, codepoints: tuple[int, ...]):
 
   font_size = {
     "unifont.otf": 16,  # unifont is only 16x8 or 16x16 pixels per glyph
+    "SUIT-Medium.otf": 48,
   }.get(font_path.name, 200)
+  glyph_padding = KOREAN_GLYPH_PADDING if font_path.name in KOREAN_FONT_NAMES else GLYPH_PADDING
 
   data = font_path.read_bytes()
   file_buf = rl.ffi.new("unsigned char[]", data)
@@ -103,7 +125,7 @@ def _process_font(font_path: Path, codepoints: tuple[int, ...]):
     raise RuntimeError("raylib failed to load font data")
 
   rects_ptr = rl.ffi.new("Rectangle **")
-  image = rl.gen_image_font_atlas(glyphs, rects_ptr, len(codepoints), font_size, GLYPH_PADDING, 0)
+  image = rl.gen_image_font_atlas(glyphs, rects_ptr, len(codepoints), font_size, glyph_padding, 0)
   if image.width == 0 or image.height == 0:
     raise RuntimeError("raylib returned an empty atlas")
 
@@ -119,12 +141,17 @@ def _process_font(font_path: Path, codepoints: tuple[int, ...]):
 
 
 def main():
-  base_cp, unifont_cp = _char_sets()
+  base_cp, unifont_cp, korean_cp = _char_sets()
   fonts = sorted(FONT_DIR.glob("*.ttf")) + sorted(FONT_DIR.glob("*.otf"))
   for font in fonts:
     if "emoji" in font.name.lower():
       continue
-    glyphs = unifont_cp if font.stem.lower().startswith("unifont") else base_cp
+    if font.name in KOREAN_FONT_NAMES:
+      glyphs = korean_cp
+    elif font.stem.lower().startswith("unifont"):
+      glyphs = unifont_cp
+    else:
+      glyphs = base_cp
     _process_font(font, glyphs)
   return 0
 

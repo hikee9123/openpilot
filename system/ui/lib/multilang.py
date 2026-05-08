@@ -19,8 +19,10 @@ UNIFONT_LANGUAGES = [
   "th",
   "zh-CHT",
   "zh-CHS",
-  "ko",
   "ja",
+]
+KOREAN_FONT_LANGUAGES = [
+  "ko",
 ]
 
 # Plural form selectors for supported languages
@@ -163,6 +165,10 @@ class Multilang:
   def requires_unifont(self) -> bool:
     """Certain languages require unifont to render their glyphs."""
     return self._language in UNIFONT_LANGUAGES
+
+  def requires_korean_font(self) -> bool:
+    """Certain languages require the Korean fallback font to render their glyphs."""
+    return self._language in KOREAN_FONT_LANGUAGES
 
   def setup(self):
     try:
