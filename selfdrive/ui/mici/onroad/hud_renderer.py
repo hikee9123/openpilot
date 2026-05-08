@@ -30,6 +30,14 @@ SPEED_CAMERA_DEBUG_PREVIEW_ROAD_CLASS = "EXPRESSWAY"
 SPEED_CAMERA_DEBUG_PREVIEW_ROAD_CLASS_CODE = 1
 SPEED_CAMERA_DEBUG_PREVIEW_RELATIVE_ANGLE_DEG = 30.0
 SPEED_CAMERA_DEBUG_PREVIEW_CANDIDATES = "road: preview road\n1 SECTION 350m local\n2 SPEED 620m\n3 SIGNAL 910m"
+SPEED_CAMERA_DEBUG_PREVIEW_TEXT = "\n".join((
+  "CAM SECTION_SPEED c=4 v=50 id=preview",
+  "POS 350m f=303 s=+175 a=+30 bear=0",
+  "RAW type=preview dir=3/BOTH sect=1 len=800",
+  "ROAD EXPRESSWAY | preview road",
+  "PLACE preview road (source->target)",
+  "WHY osm=Y cur=고속국도 corr=Y flags=-",
+))
 
 SET_SPEED_PERSISTENCE = 2.5  # seconds
 
@@ -193,7 +201,7 @@ class HudRenderer(Widget):
       self.is_cruise_set = False
       self.set_speed = SET_SPEED_NA
       self.speed = 0.0
-      self.camera_alert_active = False
+      self._clear_camera_alert()
       if self._speed_camera_preview_active():
         self._apply_speed_camera_preview()
       return
@@ -343,10 +351,11 @@ class HudRenderer(Widget):
     self.camera_relative_angle_deg = float(getattr(nav, "camRelativeAngleDeg", 0.0))
     self.camera_candidates_text = str(getattr(nav, "camCandidatesText", ""))
     self.camera_debug_text = str(getattr(nav, "camDebugText", ""))
-    if not self.camera_alert_active and self._speed_camera_preview_active():
-      self._apply_speed_camera_preview()
     if not self.camera_alert_active:
-      self._camera_pointer_angle_filter.initialized = False
+      if self._speed_camera_preview_active():
+        self._apply_speed_camera_preview()
+      else:
+        self._clear_camera_alert()
 
   def _clear_camera_alert(self) -> None:
     self.camera_alert_active = False
@@ -381,7 +390,7 @@ class HudRenderer(Widget):
     self.camera_bearing_deg = 0.0
     self.camera_relative_angle_deg = SPEED_CAMERA_DEBUG_PREVIEW_RELATIVE_ANGLE_DEG
     self.camera_candidates_text = SPEED_CAMERA_DEBUG_PREVIEW_CANDIDATES
-    self.camera_debug_text = "CAM SECTION_SPEED c=4 v=50 id=preview\nPOS 350m a=+30 bear=0\nRAW type=preview sect=1 len=800\nROAD EXPRESSWAY | preview road\nOSM Y current=고속국도\nWHY corridor=Y local=Y flags=-"
+    self.camera_debug_text = SPEED_CAMERA_DEBUG_PREVIEW_TEXT
 
   def _draw_speed_camera_alert(self, rect: rl.Rectangle) -> None:
     if not self.camera_alert_active or not self._can_draw_top_icons:
@@ -554,7 +563,7 @@ class HudRenderer(Widget):
 
   def _draw_camera_debug_text(self, rect: rl.Rectangle) -> None:
     self._camera_search_angle()
-    if not self.show_speed_camera_debug_text or not self.camera_debug_text:
+    if not self.camera_alert_active or not self.show_speed_camera_debug_text or not self.camera_debug_text:
       return
 
     lines = [line.strip() for line in self.camera_debug_text.splitlines() if line.strip()][:6]
