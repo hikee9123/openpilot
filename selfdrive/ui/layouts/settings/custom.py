@@ -68,9 +68,7 @@ DEFAULT_MODEL_NAMES = {DEFAULT_MODEL_NAME, "1.default", "7.Current_Model", "7.Cu
 EXTERNAL_NAVI_OPTIONS = ["0", "1", "2"]
 OSM_ROAD_OVERLAY_MODE_OPTIONS = [
   (0, tr_noop("Off")),
-  (1, tr_noop("Mini map")),
-  (2, tr_noop("Camera overlay")),
-  (3, tr_noop("Both")),
+  (1, tr_noop("Mini Map")),
 ]
 CAR_TRACKING_DESCRIPTION = tr_noop(
   "Shows a separate CAR TRACKING panel on the onroad screen.<br>"
@@ -984,7 +982,7 @@ class CustomSettingsLayout(Widget):
         self._toggle_json_item("UseLocalOsmRoads", tr_noop("Use local OSM roads"),
                                tr_noop("Uses an offline OSM road DB to prefer speed camera candidates on the current road.")),
         self._cycle_choice_item("OsmRoadOverlayMode", tr_noop("OSM road overlay"), OSM_ROAD_OVERLAY_MODE_OPTIONS,
-                                tr_noop("Selects how nearby OSM roads, speed cameras, and ego position are drawn on the onroad camera screen.")),
+                                tr_noop("Shows or hides the mini map with nearby OSM roads, speed cameras, and ego position.")),
         self._number_item("LocalOsmRoadRadius", tr_noop("OSM road search radius"), 20, 100, 5,
                           description=tr_noop("Sets the local OSM road lookup radius used to infer the current road name."), unit="m"),
         SectionHeader(tr_noop("Speed camera DB")),

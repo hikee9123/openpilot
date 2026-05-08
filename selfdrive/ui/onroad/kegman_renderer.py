@@ -42,7 +42,6 @@ PANEL_BG = rl.Color(0, 0, 0, 110)
 PANEL_BORDER = rl.Color(255, 255, 255, 85)
 SEPARATOR = rl.Color(255, 255, 255, 30)
 OSM_OVERLAY_MODE_MINIMAP = 1
-OSM_OVERLAY_MODE_BOTH = 3
 
 
 @dataclass
@@ -155,7 +154,7 @@ class KegmanRenderer(Widget):
 
   def _minimap_rect(self, rect: rl.Rectangle) -> rl.Rectangle | None:
     mode = int(ui_state.custom_params.get("OsmRoadOverlayMode", 0))
-    if mode not in (OSM_OVERLAY_MODE_MINIMAP, OSM_OVERLAY_MODE_BOTH):
+    if mode != OSM_OVERLAY_MODE_MINIMAP:
       return None
 
     panel_w = min(360.0, rect.width * 0.30)

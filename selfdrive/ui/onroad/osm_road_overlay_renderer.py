@@ -20,8 +20,6 @@ PANEL_GRID = rl.Color(255, 255, 255, 28)
 TEXT_COLOR = rl.Color(230, 230, 230, 215)
 OSM_OVERLAY_MODE_OFF = 0
 OSM_OVERLAY_MODE_MINIMAP = 1
-OSM_OVERLAY_MODE_CAMERA = 2
-OSM_OVERLAY_MODE_BOTH = 3
 
 
 class OsmRoadOverlayRenderer(Widget):
@@ -30,11 +28,10 @@ class OsmRoadOverlayRenderer(Widget):
     self._last_text = ""
     self._data: dict = {}
     self._font_medium = gui_app.font(FontWeight.MEDIUM)
-    self._font_bold = gui_app.font(FontWeight.BOLD)
 
   def _render(self, rect: rl.Rectangle) -> None:
     mode = int(ui_state.custom_params.get("OsmRoadOverlayMode", OSM_OVERLAY_MODE_OFF))
-    if mode <= OSM_OVERLAY_MODE_OFF:
+    if mode != OSM_OVERLAY_MODE_MINIMAP:
       return
     if ui_state.sm.recv_frame["naviCustom"] <= ui_state.started_frame:
       return
@@ -45,17 +42,12 @@ class OsmRoadOverlayRenderer(Widget):
       return
 
     data = self._parse_overlay(overlay_text)
-    roads = data.get("roads", [])
-    map_roads = data.get("mapRoads", roads)
+    map_roads = data.get("mapRoads", [])
     cameras = data.get("cameras", [])
-    if not roads and not map_roads and not cameras:
+    if not map_roads and not cameras:
       return
 
-    if mode in (OSM_OVERLAY_MODE_CAMERA, OSM_OVERLAY_MODE_BOTH):
-      self._draw_perspective_roads(rect, roads)
-      self._draw_perspective_cameras(rect, cameras)
-    if mode in (OSM_OVERLAY_MODE_MINIMAP, OSM_OVERLAY_MODE_BOTH):
-      self._draw_minimap(rect, data)
+    self._draw_minimap(rect, data)
 
   def _parse_overlay(self, overlay_text: str) -> dict:
     if overlay_text == self._last_text:
@@ -67,27 +59,6 @@ class OsmRoadOverlayRenderer(Widget):
     except (TypeError, ValueError):
       self._data = {}
     return self._data
-
-  def _draw_perspective_roads(self, rect: rl.Rectangle, roads: list[dict]) -> None:
-    for road in roads:
-      p1 = self._project_to_camera(rect, float(road.get("x1", 0.0)), float(road.get("y1", 0.0)))
-      p2 = self._project_to_camera(rect, float(road.get("x2", 0.0)), float(road.get("y2", 0.0)))
-      if p1 is None or p2 is None:
-        continue
-      color = self._road_color(road)
-      thickness = 6.0 if road.get("c") else 3.0
-      rl.draw_line_ex(p1, p2, thickness, color)
-
-  def _draw_perspective_cameras(self, rect: rl.Rectangle, cameras: list[dict]) -> None:
-    for camera in cameras:
-      point = self._project_to_camera(rect, float(camera.get("x", 0.0)), float(camera.get("y", 0.0)))
-      if point is None:
-        continue
-      radius = max(8, int(18 - min(10.0, float(camera.get("d", 0)) / 80.0)))
-      rl.draw_circle(int(point.x), int(point.y), radius + 4, rl.Color(0, 0, 0, 120))
-      rl.draw_circle(int(point.x), int(point.y), radius, CAMERA_COLOR)
-      label = str(camera.get("t", "CAM"))[:10]
-      rl.draw_text_ex(self._font_bold, label, rl.Vector2(point.x + radius + 8, point.y - 13), 26, 0, CAMERA_TEXT)
 
   def _draw_minimap(self, rect: rl.Rectangle, data: dict) -> None:
     panel_w = min(360.0, rect.width * 0.30)
@@ -102,7 +73,7 @@ class OsmRoadOverlayRenderer(Widget):
     rl.draw_line(int(panel.x + 18), int(origin.y), int(panel.x + panel_w - 18), int(origin.y), PANEL_GRID)
     rl.draw_line(int(origin.x), int(panel.y + 18), int(origin.x), int(panel.y + panel_h - 18), PANEL_GRID)
 
-    for road in data.get("mapRoads", data.get("roads", [])):
+    for road in data.get("mapRoads", []):
       p1 = self._project_to_map(origin, scale, float(road.get("x1", 0.0)), float(road.get("y1", 0.0)))
       p2 = self._project_to_map(origin, scale, float(road.get("x2", 0.0)), float(road.get("y2", 0.0)))
       if not self._point_in_panel(panel, p1) and not self._point_in_panel(panel, p2):
@@ -129,20 +100,6 @@ class OsmRoadOverlayRenderer(Widget):
     if str(road.get("h", "")) in ("motorway", "trunk", "primary"):
       return ROAD_MAJOR
     return ROAD_DEFAULT
-
-  @staticmethod
-  def _project_to_camera(rect: rl.Rectangle, forward_m: float, right_m: float) -> rl.Vector2 | None:
-    if forward_m < 2.0 or forward_m > 145.0 or abs(right_m) > 70.0:
-      return None
-    horizon_y = rect.y + rect.height * 0.47
-    bottom_y = rect.y + rect.height * 0.94
-    depth = max(0.0, min(1.0, forward_m / 145.0))
-    y = bottom_y - (depth ** 0.58) * (bottom_y - horizon_y)
-    lateral_scale = 0.45 + (1.0 - depth) ** 1.35 * 8.0
-    x = rect.x + rect.width * 0.5 + right_m * lateral_scale
-    if x < rect.x - 80.0 or x > rect.x + rect.width + 80.0:
-      return None
-    return rl.Vector2(x, y)
 
   @staticmethod
   def _project_to_map(origin: rl.Vector2, scale: float, forward_m: float, right_m: float) -> rl.Vector2:

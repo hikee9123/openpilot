@@ -100,6 +100,10 @@ def _coerce_like_default(key: str, value):
   return value
 
 
+def _normalize_osm_road_overlay_mode(value: int | float | bool) -> int:
+  return 1 if int(value) > 0 else 0
+
+
 def read_custom_params(params: Params | None = None) -> dict[str, int | float | bool]:
   params = params or Params()
   values = DEFAULT_CUSTOM_PARAMS.copy()
@@ -112,7 +116,8 @@ def read_custom_params(params: Params | None = None) -> dict[str, int | float | 
   if "ShowDebugMessage" not in loaded and "ParamDebug" in loaded:
     values["ShowDebugMessage"] = _coerce_like_default("ShowDebugMessage", loaded["ParamDebug"])
   if "OsmRoadOverlayMode" not in loaded and "ShowOsmRoadOverlay" in loaded:
-    values["OsmRoadOverlayMode"] = 3 if bool(loaded["ShowOsmRoadOverlay"]) else 0
+    values["OsmRoadOverlayMode"] = 1 if bool(loaded["ShowOsmRoadOverlay"]) else 0
+  values["OsmRoadOverlayMode"] = _normalize_osm_road_overlay_mode(values["OsmRoadOverlayMode"])
   values["ParamDebug"] = bool(values["ShowDebugMessage"])
   return values
 
@@ -125,6 +130,8 @@ def write_custom_params(values: Mapping[str, int | float | bool], params: Params
   for key, value in values.items():
     if key in merged:
       merged[key] = _coerce_like_default(key, value)
+  if "OsmRoadOverlayMode" in merged:
+    merged["OsmRoadOverlayMode"] = _normalize_osm_road_overlay_mode(merged["OsmRoadOverlayMode"])
   if "ShowDebugMessage" in values:
     merged["ParamDebug"] = bool(merged["ShowDebugMessage"])
   elif "ParamDebug" in values:

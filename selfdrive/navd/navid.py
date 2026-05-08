@@ -47,7 +47,6 @@ LOOKUP_INTERVAL_SECONDS = 1.0
 OSM_ROAD_LOOKUP_INTERVAL_SECONDS = 2.0
 OSM_ROAD_OVERLAY_INTERVAL_SECONDS = 1.0
 OSM_ROAD_OVERLAY_RADIUS_M = 140.0
-OSM_ROAD_OVERLAY_MAX_SEGMENTS = 90
 OSM_CACHE_MIN_QUERY_RADIUS_M = OSM_ROAD_OVERLAY_RADIUS_M * 2.0
 OSM_CACHE_MIN_REFRESH_INTERVAL_SECONDS = 1.0
 OSM_CURRENT_ROAD_MAX_HEADING_DIFF_DEG = 60.0
@@ -60,8 +59,6 @@ OSM_MINIMAP_MIN_RADIUS_M = 300.0
 OSM_MINIMAP_QUERY_MULTIPLIER = 2.0
 OSM_MINIMAP_REFRESH_MARGIN_FRACTION = 0.9
 OSM_OVERLAY_MODE_MINIMAP = 1
-OSM_OVERLAY_MODE_CAMERA = 2
-OSM_OVERLAY_MODE_BOTH = 3
 KPH_TO_MPS = 1000.0 / 3600.0
 MAX_CAMERA_CANDIDATES = 3
 
@@ -96,7 +93,7 @@ def _speed_camera_tuning() -> dict[str, float | bool]:
     "passed_ignore_seconds": _clip(float(values.get("SpeedCameraPassedIgnoreSeconds", 8)), 3.0, 30.0),
     "min_gps_speed_mps": _clip(float(values.get("SpeedCameraMinGpsSpeed", 3)), 0.0, 10.0) * KPH_TO_MPS,
     "use_local_osm_roads": bool(values.get("UseLocalOsmRoads", False)),
-    "osm_road_overlay_mode": int(_clip(float(values.get("OsmRoadOverlayMode", 0)), 0.0, 3.0)),
+    "osm_road_overlay_mode": 1 if int(values.get("OsmRoadOverlayMode", 0) or 0) > 0 else 0,
     "local_osm_road_radius_m": _clip(float(values.get("LocalOsmRoadRadius", DEFAULT_LOOKUP_RADIUS_M)), 20.0, 100.0),
   }
 
@@ -261,12 +258,6 @@ def _format_camera_classification_debug_text(camera, category: str, type_code: i
   ))
 
 
-def _camera_overlay_label(camera) -> str:
-  label = _candidate_category_label(camera)
-  speed_limit = int(getattr(camera, "speed_limit", 0) or 0)
-  return f"{label} {speed_limit}" if speed_limit > 0 else label
-
-
 def _osm_db_mtime(db_path: Path) -> float:
   try:
     return db_path.stat().st_mtime
@@ -364,20 +355,6 @@ def _road_payload(segment, gps, current_road_name: str, include_distance: bool =
   return payload
 
 
-def _camera_overlay_roads(cache: OsmRoadCache, gps, current_road_name: str) -> list[dict]:
-  roads = []
-  for segment in cache.segments:
-    road = _road_payload(segment, gps, current_road_name, include_distance=True)
-    if float(road["d"]) > OSM_ROAD_OVERLAY_RADIUS_M:
-      continue
-    if max(road["x1"], road["x2"]) < -20.0 or min(road["x1"], road["x2"]) > OSM_ROAD_OVERLAY_RADIUS_M + 30.0:
-      continue
-    if min(abs(road["y1"]), abs(road["y2"])) > OSM_ROAD_OVERLAY_RADIUS_M:
-      continue
-    roads.append(road)
-  return sorted(roads, key=lambda road: float(road.get("d", 0.0)))[:OSM_ROAD_OVERLAY_MAX_SEGMENTS]
-
-
 def _angle_diff_deg(a: float, b: float) -> float:
   return abs((a - b + 180.0) % 360.0 - 180.0)
 
@@ -462,7 +439,6 @@ def _osm_overlay_cameras(gps, candidates=()) -> list[dict]:
         "y": round(y, 1),
         "d": int(max(0.0, float(getattr(camera, "distance_m", 0.0)))),
         "s": int(getattr(camera, "speed_limit", 0) or 0),
-        "t": _camera_overlay_label(camera),
       })
   return cameras
 
@@ -478,37 +454,30 @@ def _build_osm_road_overlay_text(
   now: float | None = None,
 ) -> str:
   try:
-    roads = []
     map_roads = []
     map_radius_m = 0.0
 
+    if mode != OSM_OVERLAY_MODE_MINIMAP:
+      return ""
+
     if osm_cache is not None and tuning is not None:
       now = time.monotonic() if now is None else now
-      if mode in (OSM_OVERLAY_MODE_MINIMAP, OSM_OVERLAY_MODE_BOTH):
-        map_radius_m = _minimap_display_radius_m(gps, tuning)
-        query_radius_m = _minimap_query_radius_m(map_radius_m)
-        display_radius_m = map_radius_m
-      else:
-        query_radius_m = OSM_CACHE_MIN_QUERY_RADIUS_M
-        display_radius_m = OSM_ROAD_OVERLAY_RADIUS_M
+      map_radius_m = _minimap_display_radius_m(gps, tuning)
+      query_radius_m = _minimap_query_radius_m(map_radius_m)
+      display_radius_m = map_radius_m
 
       _ensure_osm_cache(osm_cache, db_path, gps, display_radius_m, query_radius_m, now)
-      if mode in (OSM_OVERLAY_MODE_CAMERA, OSM_OVERLAY_MODE_BOTH):
-        roads = _camera_overlay_roads(osm_cache, gps, current_road_name)
-      if mode in (OSM_OVERLAY_MODE_MINIMAP, OSM_OVERLAY_MODE_BOTH):
-        map_roads = _minimap_roads(osm_cache, gps, current_road_name, map_radius_m)
+      map_roads = _minimap_roads(osm_cache, gps, current_road_name, map_radius_m)
 
     cameras = _osm_overlay_cameras(gps, candidates)
-    if not roads and not map_roads and not cameras:
+    if not map_roads and not cameras:
       return ""
     payload = {
       "road": (current_road_name or "")[:32],
-      "roads": roads,
       "cameras": cameras,
+      "mapRoads": map_roads,
+      "mapRadius": int(map_radius_m),
     }
-    if mode in (OSM_OVERLAY_MODE_MINIMAP, OSM_OVERLAY_MODE_BOTH):
-      payload["mapRoads"] = map_roads
-      payload["mapRadius"] = int(map_radius_m)
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
   except Exception:
     cloudlog.exception("navid: failed to build OSM road overlay")
