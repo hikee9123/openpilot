@@ -835,6 +835,26 @@ def test_find_lead_camera_prioritizes_local_road_match_within_speed_category(tmp
   assert camera.local_road_match
 
 
+def test_find_lead_camera_prioritizes_forward_road_match_within_speed_category(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  csv_path.write_text(
+    "MNLSS_REGLT_CAMERA_MANAGE_NO,LATITUDE,LONGITUDE,REGLT_SE,LMTT_VE,ROAD_ROUTE_NM\n"
+    "A1,37.001,127.002,01,80,Current Road\n"
+    "A2,37.002,127.000,01,80,Other Road\n",
+    encoding="utf-8",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 2
+
+  cameras = find_lead_cameras(db_path, 37.0, 127.0, 0.0, max_angle_deg=75.0, current_road_name="Current Road", limit=2)
+  assert len(cameras) == 2
+  assert cameras[0].id.startswith("A2-")
+  assert cameras[0].forward_road_match
+  assert not cameras[1].forward_road_match
+  assert cameras[1].local_road_match
+
+
 def test_find_lead_camera_keeps_speed_category_ahead_of_local_road_signal(tmp_path: Path) -> None:
   csv_path = tmp_path / "speed_cameras.csv"
   db_path = tmp_path / "speed_cameras.sqlite3"

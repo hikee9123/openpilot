@@ -101,3 +101,28 @@ def test_format_camera_classification_debug_text() -> None:
     "PLACE 중앙사거리 신호단속 원본 문구",
     "WHY osm=Y cur=중앙사거리 corr=Y flags=ZERO",
   ]
+
+
+def test_forward_road_info_marks_ahead_corridor() -> None:
+  navid = _load_navid_module()
+  segment = types.SimpleNamespace(bearing_deg=0.0, highway="residential", name="Current Road", ref="")
+  gps = types.SimpleNamespace(bearingDeg=0.0)
+
+  info = navid._forward_road_info(segment, gps, 10.0, 3.0, 120.0, 5.0, "Current Road")
+
+  assert info == {
+    "f": True,
+    "fm": 10.0,
+    "sm": 3.0,
+    "a": 0.0,
+  }
+
+
+def test_forward_road_info_rejects_cross_traffic() -> None:
+  navid = _load_navid_module()
+  segment = types.SimpleNamespace(bearing_deg=90.0, highway="residential", name="Current Road", ref="")
+  gps = types.SimpleNamespace(bearingDeg=0.0)
+
+  info = navid._forward_road_info(segment, gps, 20.0, -5.0, 20.0, 80.0, "Current Road")
+
+  assert info["f"] is False

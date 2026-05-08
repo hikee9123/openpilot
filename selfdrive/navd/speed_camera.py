@@ -62,6 +62,9 @@ CAMERA_DIRECTION_ANGLE_DEG = 70.0
 LOOKAHEAD_SIDE_DISTANCE_M = 180.0
 LOOKAHEAD_EXPRESSWAY_SIDE_DISTANCE_M = 90.0
 LOOKAHEAD_LOCAL_ROAD_SIDE_DISTANCE_M = 260.0
+LOOKAHEAD_FORWARD_ROAD_MAX_ANGLE_DEG = 50.0
+LOOKAHEAD_FORWARD_ROAD_DEFAULT_SIDE_DISTANCE_M = 45.0
+LOOKAHEAD_FORWARD_ROAD_MAJOR_SIDE_DISTANCE_M = 80.0
 MANAGE_NO_DEDUP_DISTANCE_M = 50.0
 OSM_EXTENDED_LOOKUP_RADIUS_MULTIPLIER = 1.8
 EARTH_RADIUS_M = 6371000.0
@@ -260,6 +263,7 @@ class SpeedCamera:
   osm_road_match_dist_m: float = 0.0
   osm_road_match_heading_deg: float = 0.0
   local_road_match: bool = False
+  forward_road_match: bool = False
   direction_kind: str = ""
   route_hint: str = ""
 
@@ -479,9 +483,24 @@ def same_corridor_likely(camera: "SpeedCamera") -> bool:
   return False
 
 
-def _alert_priority(camera: "SpeedCamera") -> tuple[int, int, int, float, float]:
+def forward_road_likely(camera: "SpeedCamera") -> bool:
+  side_limit = (
+    LOOKAHEAD_FORWARD_ROAD_MAJOR_SIDE_DISTANCE_M
+    if camera.is_expressway or camera.is_national_road
+    else LOOKAHEAD_FORWARD_ROAD_DEFAULT_SIDE_DISTANCE_M
+  )
+  return (
+    camera.forward_m > 0.0 and
+    abs(camera.side_m) <= side_limit and
+    abs(camera.relative_angle_deg) <= LOOKAHEAD_FORWARD_ROAD_MAX_ANGLE_DEG and
+    (camera.local_road_match or same_corridor_likely(camera))
+  )
+
+
+def _alert_priority(camera: "SpeedCamera") -> tuple[int, int, int, int, float, float, float]:
   return (
     0 if is_speed_category(camera.camera_category) else 1,
+    0 if camera.forward_road_match else 1,
     0 if camera.local_road_match else 1,
     0 if same_corridor_likely(camera) else 1,
     abs(camera.side_m),
@@ -1795,6 +1814,7 @@ def find_lead_cameras(
         camera,
         local_road_match=road_name_matches(current_road_name, *camera_road_names),
       )
+    camera = replace(camera, forward_road_match=forward_road_likely(camera))
     if abs(camera.side_m) > _max_side_distance_m(camera):
       continue
     if _is_alertable_category(camera.camera_category):

@@ -15,6 +15,7 @@ MINIMAP_MAX_HEIGHT = 300.0
 MINIMAP_HEIGHT_FRACTION = 0.34
 ROAD_DEFAULT = rl.Color(255, 255, 255, 86)
 ROAD_MAJOR = rl.Color(135, 190, 220, 135)
+ROAD_FORWARD = rl.Color(92, 230, 150, 170)
 ROAD_CURRENT = rl.Color(47, 214, 114, 210)
 CAMERA_COLOR = rl.Color(255, 198, 77, 235)
 CAMERA_TEXT = rl.Color(255, 235, 180, 235)
@@ -102,6 +103,8 @@ class OsmRoadOverlayRenderer(Widget):
   def _road_color(road: dict) -> rl.Color:
     if road.get("c"):
       return ROAD_CURRENT
+    if road.get("f"):
+      return ROAD_FORWARD
     if str(road.get("h", "")) in ("motorway", "trunk", "primary"):
       return ROAD_MAJOR
     return ROAD_DEFAULT
@@ -110,6 +113,8 @@ class OsmRoadOverlayRenderer(Widget):
   def _road_thickness(road: dict) -> float:
     if road.get("c"):
       return 5.0
+    if road.get("f"):
+      return 4.0
     if str(road.get("h", "")) in ("motorway", "trunk", "primary"):
       return 3.0
     return 2.5

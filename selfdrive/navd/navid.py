@@ -50,6 +50,10 @@ OSM_ROAD_OVERLAY_RADIUS_M = 140.0
 OSM_CACHE_MIN_QUERY_RADIUS_M = OSM_ROAD_OVERLAY_RADIUS_M * 2.0
 OSM_CACHE_MIN_REFRESH_INTERVAL_SECONDS = 1.0
 OSM_CURRENT_ROAD_MAX_HEADING_DIFF_DEG = 60.0
+OSM_FORWARD_ROAD_MAX_HEADING_DIFF_DEG = 50.0
+OSM_FORWARD_ROAD_BACK_MARGIN_M = 20.0
+OSM_FORWARD_ROAD_DEFAULT_SIDE_M = 45.0
+OSM_FORWARD_ROAD_MAJOR_SIDE_M = 80.0
 OSM_MINIMAP_CACHE_MAX_AGE_SECONDS = 120.0
 OSM_MINIMAP_CACHE_MAX_SEGMENTS = 1000
 OSM_MINIMAP_RENDER_MAX_SEGMENTS = 500
@@ -194,6 +198,10 @@ def _candidate_local_road_marker(camera) -> str:
   return " O" if bool(getattr(camera, "local_road_match", False)) else ""
 
 
+def _candidate_forward_road_marker(camera) -> str:
+  return " F" if bool(getattr(camera, "forward_road_match", False)) else ""
+
+
 def _format_candidate_text(candidates) -> str:
   lines = []
   for idx, camera in enumerate(candidates[:MAX_CAMERA_CANDIDATES], start=1):
@@ -202,6 +210,7 @@ def _format_candidate_text(candidates) -> str:
       f"{_format_candidate_distance(float(getattr(camera, 'distance_m', 0.0)))} "
       f"{float(getattr(camera, 'relative_angle_deg', 0.0)):+.0f}"
       f"{_format_candidate_projection(camera)}"
+      f"{_candidate_forward_road_marker(camera)}"
       f"{_candidate_local_road_marker(camera)}"
       f"{_candidate_corridor_marker(camera)}"
     )
@@ -353,6 +362,7 @@ def _ensure_osm_cache(
 def _road_payload(segment, gps, current_road_name: str, include_distance: bool = False) -> dict:
   x1, y1 = latlon_to_car_space_m(gps.latitude, gps.longitude, gps.bearingDeg, segment.lat1, segment.lon1)
   x2, y2 = latlon_to_car_space_m(gps.latitude, gps.longitude, gps.bearingDeg, segment.lat2, segment.lon2)
+  forward_info = _forward_road_info(segment, gps, x1, y1, x2, y2, current_road_name)
   payload = {
     "x1": round(x1, 1),
     "y1": round(y1, 1),
@@ -362,6 +372,8 @@ def _road_payload(segment, gps, current_road_name: str, include_distance: bool =
     "h": segment.highway,
     "c": road_name_matches(current_road_name, segment.name, segment.ref),
   }
+  if forward_info["f"]:
+    payload.update(forward_info)
   if include_distance:
     payload["d"] = round(_point_to_segment_distance_m(x1, y1, x2, y2), 1)
   return payload
@@ -376,15 +388,50 @@ def _bidirectional_heading_diff_deg(segment_bearing_deg: float, heading_deg: flo
 
 
 def _point_to_segment_distance_m(x1: float, y1: float, x2: float, y2: float) -> float:
+  closest_x, closest_y = _closest_point_on_segment_m(x1, y1, x2, y2)
+  return math.hypot(closest_x, closest_y)
+
+
+def _closest_point_on_segment_m(x1: float, y1: float, x2: float, y2: float) -> tuple[float, float]:
   dx = x2 - x1
   dy = y2 - y1
   length_sq = dx * dx + dy * dy
   if length_sq <= 0.0:
-    return math.hypot(x1, y1)
+    return x1, y1
   t = max(0.0, min(1.0, -(x1 * dx + y1 * dy) / length_sq))
-  closest_x = x1 + t * dx
-  closest_y = y1 + t * dy
-  return math.hypot(closest_x, closest_y)
+  return x1 + t * dx, y1 + t * dy
+
+
+def _forward_side_limit_m(highway: str) -> float:
+  if highway in ("motorway", "trunk", "primary", "secondary"):
+    return OSM_FORWARD_ROAD_MAJOR_SIDE_M
+  return OSM_FORWARD_ROAD_DEFAULT_SIDE_M
+
+
+def _segment_forward_m(x1: float, x2: float, closest_x: float) -> float:
+  forward_points = [x for x in (x1, x2, closest_x) if x >= -OSM_FORWARD_ROAD_BACK_MARGIN_M]
+  return min(forward_points) if forward_points else max(x1, x2, closest_x)
+
+
+def _forward_road_info(segment, gps, x1: float, y1: float, x2: float, y2: float, current_road_name: str) -> dict:
+  closest_x, closest_y = _closest_point_on_segment_m(x1, y1, x2, y2)
+  forward_m = _segment_forward_m(x1, x2, closest_x)
+  side_m = min((y1, y2, closest_y), key=abs)
+  heading_diff = _bidirectional_heading_diff_deg(float(segment.bearing_deg), float(gps.bearingDeg))
+  same_name = road_name_matches(current_road_name, segment.name, segment.ref)
+  side_limit_m = _forward_side_limit_m(str(segment.highway or ""))
+  is_forward = (
+    max(x1, x2, closest_x) >= -OSM_FORWARD_ROAD_BACK_MARGIN_M and
+    abs(side_m) <= side_limit_m and
+    heading_diff <= OSM_FORWARD_ROAD_MAX_HEADING_DIFF_DEG and
+    (same_name or forward_m > OSM_FORWARD_ROAD_BACK_MARGIN_M)
+  )
+  return {
+    "f": is_forward,
+    "fm": round(forward_m, 1),
+    "sm": round(side_m, 1),
+    "a": round(heading_diff, 1),
+  }
 
 
 def _current_road_name_from_cache(cache: OsmRoadCache, gps, radius_m: float, previous_name: str = "") -> str:
@@ -414,11 +461,13 @@ def _minimap_road_priority(road: dict) -> tuple[int, float]:
   highway = str(road.get("h", ""))
   if road.get("c"):
     return 0, float(road.get("d", 0.0))
+  if road.get("f"):
+    return 1, float(road.get("fm", 0.0)) + abs(float(road.get("sm", 0.0))) * 0.8
   if highway in ("motorway", "trunk", "primary", "secondary"):
-    return 1, float(road.get("d", 0.0))
-  if highway in ("tertiary", "residential"):
     return 2, float(road.get("d", 0.0))
-  return 3, float(road.get("d", 0.0))
+  if highway in ("tertiary", "residential"):
+    return 3, float(road.get("d", 0.0))
+  return 4, float(road.get("d", 0.0))
 
 
 def _minimap_roads(cache: OsmRoadCache, gps, current_road_name: str, display_radius_m: float) -> list[dict]:
