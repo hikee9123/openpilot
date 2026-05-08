@@ -874,6 +874,7 @@ class CustomSettingsLayout(Widget):
     self._speed_camera_osm_stats_cache = OsmRoadEnrichmentStats()
     self._speed_camera_verify_log_until = 0.0
     self._speed_camera_preview_callback: Callable | None = None
+    self._speed_camera_preview_enabled: Callable[[], bool] | None = None
     self._current_tab = "UI"
     self._tab_rects: dict[str, rl.Rectangle] = {}
     self._tab_font = gui_app.font(FontWeight.MEDIUM)
@@ -1033,8 +1034,9 @@ class CustomSettingsLayout(Widget):
     }
     self._scrollers = {name: Scroller(items, line_separator=True, spacing=0) for name, items in self._sections.items()}
 
-  def set_speed_camera_preview_callback(self, callback: Callable | None) -> None:
+  def set_speed_camera_preview_callback(self, callback: Callable | None, enabled: Callable[[], bool] | None = None) -> None:
     self._speed_camera_preview_callback = callback
+    self._speed_camera_preview_enabled = enabled
 
   def _values(self):
     return read_custom_params(self._params)
@@ -1279,6 +1281,9 @@ class CustomSettingsLayout(Widget):
     )
 
   def _speed_camera_icon_preview_item(self):
+    def enabled() -> bool:
+      return self._speed_camera_preview_enabled() if self._speed_camera_preview_enabled is not None else True
+
     def callback() -> None:
       start_speed_camera_debug_preview(SPEED_CAMERA_DEBUG_PREVIEW_DURATION_SECONDS)
       if self._speed_camera_preview_callback is not None:
@@ -1289,6 +1294,7 @@ class CustomSettingsLayout(Widget):
       lambda: tr("SHOW"),
       description=lambda: tr("Shows a 30 second HUD-only speed camera icon preview and switches to the camera screen when openpilot is onroad."),
       callback=callback,
+      enabled=enabled,
     )
 
   def _osm_roads_update_item(self):

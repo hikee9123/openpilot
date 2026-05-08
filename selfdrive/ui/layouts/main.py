@@ -49,7 +49,7 @@ class MainLayout(Widget):
 
   def _render(self, _):
     self._handle_onroad_transition()
-    if self._current_mode == MainState.ONROAD and not ui_state.started and not self._speed_camera_preview_active():
+    if self._current_mode == MainState.ONROAD and not ui_state.started:
       self._set_mode_for_state()
     self._render_main_content()
 
@@ -62,6 +62,7 @@ class MainLayout(Widget):
     self._layouts[MainState.SETTINGS].set_callbacks(
       on_close=self._set_mode_for_state,
       on_speed_camera_preview=self._show_speed_camera_preview,
+      speed_camera_preview_enabled=self._speed_camera_preview_enabled,
     )
 
     for layout in (self._layouts[MainState.ONROAD], self._home_body_layout):
@@ -94,9 +95,6 @@ class MainLayout(Widget):
       if self._current_mode != MainState.ONROAD:
         self._sidebar.set_visible(False)
       self._set_current_layout(MainState.ONROAD)
-    elif not ui_state.is_body and self._speed_camera_preview_active():
-      self._sidebar.set_visible(False)
-      self._set_current_layout(MainState.ONROAD)
     else:
       self._set_current_layout(MainState.HOME)
       self._sidebar.set_visible(True)
@@ -122,8 +120,8 @@ class MainLayout(Widget):
     self._pm.send('bookmarkButton', user_bookmark)
 
   def _show_speed_camera_preview(self):
-    ui_state.auto_power_off.disarm()
-    if not ui_state.is_body:
+    if self._speed_camera_preview_enabled():
+      ui_state.auto_power_off.disarm()
       self._sidebar.set_visible(False)
       self._set_current_layout(MainState.ONROAD)
     else:
@@ -131,6 +129,9 @@ class MainLayout(Widget):
 
   def _speed_camera_preview_active(self):
     return speed_camera_debug_preview_active()
+
+  def _speed_camera_preview_enabled(self):
+    return ui_state.started and not ui_state.is_body
 
   def _on_onroad_clicked(self):
     self._sidebar.set_visible(not self._sidebar.is_visible)

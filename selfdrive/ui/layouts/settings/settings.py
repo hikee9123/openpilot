@@ -78,9 +78,10 @@ class SettingsLayout(Widget):
     # Callbacks
     self._close_callback: Callable | None = None
 
-  def set_callbacks(self, on_close: Callable, on_speed_camera_preview: Callable | None = None):
+  def set_callbacks(self, on_close: Callable, on_speed_camera_preview: Callable | None = None,
+                    speed_camera_preview_enabled: Callable[[], bool] | None = None):
     self._close_callback = on_close
-    self._custom_panel.set_speed_camera_preview_callback(on_speed_camera_preview)
+    self._custom_panel.set_speed_camera_preview_callback(on_speed_camera_preview, speed_camera_preview_enabled)
 
   def _render(self, rect: rl.Rectangle):
     # Calculate layout
