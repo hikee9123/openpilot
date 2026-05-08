@@ -9,7 +9,7 @@ from openpilot.system.ui.widgets import Widget
 
 
 ROAD_DEFAULT = rl.Color(255, 255, 255, 86)
-ROAD_MAJOR = rl.Color(255, 188, 72, 130)
+ROAD_MAJOR = rl.Color(135, 190, 220, 135)
 ROAD_CURRENT = rl.Color(47, 214, 114, 210)
 CAMERA_COLOR = rl.Color(255, 198, 77, 235)
 CAMERA_TEXT = rl.Color(255, 235, 180, 235)
@@ -46,8 +46,9 @@ class OsmRoadOverlayRenderer(Widget):
 
     data = self._parse_overlay(overlay_text)
     roads = data.get("roads", [])
+    map_roads = data.get("mapRoads", roads)
     cameras = data.get("cameras", [])
-    if not roads and not cameras:
+    if not roads and not map_roads and not cameras:
       return
 
     if mode in (OSM_OVERLAY_MODE_CAMERA, OSM_OVERLAY_MODE_BOTH):
@@ -95,12 +96,13 @@ class OsmRoadOverlayRenderer(Widget):
     rl.draw_rectangle_rounded(panel, 0.08, 8, PANEL_BG)
     rl.draw_rectangle_rounded_lines_ex(panel, 0.08, 8, 2.0, PANEL_BORDER)
 
-    scale = min(panel_w / 150.0, panel_h / 170.0)
+    radius = max(100.0, float(data.get("mapRadius", 140.0)))
+    scale = min((panel_w * 0.46) / radius, (panel_h * 0.70) / radius)
     origin = rl.Vector2(panel.x + panel_w * 0.5, panel.y + panel_h * 0.78)
     rl.draw_line(int(panel.x + 18), int(origin.y), int(panel.x + panel_w - 18), int(origin.y), PANEL_GRID)
     rl.draw_line(int(origin.x), int(panel.y + 18), int(origin.x), int(panel.y + panel_h - 18), PANEL_GRID)
 
-    for road in data.get("roads", []):
+    for road in data.get("mapRoads", data.get("roads", [])):
       p1 = self._project_to_map(origin, scale, float(road.get("x1", 0.0)), float(road.get("y1", 0.0)))
       p2 = self._project_to_map(origin, scale, float(road.get("x2", 0.0)), float(road.get("y2", 0.0)))
       if not self._point_in_panel(panel, p1) and not self._point_in_panel(panel, p2):
@@ -112,6 +114,7 @@ class OsmRoadOverlayRenderer(Widget):
       point = self._project_to_map(origin, scale, float(camera.get("x", 0.0)), float(camera.get("y", 0.0)))
       if not self._point_in_panel(panel, point):
         continue
+      rl.draw_circle(int(point.x), int(point.y), 9, rl.Color(0, 0, 0, 150))
       rl.draw_circle(int(point.x), int(point.y), 6, CAMERA_COLOR)
       rl.draw_text_ex(self._font_medium, str(camera.get("s", ""))[:3], rl.Vector2(point.x + 8, point.y - 12), 22, 0, CAMERA_TEXT)
 
