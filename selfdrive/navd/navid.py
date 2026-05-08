@@ -14,7 +14,6 @@ try:
   from openpilot.selfdrive.navd.osm_roads import (
     DEFAULT_LOOKUP_RADIUS_M,
     DEFAULT_OSM_ROADS_DB_PATH,
-    find_current_road,
     latlon_to_car_space_m,
     nearby_road_segments,
     road_name_matches,
@@ -23,7 +22,6 @@ except ModuleNotFoundError:
   from selfdrive.navd.osm_roads import (
     DEFAULT_LOOKUP_RADIUS_M,
     DEFAULT_OSM_ROADS_DB_PATH,
-    find_current_road,
     latlon_to_car_space_m,
     nearby_road_segments,
     road_name_matches,
@@ -50,9 +48,14 @@ OSM_ROAD_LOOKUP_INTERVAL_SECONDS = 2.0
 OSM_ROAD_OVERLAY_INTERVAL_SECONDS = 1.0
 OSM_ROAD_OVERLAY_RADIUS_M = 140.0
 OSM_ROAD_OVERLAY_MAX_SEGMENTS = 90
+OSM_CACHE_MIN_QUERY_RADIUS_M = OSM_ROAD_OVERLAY_RADIUS_M * 2.0
+OSM_CACHE_MIN_REFRESH_INTERVAL_SECONDS = 1.0
+OSM_CURRENT_ROAD_MAX_HEADING_DIFF_DEG = 60.0
 OSM_MINIMAP_CACHE_MAX_AGE_SECONDS = 120.0
 OSM_MINIMAP_CACHE_MAX_SEGMENTS = 1000
 OSM_MINIMAP_RENDER_MAX_SEGMENTS = 500
+OSM_MINIMAP_CURRENT_ROAD_MAX_SEGMENTS = 150
+OSM_MINIMAP_CURRENT_ROAD_RADIUS_FACTOR = 1.15
 OSM_MINIMAP_MIN_RADIUS_M = 300.0
 OSM_MINIMAP_QUERY_MULTIPLIER = 2.0
 OSM_MINIMAP_REFRESH_MARGIN_FRACTION = 0.9
@@ -64,7 +67,7 @@ MAX_CAMERA_CANDIDATES = 3
 
 
 @dataclass
-class OsmMiniMapCache:
+class OsmRoadCache:
   center_lat: float = 0.0
   center_lon: float = 0.0
   query_radius_m: float = 0.0
@@ -288,8 +291,8 @@ def _minimap_refresh_distance_m(display_radius_m: float, query_radius_m: float) 
   return max(1.0, (query_radius_m - display_radius_m) * OSM_MINIMAP_REFRESH_MARGIN_FRACTION)
 
 
-def _minimap_cache_needs_refresh(
-  cache: OsmMiniMapCache,
+def _osm_cache_needs_refresh(
+  cache: OsmRoadCache,
   db_path: Path,
   gps,
   query_radius_m: float,
@@ -297,6 +300,8 @@ def _minimap_cache_needs_refresh(
 ) -> bool:
   if cache.loaded_at <= 0.0:
     return True
+  if now - cache.loaded_at < OSM_CACHE_MIN_REFRESH_INTERVAL_SECONDS:
+    return False
   if _osm_db_mtime(db_path) != cache.db_mtime:
     return True
   if cache.query_radius_m + 1.0 < query_radius_m:
@@ -310,8 +315,18 @@ def _minimap_cache_needs_refresh(
   return now - cache.loaded_at > OSM_MINIMAP_CACHE_MAX_AGE_SECONDS
 
 
-def _refresh_minimap_cache(cache: OsmMiniMapCache, db_path: Path, gps, display_radius_m: float, now: float) -> None:
-  query_radius_m = _minimap_query_radius_m(display_radius_m)
+def _ensure_osm_cache(
+  cache: OsmRoadCache,
+  db_path: Path,
+  gps,
+  display_radius_m: float,
+  query_radius_m: float,
+  now: float,
+) -> None:
+  query_radius_m = max(query_radius_m, OSM_CACHE_MIN_QUERY_RADIUS_M)
+  if not _osm_cache_needs_refresh(cache, db_path, gps, query_radius_m, now):
+    return
+
   cache.center_lat = gps.latitude
   cache.center_lon = gps.longitude
   cache.query_radius_m = query_radius_m
@@ -340,27 +355,65 @@ def _road_payload(segment, gps, current_road_name: str, include_distance: bool =
     "c": road_name_matches(current_road_name, segment.name, segment.ref),
   }
   if include_distance:
-    payload["d"] = round(min(math.hypot(x1, y1), math.hypot(x2, y2)), 1)
+    payload["d"] = round(_point_to_segment_distance_m(x1, y1, x2, y2), 1)
   return payload
 
 
-def _camera_overlay_roads(db_path: Path, gps, current_road_name: str) -> list[dict]:
-  segments = nearby_road_segments(
-    db_path,
-    gps.latitude,
-    gps.longitude,
-    OSM_ROAD_OVERLAY_RADIUS_M,
-    OSM_ROAD_OVERLAY_MAX_SEGMENTS,
-  )
+def _camera_overlay_roads(cache: OsmRoadCache, gps, current_road_name: str) -> list[dict]:
   roads = []
-  for segment in segments:
-    road = _road_payload(segment, gps, current_road_name)
+  for segment in cache.segments:
+    road = _road_payload(segment, gps, current_road_name, include_distance=True)
+    if float(road["d"]) > OSM_ROAD_OVERLAY_RADIUS_M:
+      continue
     if max(road["x1"], road["x2"]) < -20.0 or min(road["x1"], road["x2"]) > OSM_ROAD_OVERLAY_RADIUS_M + 30.0:
       continue
     if min(abs(road["y1"]), abs(road["y2"])) > OSM_ROAD_OVERLAY_RADIUS_M:
       continue
     roads.append(road)
-  return roads
+  return sorted(roads, key=lambda road: float(road.get("d", 0.0)))[:OSM_ROAD_OVERLAY_MAX_SEGMENTS]
+
+
+def _angle_diff_deg(a: float, b: float) -> float:
+  return abs((a - b + 180.0) % 360.0 - 180.0)
+
+
+def _bidirectional_heading_diff_deg(segment_bearing_deg: float, heading_deg: float) -> float:
+  return min(_angle_diff_deg(segment_bearing_deg, heading_deg), _angle_diff_deg((segment_bearing_deg + 180.0) % 360.0, heading_deg))
+
+
+def _point_to_segment_distance_m(x1: float, y1: float, x2: float, y2: float) -> float:
+  dx = x2 - x1
+  dy = y2 - y1
+  length_sq = dx * dx + dy * dy
+  if length_sq <= 0.0:
+    return math.hypot(x1, y1)
+  t = max(0.0, min(1.0, -(x1 * dx + y1 * dy) / length_sq))
+  closest_x = x1 + t * dx
+  closest_y = y1 + t * dy
+  return math.hypot(closest_x, closest_y)
+
+
+def _current_road_name_from_cache(cache: OsmRoadCache, gps, radius_m: float, previous_name: str = "") -> str:
+  best_name = ""
+  best_score: float | None = None
+  for segment in cache.segments:
+    x1, y1 = latlon_to_car_space_m(gps.latitude, gps.longitude, gps.bearingDeg, segment.lat1, segment.lon1)
+    x2, y2 = latlon_to_car_space_m(gps.latitude, gps.longitude, gps.bearingDeg, segment.lat2, segment.lon2)
+    distance_m = _point_to_segment_distance_m(x1, y1, x2, y2)
+    if distance_m > radius_m:
+      continue
+
+    heading_diff = _bidirectional_heading_diff_deg(float(segment.bearing_deg), float(gps.bearingDeg))
+    if heading_diff > OSM_CURRENT_ROAD_MAX_HEADING_DIFF_DEG:
+      continue
+
+    name_bonus = -8.0 if road_name_matches(previous_name, segment.name, segment.ref) else 0.0
+    highway_bonus = -4.0 if segment.highway in ("motorway", "trunk", "primary") else 0.0
+    score = distance_m + heading_diff * 0.8 + name_bonus + highway_bonus
+    if best_score is None or score < best_score:
+      best_score = score
+      best_name = segment.display_name
+  return best_name
 
 
 def _minimap_road_priority(road: dict) -> tuple[int, float]:
@@ -374,14 +427,24 @@ def _minimap_road_priority(road: dict) -> tuple[int, float]:
   return 3, float(road.get("d", 0.0))
 
 
-def _minimap_roads(cache: OsmMiniMapCache, gps, current_road_name: str, display_radius_m: float) -> list[dict]:
-  roads = []
+def _minimap_roads(cache: OsmRoadCache, gps, current_road_name: str, display_radius_m: float) -> list[dict]:
+  current_roads = []
+  other_roads = []
   for segment in cache.segments:
     road = _road_payload(segment, gps, current_road_name, include_distance=True)
-    if float(road["d"]) > display_radius_m:
+    is_current = bool(road.get("c"))
+    radius_limit_m = display_radius_m * OSM_MINIMAP_CURRENT_ROAD_RADIUS_FACTOR if is_current else display_radius_m
+    if float(road["d"]) > radius_limit_m:
       continue
-    roads.append(road)
-  return sorted(roads, key=_minimap_road_priority)[:OSM_MINIMAP_RENDER_MAX_SEGMENTS]
+    if is_current:
+      current_roads.append(road)
+    else:
+      other_roads.append(road)
+
+  current_roads = sorted(current_roads, key=lambda road: float(road.get("d", 0.0)))[:OSM_MINIMAP_CURRENT_ROAD_MAX_SEGMENTS]
+  remaining_segments = max(0, OSM_MINIMAP_RENDER_MAX_SEGMENTS - len(current_roads))
+  other_roads = sorted(other_roads, key=_minimap_road_priority)[:remaining_segments]
+  return current_roads + other_roads
 
 
 def _osm_overlay_cameras(gps, candidates=()) -> list[dict]:
@@ -406,21 +469,29 @@ def _build_osm_road_overlay_text(
   current_road_name: str = "",
   mode: int = 0,
   tuning: dict[str, float | bool] | None = None,
-  minimap_cache: OsmMiniMapCache | None = None,
+  osm_cache: OsmRoadCache | None = None,
   now: float | None = None,
 ) -> str:
   try:
-    roads = _camera_overlay_roads(db_path, gps, current_road_name) if mode in (OSM_OVERLAY_MODE_CAMERA, OSM_OVERLAY_MODE_BOTH) else []
+    roads = []
     map_roads = []
     map_radius_m = 0.0
 
-    if mode in (OSM_OVERLAY_MODE_MINIMAP, OSM_OVERLAY_MODE_BOTH) and tuning is not None and minimap_cache is not None:
+    if osm_cache is not None and tuning is not None:
       now = time.monotonic() if now is None else now
-      map_radius_m = _minimap_display_radius_m(gps, tuning)
-      query_radius_m = _minimap_query_radius_m(map_radius_m)
-      if _minimap_cache_needs_refresh(minimap_cache, db_path, gps, query_radius_m, now):
-        _refresh_minimap_cache(minimap_cache, db_path, gps, map_radius_m, now)
-      map_roads = _minimap_roads(minimap_cache, gps, current_road_name, map_radius_m)
+      if mode in (OSM_OVERLAY_MODE_MINIMAP, OSM_OVERLAY_MODE_BOTH):
+        map_radius_m = _minimap_display_radius_m(gps, tuning)
+        query_radius_m = _minimap_query_radius_m(map_radius_m)
+        display_radius_m = map_radius_m
+      else:
+        query_radius_m = OSM_CACHE_MIN_QUERY_RADIUS_M
+        display_radius_m = OSM_ROAD_OVERLAY_RADIUS_M
+
+      _ensure_osm_cache(osm_cache, db_path, gps, display_radius_m, query_radius_m, now)
+      if mode in (OSM_OVERLAY_MODE_CAMERA, OSM_OVERLAY_MODE_BOTH):
+        roads = _camera_overlay_roads(osm_cache, gps, current_road_name)
+      if mode in (OSM_OVERLAY_MODE_MINIMAP, OSM_OVERLAY_MODE_BOTH):
+        map_roads = _minimap_roads(osm_cache, gps, current_road_name, map_radius_m)
 
     cameras = _osm_overlay_cameras(gps, candidates)
     if not roads and not map_roads and not cameras:
@@ -513,7 +584,7 @@ def main() -> None:
   last_osm_overlay_t = 0.0
   current_road_name = ""
   osm_road_overlay_text = ""
-  osm_minimap_cache = OsmMiniMapCache()
+  osm_cache = OsmRoadCache()
 
   while True:
     sm.update(0)
@@ -555,7 +626,7 @@ def main() -> None:
               current_road_name,
               int(tuning["osm_road_overlay_mode"]),
               tuning,
-              osm_minimap_cache,
+              osm_cache,
               now,
             )
         else:
@@ -572,15 +643,16 @@ def main() -> None:
 
       if bool(tuning["use_local_osm_roads"]) and now - last_osm_lookup_t >= OSM_ROAD_LOOKUP_INTERVAL_SECONDS:
         last_osm_lookup_t = now
-        match = find_current_road(
+        local_radius_m = float(tuning["local_osm_road_radius_m"])
+        _ensure_osm_cache(
+          osm_cache,
           _osm_roads_db_path(),
-          gps.latitude,
-          gps.longitude,
-          gps.bearingDeg,
-          float(tuning["local_osm_road_radius_m"]),
-          previous_name=current_road_name,
+          gps,
+          local_radius_m,
+          max(OSM_CACHE_MIN_QUERY_RADIUS_M, local_radius_m * 2.0),
+          now,
         )
-        current_road_name = match.display_name if match is not None else ""
+        current_road_name = _current_road_name_from_cache(osm_cache, gps, local_radius_m, current_road_name)
       elif not bool(tuning["use_local_osm_roads"]):
         current_road_name = ""
 
@@ -608,7 +680,7 @@ def main() -> None:
             current_road_name,
             int(tuning["osm_road_overlay_mode"]),
             tuning,
-            osm_minimap_cache,
+            osm_cache,
             now,
           )
       else:
