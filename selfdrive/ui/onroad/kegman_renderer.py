@@ -6,6 +6,14 @@ import pyray as rl
 from cereal import log
 from openpilot.common.constants import CV
 from openpilot.selfdrive.ui import UI_BORDER_SIZE
+from openpilot.selfdrive.ui.onroad.custom_overlay_layout import (
+  BASE_ITEM_HEIGHT,
+  BASE_MARGIN,
+  overlay_cell_width,
+  overlay_column_gap,
+  overlay_padding,
+  overlay_scale_for_rect,
+)
 from openpilot.selfdrive.ui.onroad.osm_road_overlay_renderer import minimap_rect
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import FontWeight, gui_app
@@ -14,11 +22,6 @@ from openpilot.system.ui.widgets import Widget
 
 
 MAX_ITEMS = 6
-BASE_PANEL_WIDTH = 180
-BASE_ITEM_HEIGHT = 105
-BASE_PANEL_PADDING = 10
-BASE_COLUMN_GAP = 12
-BASE_MARGIN = 30
 BASE_TOP = 250
 MINIMAP_CLEARANCE = 14
 TPMS_FONT_SIZE = 38
@@ -85,50 +88,29 @@ class KegmanRenderer(Widget):
     if not measures:
       return
 
-    columns = 1
-    rows = len(measures)
-    scale = self._scale_for_rect(rect, rows)
-    margin = max(4.0, BASE_MARGIN * scale)
-    cell_width = max(120.0 if rect.height < 500 else 0.0, BASE_PANEL_WIDTH * scale)
-    item_height = max(30.0, BASE_ITEM_HEIGHT * scale)
-    padding = max(4.0, BASE_PANEL_PADDING * scale)
-    column_gap = 0.0
-    panel_width = cell_width
-    panel_height = padding * 2 + item_height * len(measures)
-
-    x = rect.x + rect.width - panel_width - margin
-    y = rect.y + BASE_TOP * scale
-    if rect.height < 500:
-      y = rect.y + margin
-    if y + panel_height > rect.y + rect.height - margin:
-      y = max(rect.y + margin, rect.y + rect.height - panel_height - margin)
-
     minimap_rect = self._minimap_rect(rect)
-    panel_rect = rl.Rectangle(x, y, panel_width, panel_height)
-    if len(measures) >= 5 and minimap_rect is not None and self._rects_overlap(panel_rect, minimap_rect):
+    columns = 2 if len(measures) >= 5 else 1
+    layout = self._layout(rect, len(measures), columns)
+    panel_rect = layout["panel_rect"]
+
+    if minimap_rect is not None and self._rects_overlap(panel_rect, minimap_rect):
+      layout = self._layout(rect, len(measures), columns, minimap_rect)
+      panel_rect = layout["panel_rect"]
+
+    if minimap_rect is not None and self._rects_overlap(panel_rect, minimap_rect) and columns == 1 and len(measures) >= 3:
       columns = 2
-      rows = (len(measures) + 1) // 2
-      scale = self._scale_for_rect(rect, rows)
-      margin = max(4.0, BASE_MARGIN * scale)
-      cell_width = max(120.0 if rect.height < 500 else 0.0, BASE_PANEL_WIDTH * scale)
-      item_height = max(30.0, BASE_ITEM_HEIGHT * scale)
-      padding = max(4.0, BASE_PANEL_PADDING * scale)
-      column_gap = max(6.0, BASE_COLUMN_GAP * scale)
-      panel_width = padding * 2 + cell_width * columns + column_gap
-      panel_height = padding * 2 + item_height * rows
+      layout = self._layout(rect, len(measures), columns, minimap_rect)
+      panel_rect = layout["panel_rect"]
 
-      x = rect.x + rect.width - panel_width - margin
-      y = rect.y + BASE_TOP * scale
-      if rect.height < 500:
-        y = rect.y + margin
-
-      max_bottom = minimap_rect.y - max(MINIMAP_CLEARANCE, margin)
-      if y + panel_height > max_bottom:
-        y = max(rect.y + margin, max_bottom - panel_height)
-      if y + panel_height > rect.y + rect.height - margin:
-        y = max(rect.y + margin, rect.y + rect.height - panel_height - margin)
-
-    panel_rect = rl.Rectangle(x, y, panel_width, panel_height)
+    rows = int(layout["rows"])
+    scale = float(layout["scale"])
+    padding = float(layout["padding"])
+    cell_width = float(layout["cell_width"])
+    item_height = float(layout["item_height"])
+    column_gap = float(layout["column_gap"])
+    panel_height = panel_rect.height
+    x = panel_rect.x
+    y = panel_rect.y
     rl.draw_rectangle_rounded(panel_rect, 0.14, 10, PANEL_BG)
     rl.draw_rectangle_rounded_lines_ex(panel_rect, 0.14, 10, max(1.0, 3.0 * scale), PANEL_BORDER)
 
@@ -148,10 +130,49 @@ class KegmanRenderer(Widget):
       sep_x = x + padding + cell_width + column_gap / 2
       rl.draw_line(int(sep_x), int(y + padding * 1.5), int(sep_x), int(y + panel_height - padding * 1.5), SEPARATOR)
 
+  def _layout(
+    self,
+    rect: rl.Rectangle,
+    item_count: int,
+    columns: int,
+    minimap_rect: rl.Rectangle | None = None,
+  ) -> dict:
+    columns = max(1, columns)
+    rows = (item_count + columns - 1) // columns
+    scale = self._scale_for_rect(rect, rows)
+    margin = max(4.0, BASE_MARGIN * scale)
+    cell_width = overlay_cell_width(rect, scale)
+    item_height = max(30.0, BASE_ITEM_HEIGHT * scale)
+    padding = overlay_padding(scale)
+    column_gap = overlay_column_gap(scale) if columns > 1 else 0.0
+    panel_width = padding * 2 + cell_width * columns + column_gap if columns > 1 else cell_width
+    panel_height = padding * 2 + item_height * rows
+
+    x = rect.x + rect.width - panel_width - margin
+    y = rect.y + BASE_TOP * scale
+    if rect.height < 500:
+      y = rect.y + margin
+
+    if minimap_rect is not None:
+      max_bottom = minimap_rect.y - max(MINIMAP_CLEARANCE, margin)
+      if y + panel_height > max_bottom:
+        y = max(rect.y + margin, max_bottom - panel_height)
+
+    if y + panel_height > rect.y + rect.height - margin:
+      y = max(rect.y + margin, rect.y + rect.height - panel_height - margin)
+
+    return {
+      "panel_rect": rl.Rectangle(x, y, panel_width, panel_height),
+      "rows": rows,
+      "scale": scale,
+      "padding": padding,
+      "cell_width": cell_width,
+      "item_height": item_height,
+      "column_gap": column_gap,
+    }
+
   def _scale_for_rect(self, rect: rl.Rectangle, item_count: int) -> float:
-    base_height = BASE_PANEL_PADDING * 2 + BASE_ITEM_HEIGHT * item_count
-    height_fit = max(0.18, (rect.height - 2 * BASE_MARGIN) / base_height)
-    return min(1.0, max(0.18, rect.width / 1860.0, rect.height / 1080.0), height_fit)
+    return overlay_scale_for_rect(rect, item_count)
 
   def _minimap_rect(self, rect: rl.Rectangle) -> rl.Rectangle | None:
     mode = int(ui_state.custom_params.get("OsmRoadOverlayMode", 0))

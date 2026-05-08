@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pyray as rl
+from openpilot.selfdrive.ui.onroad.custom_overlay_layout import overlay_two_column_width
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import FontWeight, gui_app
 from openpilot.system.ui.lib.text_measure import measure_text_cached
@@ -10,9 +11,7 @@ from openpilot.system.ui.widgets import Widget
 
 
 MINIMAP_MARGIN = 30.0
-MINIMAP_MAX_WIDTH = 430.0
 MINIMAP_MAX_HEIGHT = 300.0
-MINIMAP_WIDTH_FRACTION = 0.34
 MINIMAP_HEIGHT_FRACTION = 0.34
 ROAD_DEFAULT = rl.Color(255, 255, 255, 86)
 ROAD_MAJOR = rl.Color(135, 190, 220, 135)
@@ -142,7 +141,7 @@ class OsmRoadOverlayRenderer(Widget):
 
 
 def minimap_rect(rect: rl.Rectangle) -> rl.Rectangle:
-  panel_w = min(MINIMAP_MAX_WIDTH, rect.width * MINIMAP_WIDTH_FRACTION)
+  panel_w = overlay_two_column_width(rect)
   panel_h = min(MINIMAP_MAX_HEIGHT, rect.height * MINIMAP_HEIGHT_FRACTION)
   return rl.Rectangle(
     rect.x + rect.width - panel_w - MINIMAP_MARGIN,
