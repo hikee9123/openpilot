@@ -184,6 +184,12 @@ def _candidate_corridor_marker(camera) -> str:
   return ""
 
 
+def _format_candidate_projection(camera) -> str:
+  forward_m = float(getattr(camera, "forward_m", 0.0))
+  side_m = float(getattr(camera, "side_m", 0.0))
+  return f" f{int(forward_m)} s{int(side_m):+d}"
+
+
 def _candidate_local_road_marker(camera) -> str:
   return " O" if bool(getattr(camera, "local_road_match", False)) else ""
 
@@ -195,6 +201,7 @@ def _format_candidate_text(candidates) -> str:
       f"{idx} {_candidate_category_label(camera)} "
       f"{_format_candidate_distance(float(getattr(camera, 'distance_m', 0.0)))} "
       f"{float(getattr(camera, 'relative_angle_deg', 0.0)):+.0f}"
+      f"{_format_candidate_projection(camera)}"
       f"{_candidate_local_road_marker(camera)}"
       f"{_candidate_corridor_marker(camera)}"
     )
@@ -233,8 +240,13 @@ def _format_camera_classification_debug_text(camera, category: str, type_code: i
   distance_m = int(max(0.0, float(getattr(camera, "distance_m", 0.0))))
   angle_deg = float(getattr(camera, "relative_angle_deg", 0.0))
   bearing_deg = float(getattr(camera, "bearing_deg", 0.0))
+  forward_m = int(float(getattr(camera, "forward_m", 0.0)))
+  side_m = int(float(getattr(camera, "side_m", 0.0)))
   road_type = short_raw(getattr(camera, "road_type_raw", ""), 16)
   road_name = short_raw(getattr(camera, "road_name", ""), 26)
+  place = short_raw(getattr(camera, "place", ""), 42)
+  raw_direction = short_raw(getattr(camera, "direction", ""), 8)
+  direction_kind = short_raw(getattr(camera, "direction_kind", ""), 6)
   current_road = short_raw(current_road_name, 22)
   camera_id = short_raw(getattr(camera, "id", ""), 20)
   flags = []
@@ -250,11 +262,11 @@ def _format_camera_classification_debug_text(camera, category: str, type_code: i
 
   return "\n".join((
     f"CAM {category or 'UNKNOWN'} c={type_code} v={speed_limit} id={camera_id}",
-    f"POS {distance_m}m a={angle_deg:+.0f} bear={bearing_deg:.0f}",
-    f"RAW type={raw_type} sect={section_type} len={section_length_m}",
+    f"POS {distance_m}m f={forward_m} s={side_m:+d} a={angle_deg:+.0f} bear={bearing_deg:.0f}",
+    f"RAW type={raw_type} dir={raw_direction}/{direction_kind} sect={section_type} len={section_length_m}",
     f"ROAD {road_class or road_type or 'UNKNOWN'} | {road_name}",
-    f"OSM {osm_text} current={current_road}",
-    f"WHY corridor={corridor_text} local={osm_text} flags={flags_text}",
+    f"PLACE {place}",
+    f"WHY osm={osm_text} cur={current_road} corr={corridor_text} flags={flags_text}",
   ))
 
 

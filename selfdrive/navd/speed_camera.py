@@ -59,6 +59,9 @@ DEFAULT_DOWNLOAD_TMP_DIR = DEFAULT_NAVD_TMP_DIR
 LOOKAHEAD_DISTANCE_M = 2500.0
 LOOKAHEAD_ANGLE_DEG = 45.0
 CAMERA_DIRECTION_ANGLE_DEG = 70.0
+LOOKAHEAD_SIDE_DISTANCE_M = 180.0
+LOOKAHEAD_EXPRESSWAY_SIDE_DISTANCE_M = 90.0
+LOOKAHEAD_LOCAL_ROAD_SIDE_DISTANCE_M = 260.0
 MANAGE_NO_DEDUP_DISTANCE_M = 50.0
 OSM_EXTENDED_LOOKUP_RADIUS_MULTIPLIER = 1.8
 EARTH_RADIUS_M = 6371000.0
@@ -237,6 +240,8 @@ class SpeedCamera:
   section_type: str
   section_length_m: int
   distance_m: float = 0.0
+  forward_m: float = 0.0
+  side_m: float = 0.0
   bearing_deg: float = 0.0
   angle_diff_deg: float = 0.0
   relative_angle_deg: float = 0.0
@@ -255,6 +260,8 @@ class SpeedCamera:
   osm_road_match_dist_m: float = 0.0
   osm_road_match_heading_deg: float = 0.0
   local_road_match: bool = False
+  direction_kind: str = ""
+  route_hint: str = ""
 
 
 @dataclass(frozen=True)
@@ -477,7 +484,8 @@ def _alert_priority(camera: "SpeedCamera") -> tuple[int, int, int, float, float]
     0 if is_speed_category(camera.camera_category) else 1,
     0 if camera.local_road_match else 1,
     0 if same_corridor_likely(camera) else 1,
-    camera.distance_m,
+    abs(camera.side_m),
+    max(0.0, camera.forward_m),
     abs(camera.relative_angle_deg),
   )
 
@@ -1510,22 +1518,43 @@ def relative_angle_deg(bearing: float, heading: float) -> float:
   return (bearing - heading + 180.0) % 360.0 - 180.0
 
 
+def relative_projection_m(distance_m: float, relative_angle: float) -> tuple[float, float]:
+  angle_rad = math.radians(relative_angle)
+  return distance_m * math.cos(angle_rad), distance_m * math.sin(angle_rad)
+
+
 def update_camera_position(camera: SpeedCamera, lat: float, lon: float, heading_deg: float) -> SpeedCamera:
   distance = haversine_distance_m(lat, lon, camera.lat, camera.lon)
   bearing = bearing_deg(lat, lon, camera.lat, camera.lon)
   relative_angle = relative_angle_deg(bearing, heading_deg)
+  forward_m, side_m = relative_projection_m(distance, relative_angle)
   return replace(
     camera,
     distance_m=distance,
+    forward_m=forward_m,
+    side_m=side_m,
     bearing_deg=bearing,
     angle_diff_deg=abs(relative_angle),
     relative_angle_deg=relative_angle,
   )
 
 
+def direction_kind(direction: str) -> str:
+  normalized = direction.strip().upper()
+  if normalized in ("3", "03", "양방향", "BOTH", "BIDIRECTIONAL"):
+    return "BOTH"
+  if normalized in ("1", "01"):
+    return "UP"
+  if normalized in ("2", "02"):
+    return "DOWN"
+  return ""
+
+
 def direction_bearing_deg(direction: str) -> float | None:
   normalized = direction.strip().upper()
   if not normalized:
+    return None
+  if direction_kind(normalized):
     return None
 
   exact_directions = {
@@ -1553,6 +1582,22 @@ def direction_bearing_deg(direction: str) -> float | None:
   return None
 
 
+def route_hint_from_text(text: str) -> str:
+  compact = re.sub(r"\s+", " ", text or "").strip()
+  if not compact:
+    return ""
+
+  match = re.search(r"([^()]{1,32}?)\s*(?:→|->|⇒|➜)\s*([^()]{1,32})", compact)
+  if match is None:
+    return ""
+
+  start = match.group(1).strip(" ,()[]")
+  end = match.group(2).strip(" ,()[]")
+  if not start or not end:
+    return ""
+  return f"{start}->{end}"
+
+
 def _bounding_box(lat: float, lon: float, radius_m: float) -> tuple[float, float, float, float]:
   lat_delta = math.degrees(radius_m / EARTH_RADIUS_M)
   lon_radius = max(math.cos(math.radians(lat)), 0.01)
@@ -1568,7 +1613,15 @@ def _row_get(row: sqlite3.Row, column: str, default):
   return default
 
 
-def _row_to_camera(row: sqlite3.Row, distance_m: float, bearing: float, angle_diff: float, relative_angle: float) -> SpeedCamera:
+def _row_to_camera(
+  row: sqlite3.Row,
+  distance_m: float,
+  forward_m: float,
+  side_m: float,
+  bearing: float,
+  angle_diff: float,
+  relative_angle: float,
+) -> SpeedCamera:
   camera_type = str(_row_get(row, "camera_type", ""))
   section_type = str(_row_get(row, "section_type", ""))
   road_name = str(_row_get(row, "road_name", ""))
@@ -1608,6 +1661,8 @@ def _row_to_camera(row: sqlite3.Row, distance_m: float, bearing: float, angle_di
     section_type=section_type,
     section_length_m=int(_row_get(row, "section_length_m", 0)),
     distance_m=distance_m,
+    forward_m=forward_m,
+    side_m=side_m,
     bearing_deg=bearing,
     angle_diff_deg=angle_diff,
     relative_angle_deg=relative_angle,
@@ -1625,6 +1680,8 @@ def _row_to_camera(row: sqlite3.Row, distance_m: float, bearing: float, angle_di
     osm_road_ref=str(_row_get(row, "osm_road_ref", "")),
     osm_road_match_dist_m=float(_row_get(row, "osm_road_match_dist_m", 0.0)),
     osm_road_match_heading_deg=float(_row_get(row, "osm_road_match_heading_deg", 0.0)),
+    direction_kind=direction_kind(str(_row_get(row, "direction", ""))),
+    route_hint=route_hint_from_text(f"{road_name} {place}"),
   )
 
 
@@ -1675,6 +1732,14 @@ def _candidate_rows(
   """, (lat_min, lat_max, lon_min, lon_max)).fetchall()
 
 
+def _max_side_distance_m(camera: SpeedCamera) -> float:
+  if camera.local_road_match:
+    return LOOKAHEAD_LOCAL_ROAD_SIDE_DISTANCE_M
+  if camera.is_expressway:
+    return LOOKAHEAD_EXPRESSWAY_SIDE_DISTANCE_M
+  return LOOKAHEAD_SIDE_DISTANCE_M
+
+
 def find_lead_cameras(
   db_path: Path,
   lat: float,
@@ -1711,12 +1776,15 @@ def find_lead_cameras(
     diff = abs(relative_angle)
     if diff > max_angle_deg:
       continue
+    forward_m, side_m = relative_projection_m(distance, relative_angle)
+    if forward_m <= 0.0:
+      continue
 
     camera_direction = direction_bearing_deg(row["direction"])
     if camera_direction is not None and angle_diff_deg(camera_direction, heading_deg) > camera_direction_angle_deg:
       continue
 
-    camera = _row_to_camera(row, distance, cam_bearing, diff, relative_angle)
+    camera = _row_to_camera(row, distance, forward_m, side_m, cam_bearing, diff, relative_angle)
     if current_road_name:
       camera_road_names = (
         (camera.osm_road_name, camera.osm_road_ref)
@@ -1727,6 +1795,8 @@ def find_lead_cameras(
         camera,
         local_road_match=road_name_matches(current_road_name, *camera_road_names),
       )
+    if abs(camera.side_m) > _max_side_distance_m(camera):
+      continue
     if _is_alertable_category(camera.camera_category):
       candidates.append(camera)
 

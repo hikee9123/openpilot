@@ -52,13 +52,15 @@ def test_format_camera_debug_text_includes_current_road_and_candidates() -> None
     camera_type_code=1,
     distance_m=180.0,
     relative_angle_deg=8.0,
+    forward_m=178.0,
+    side_m=25.0,
     local_road_match=True,
     is_expressway=True,
   )
 
   assert navid._format_camera_debug_text([camera], "Current Road").splitlines() == [
     "ROAD Current Road",
-    "1 SPD 180m +8 O R",
+    "1 SPD 180m +8 f178 s+25 O R",
   ]
 
 
@@ -77,21 +79,25 @@ def test_format_camera_classification_debug_text() -> None:
     section_length_m=0,
     speed_limit=0,
     distance_m=42.4,
+    forward_m=41.5,
+    side_m=-8.8,
     bearing_deg=93.0,
     relative_angle_deg=-12.0,
     road_type_raw="시도",
     road_name="중앙사거리",
-    place="",
+    place="중앙사거리 신호단속 원본 문구",
     id="ICHEON118",
+    direction="3",
+    direction_kind="BOTH",
     local_road_match=True,
     is_expressway=False,
   )
 
   assert navid._format_camera_classification_debug_text(camera, "SIGNAL", 2, "CITY_ROAD", "중앙사거리").splitlines() == [
     "CAM SIGNAL c=2 v=0 id=ICHEON118",
-    "POS 42m a=-12 bear=93",
-    "RAW type=02 sect=- len=0",
+    "POS 42m f=41 s=-8 a=-12 bear=93",
+    "RAW type=02 dir=3/BOTH sect=- len=0",
     "ROAD CITY_ROAD | 중앙사거리",
-    "OSM Y current=중앙사거리",
-    "WHY corridor=Y local=Y flags=ZERO",
+    "PLACE 중앙사거리 신호단속 원본 문구",
+    "WHY osm=Y cur=중앙사거리 corr=Y flags=ZERO",
   ]

@@ -27,11 +27,14 @@ database_data_date = speed_camera.database_data_date
 database_region_counts = speed_camera.database_region_counts
 database_region_stats = speed_camera.database_region_stats
 direction_bearing_deg = speed_camera.direction_bearing_deg
+direction_kind = speed_camera.direction_kind
 download_public_speed_camera_csv = speed_camera.download_public_speed_camera_csv
 find_lead_camera = speed_camera.find_lead_camera
 find_lead_cameras = speed_camera.find_lead_cameras
 normalize_camera_category = speed_camera.normalize_camera_category
 normalize_road_class = speed_camera.normalize_road_class
+relative_projection_m = speed_camera.relative_projection_m
+route_hint_from_text = speed_camera.route_hint_from_text
 same_corridor_likely = speed_camera.same_corridor_likely
 
 try:
@@ -728,12 +731,71 @@ def test_camera_direction_filter(tmp_path: Path) -> None:
   assert permissive_camera.id.startswith("A1-")
 
 
+def test_numeric_road_direction_codes_are_not_absolute_bearings(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,도로노선방향,설치장소\n"
+    "A1,37.001,127.0,속도위반,80,1,상행 후보\n"
+    "A2,37.002,127.0,속도위반,60,2,하행 후보\n"
+    "A3,37.003,127.0,속도위반,50,3,양방향 후보\n",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 3
+
+  cameras = find_lead_cameras(db_path, 37.0, 127.0, 0.0, limit=3)
+  assert [camera.direction_kind for camera in cameras] == ["UP", "DOWN", "BOTH"]
+
+
+def test_lateral_offset_filter_removes_side_road_camera(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,도로노선방향,설치장소\n"
+    "A1,37.0045,127.0028,속도위반,80,3,옆도로 후보\n"
+    "A2,37.0050,127.0000,속도위반,60,3,진행축 후보\n",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 2
+
+  cameras = find_lead_cameras(db_path, 37.0, 127.0, 0.0, limit=3)
+  assert len(cameras) == 1
+  assert cameras[0].id.startswith("A2-")
+  assert cameras[0].forward_m > 0.0
+  assert abs(cameras[0].side_m) < 1.0
+
+
 def test_direction_bearing_deg() -> None:
   assert direction_bearing_deg("북") == 0.0
   assert direction_bearing_deg("동") == 90.0
   assert direction_bearing_deg("남") == 180.0
   assert direction_bearing_deg("서") == 270.0
+  assert direction_bearing_deg("1") is None
+  assert direction_bearing_deg("02") is None
   assert direction_bearing_deg("양방향") is None
+
+
+def test_direction_kind_and_route_hint_helpers() -> None:
+  assert direction_kind("1") == "UP"
+  assert direction_kind("01") == "UP"
+  assert direction_kind("2") == "DOWN"
+  assert direction_kind("02") == "DOWN"
+  assert direction_kind("3") == "BOTH"
+  assert direction_kind("03") == "BOTH"
+  assert direction_kind("북") == ""
+  assert route_hint_from_text("중원초교사거리 어린이보호구역(부천체육관→부천시청역)") == "부천체육관->부천시청역"
+  assert route_hint_from_text("포도마을사거리(부천시청역->순천향대학교부천병원)") == "부천시청역->순천향대학교부천병원"
+
+
+def test_relative_projection_m() -> None:
+  forward_m, side_m = relative_projection_m(100.0, 0.0)
+  assert forward_m == pytest.approx(100.0)
+  assert side_m == pytest.approx(0.0)
+  forward_m, side_m = relative_projection_m(100.0, 90.0)
+  assert forward_m == pytest.approx(0.0, abs=1e-6)
+  assert side_m == pytest.approx(100.0)
 
 
 def test_public_data_portal_column_codes(tmp_path: Path) -> None:
