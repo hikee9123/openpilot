@@ -16,6 +16,7 @@ from urllib.request import Request, urlopen
 try:
   from openpilot.selfdrive.navd.paths import (
     DEFAULT_NAVD_DB_DIR,
+    DEFAULT_NAVD_ROOT,
     DEFAULT_NAVD_SOURCE_DIR,
     DEFAULT_NAVD_TMP_DIR,
     REPO_NAVD_DATA_DIR,
@@ -24,6 +25,7 @@ try:
 except ModuleNotFoundError:
   from selfdrive.navd.paths import (
     DEFAULT_NAVD_DB_DIR,
+    DEFAULT_NAVD_ROOT,
     DEFAULT_NAVD_SOURCE_DIR,
     DEFAULT_NAVD_TMP_DIR,
     REPO_NAVD_DATA_DIR,
@@ -54,6 +56,7 @@ def _default_db_root() -> Path:
 DEFAULT_DB_PATH = Path(os.getenv("SPEED_CAMERA_DB", str(_default_db_root() / "speed_cameras.sqlite3")))
 DEFAULT_CSV_PATH = Path(os.getenv("SPEED_CAMERA_CSV", str(_default_source_root() / "speed_cameras.csv")))
 DEFAULT_REGION_DIR = Path(os.getenv("SPEED_CAMERA_REGION_DIR", str(_default_source_root() / "region")))
+DEFAULT_MAP_HTML_PATH = Path(os.getenv("SPEED_CAMERA_MAP_HTML", str(DEFAULT_NAVD_ROOT / "speed_cameras.html")))
 DEFAULT_DOWNLOAD_TMP_DIR = DEFAULT_NAVD_TMP_DIR
 
 LOOKAHEAD_DISTANCE_M = 2500.0
@@ -1432,6 +1435,202 @@ def database_road_class_counts(db_path: Path = DEFAULT_DB_PATH) -> list[tuple[st
       return [(str(road_class or "UNKNOWN"), int(count)) for road_class, count in rows]
     except sqlite3.Error:
       return []
+
+
+def _leaflet_camera_rows(conn: sqlite3.Connection) -> list[dict[str, object]]:
+  columns = _table_columns(conn, "speed_cameras")
+  if not {"id", "lat", "lon", "speed_limit"}.issubset(columns):
+    return []
+
+  conn.row_factory = sqlite3.Row
+  rows = conn.execute("""
+    SELECT *
+    FROM speed_cameras
+    WHERE lat BETWEEN -90.0 AND 90.0
+      AND lon BETWEEN -180.0 AND 180.0
+    ORDER BY region, id
+  """).fetchall()
+
+  cameras = []
+  for row in rows:
+    camera_type = str(_row_get(row, "camera_type", ""))
+    section_type = str(_row_get(row, "section_type", ""))
+    road_name = str(_row_get(row, "road_name", ""))
+    place = str(_row_get(row, "place", ""))
+    speed_limit = int(_row_get(row, "speed_limit", 0))
+    category = str(_row_get(row, "camera_category", ""))
+    if not category or category == "UNKNOWN":
+      category = normalize_camera_category(camera_type, section_type, f"{road_name} {place}", speed_limit)
+
+    road_class = str(_row_get(row, "road_class", ""))
+    if not road_class or road_class == "UNKNOWN":
+      road_class = normalize_road_class(str(_row_get(row, "road_type_raw", "")), road_name, place)
+
+    cameras.append({
+      "id": str(_row_get(row, "id", "")),
+      "lat": float(_row_get(row, "lat", 0.0)),
+      "lon": float(_row_get(row, "lon", 0.0)),
+      "speed": speed_limit,
+      "category": category,
+      "roadClass": road_class,
+      "region": str(_row_get(row, "region", "")),
+      "road": road_name,
+      "place": place,
+      "source": str(_row_get(row, "source_type", "")),
+      "updatedAt": str(_row_get(row, "updated_at", "")),
+    })
+  return cameras
+
+
+def export_speed_camera_leaflet_html(
+  db_path: Path = DEFAULT_DB_PATH,
+  html_path: Path = DEFAULT_MAP_HTML_PATH,
+) -> int:
+  if not db_path.exists():
+    return 0
+
+  try:
+    conn = sqlite3.connect(db_path)
+  except sqlite3.Error:
+    return 0
+
+  with closing(conn):
+    try:
+      cameras = _leaflet_camera_rows(conn)
+    except sqlite3.Error:
+      return 0
+
+  payload = {
+    "generatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+    "dbPath": str(db_path),
+    "count": len(cameras),
+    "cameras": cameras,
+  }
+  data_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+
+  html_path.parent.mkdir(parents=True, exist_ok=True)
+  html_path.write_text(_leaflet_html_template().replace("__NAVD_CAMERA_DATA__", data_json), encoding="utf-8")
+  return len(cameras)
+
+
+def _leaflet_html_template() -> str:
+  return """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>navd speed cameras</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    html, body, #map { height: 100%; margin: 0; }
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    #panel {
+      position: absolute;
+      z-index: 1000;
+      top: 12px;
+      right: 12px;
+      width: min(360px, calc(100vw - 24px));
+      max-height: calc(100vh - 24px);
+      overflow: auto;
+      box-sizing: border-box;
+      padding: 14px 16px;
+      border-radius: 8px;
+      background: rgba(18, 22, 28, 0.9);
+      color: #f4f4f5;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.32);
+    }
+    #panel h1 { margin: 0 0 8px; font-size: 17px; font-weight: 700; }
+    #panel p { margin: 4px 0; color: #c9cbd1; font-size: 13px; }
+    #counts { display: grid; gap: 6px; margin-top: 12px; }
+    .count { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+    .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+    .leaflet-popup-content { min-width: 220px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <section id="panel">
+    <h1>navd speed cameras</h1>
+    <p id="summary"></p>
+    <p id="source"></p>
+    <div id="counts"></div>
+  </section>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const payload = __NAVD_CAMERA_DATA__;
+    const cameras = payload.cameras || [];
+    const colors = {
+      SPEED: "#d33f49",
+      SPEED_SIGNAL: "#f59f00",
+      SECTION_SPEED: "#7c3aed",
+      SIGNAL: "#2563eb",
+      SECURITY: "#0891b2",
+      PROTECTED_ZONE: "#16a34a",
+      PARKING: "#64748b",
+      BUS_LANE: "#0f766e",
+      TRAFFIC: "#ea580c",
+      ETC: "#737373",
+      UNKNOWN: "#525252",
+    };
+
+    const map = L.map("map", { preferCanvas: true });
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: "&copy; OpenStreetMap contributors",
+    }).addTo(map);
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      }[ch]));
+    }
+
+    const group = L.featureGroup().addTo(map);
+    const counts = new Map();
+    for (const camera of cameras) {
+      const category = camera.category || "UNKNOWN";
+      counts.set(category, (counts.get(category) || 0) + 1);
+      const color = colors[category] || colors.UNKNOWN;
+      const marker = L.circleMarker([camera.lat, camera.lon], {
+        radius: category === "SECTION_SPEED" ? 5 : 4,
+        color,
+        fillColor: color,
+        fillOpacity: 0.72,
+        opacity: 0.9,
+        weight: 1,
+      });
+      const title = [category, camera.speed ? `${camera.speed} km/h` : "", camera.road || camera.place].filter(Boolean).join(" · ");
+      marker.bindPopup(`
+        <strong>${escapeHtml(title || camera.id)}</strong><br>
+        id: ${escapeHtml(camera.id)}<br>
+        road class: ${escapeHtml(camera.roadClass)}<br>
+        region: ${escapeHtml(camera.region)}<br>
+        place: ${escapeHtml(camera.place)}<br>
+        source: ${escapeHtml(camera.source)} ${escapeHtml(camera.updatedAt)}
+      `);
+      marker.addTo(group);
+    }
+
+    document.getElementById("summary").textContent = `${cameras.length.toLocaleString()} cameras · generated ${payload.generatedAt}`;
+    document.getElementById("source").textContent = payload.dbPath || "";
+    document.getElementById("counts").innerHTML = Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([category, count]) => `<div class="count"><span><i class="swatch" style="background:${colors[category] || colors.UNKNOWN}"></i>${escapeHtml(category)}</span><strong>${count.toLocaleString()}</strong></div>`)
+      .join("");
+
+    if (cameras.length > 0) {
+      map.fitBounds(group.getBounds().pad(0.08));
+    } else {
+      map.setView([36.5, 127.8], 7);
+    }
+  </script>
+</body>
+</html>
+"""
 
 
 def _fetch_data_go_json(path: str, params: dict, timeout: int = DATA_GO_KR_TIMEOUT_SECONDS):

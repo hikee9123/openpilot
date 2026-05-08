@@ -18,6 +18,7 @@ try:
     DEFAULT_CSV_PATH,
     DEFAULT_DB_PATH,
     DEFAULT_DOWNLOAD_TMP_DIR,
+    DEFAULT_MAP_HTML_PATH,
     DEFAULT_OSM_ROADS_DB_PATH,
     DEFAULT_REGION_DIR,
     PUBLIC_DATA_PK,
@@ -27,6 +28,7 @@ try:
     database_osm_road_enrichment_stats,
     database_region_counts,
     download_public_speed_camera_csv,
+    export_speed_camera_leaflet_html,
   )
   from openpilot.selfdrive.navd.paths import ensure_navd_dirs
 except ModuleNotFoundError:
@@ -34,6 +36,7 @@ except ModuleNotFoundError:
     DEFAULT_CSV_PATH,
     DEFAULT_DB_PATH,
     DEFAULT_DOWNLOAD_TMP_DIR,
+    DEFAULT_MAP_HTML_PATH,
     DEFAULT_OSM_ROADS_DB_PATH,
     DEFAULT_REGION_DIR,
     PUBLIC_DATA_PK,
@@ -43,6 +46,7 @@ except ModuleNotFoundError:
     database_osm_road_enrichment_stats,
     database_region_counts,
     download_public_speed_camera_csv,
+    export_speed_camera_leaflet_html,
   )
   from selfdrive.navd.paths import ensure_navd_dirs
 
@@ -107,6 +111,8 @@ def main() -> None:
   parser.add_argument("--per-page", type=int, default=10000, help="Rows per portal request (default: 10000)")
   parser.add_argument("--max-pages", type=int, help="Limit downloaded pages for testing")
   parser.add_argument("--download-only", action="store_true", help="Download CSV without importing the DB")
+  parser.add_argument("--map-html", type=Path, default=DEFAULT_MAP_HTML_PATH, help=f"Leaflet HTML map path (default: {DEFAULT_MAP_HTML_PATH})")
+  parser.add_argument("--no-map-html", action="store_true", help="Skip Leaflet HTML map generation")
   args = parser.parse_args()
 
   ensure_navd_dirs(
@@ -150,8 +156,13 @@ def main() -> None:
   source_counts = _source_counts(csv_sources)
   if data_date:
     params.put(SPEED_CAMERA_DATA_DATE_KEY, data_date)
+  map_count = 0
+  if not args.no_map_html:
+    map_count = export_speed_camera_leaflet_html(args.db, args.map_html)
   _put_progress(params, 100)
   print(f"imported {imported} speed cameras into {args.db}")
+  if not args.no_map_html:
+    print(f"wrote Leaflet map with {map_count} cameras to {args.map_html}")
   print("sources:")
   print(f"  public: {source_counts.get('public', 0)}")
   print(f"  region: {source_counts.get('region', 0)}")

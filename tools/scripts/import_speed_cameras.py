@@ -9,11 +9,13 @@ try:
   from openpilot.selfdrive.navd.speed_camera import (
     DEFAULT_CSV_PATH,
     DEFAULT_DB_PATH,
+    DEFAULT_MAP_HTML_PATH,
     DEFAULT_REGION_DIR,
     DEFAULT_OSM_ROADS_DB_PATH,
     CsvSource,
     create_database_from_csvs,
     database_osm_road_enrichment_stats,
+    export_speed_camera_leaflet_html,
     find_lead_camera,
   )
   from openpilot.selfdrive.navd.paths import ensure_navd_dirs
@@ -21,11 +23,13 @@ except ModuleNotFoundError:
   from selfdrive.navd.speed_camera import (
     DEFAULT_CSV_PATH,
     DEFAULT_DB_PATH,
+    DEFAULT_MAP_HTML_PATH,
     DEFAULT_REGION_DIR,
     DEFAULT_OSM_ROADS_DB_PATH,
     CsvSource,
     create_database_from_csvs,
     database_osm_road_enrichment_stats,
+    export_speed_camera_leaflet_html,
     find_lead_camera,
   )
   from selfdrive.navd.paths import ensure_navd_dirs
@@ -78,6 +82,8 @@ def main() -> None:
     help=f"Optional local OSM roads DB used to enrich camera road names (default: {DEFAULT_OSM_ROADS_DB_PATH})",
   )
   parser.add_argument("--osm-radius", type=float, default=60.0, help="OSM road-name enrichment radius in meters")
+  parser.add_argument("--map-html", type=Path, default=DEFAULT_MAP_HTML_PATH, help=f"Leaflet HTML map path (default: {DEFAULT_MAP_HTML_PATH})")
+  parser.add_argument("--no-map-html", action="store_true", help="Skip Leaflet HTML map generation")
   parser.add_argument("--check", action="store_true", help="Run a lookup after import")
   parser.add_argument("--lat", type=float, help="Latitude for --check")
   parser.add_argument("--lon", type=float, help="Longitude for --check")
@@ -108,6 +114,9 @@ def main() -> None:
   print(f"  custom: {counts.get('custom', 0)}")
   if osm_roads_db is not None:
     print(f"osm roads: {osm_roads_db}")
+  if not args.no_map_html:
+    map_count = export_speed_camera_leaflet_html(args.db, args.map_html)
+    print(f"wrote Leaflet map with {map_count} cameras to {args.map_html}")
   print(f"osm road names primary matched {osm_stats.primary_match_count}")
   print(f"osm road names extended matched {osm_stats.extended_match_count} radius {osm_stats.extended_radius_m:.1f}m")
   print(f"osm road names matched {osm_stats.matched_count}")

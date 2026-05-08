@@ -11,6 +11,7 @@ not remove it:
 
 ```text
 /data/navd/
+  speed_cameras.html
   db/
     osm_roads_kr.sqlite3
     speed_cameras.sqlite3
@@ -25,6 +26,7 @@ On PC, the same layout is used under the openpilot PC data root:
 
 ```text
 ~/.comma/navd/
+  speed_cameras.html
   db/
     osm_roads_kr.sqlite3
     speed_cameras.sqlite3
@@ -77,6 +79,9 @@ Extra custom CSVs can be provided repeatedly:
 
 `update_speed_cameras.py` still downloads the national public data portal CSV, then
 imports it together with optional `--region-dir` and `--extra-csv` sources.
+By default, both import scripts also write a Leaflet/OpenStreetMap inspection page
+to `speed_cameras.html`; pass `--no-map-html` to skip it or `--map-html` to choose
+a different output path.
 
 ## 3. Stored Classification
 

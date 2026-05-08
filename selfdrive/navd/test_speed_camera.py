@@ -29,6 +29,7 @@ database_region_stats = speed_camera.database_region_stats
 direction_bearing_deg = speed_camera.direction_bearing_deg
 direction_kind = speed_camera.direction_kind
 download_public_speed_camera_csv = speed_camera.download_public_speed_camera_csv
+export_speed_camera_leaflet_html = speed_camera.export_speed_camera_leaflet_html
 find_lead_camera = speed_camera.find_lead_camera
 find_lead_cameras = speed_camera.find_lead_cameras
 normalize_camera_category = speed_camera.normalize_camera_category
@@ -106,6 +107,27 @@ def test_import_and_find_lead_camera(tmp_path: Path) -> None:
 
   assert rear_camera is not None
   assert rear_camera.id.startswith("A2-")
+
+
+def test_export_speed_camera_leaflet_html(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  html_path = tmp_path / "speed_cameras.html"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,설치장소\n"
+    "A1,37.001,127.0,속도위반,80,전방도로\n",
+  )
+  create_database_from_csv(csv_path, db_path)
+
+  assert export_speed_camera_leaflet_html(db_path, html_path) == 1
+  html = html_path.read_text(encoding="utf-8")
+
+  assert "leaflet@1.9.4" in html
+  assert "tile.openstreetmap.org" in html
+  assert '"id":"A1-' in html
+  assert '"lat":37.001' in html
+  assert '"category":"SPEED"' in html
 
 
 @pytest.mark.parametrize(
