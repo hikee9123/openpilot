@@ -5,6 +5,7 @@ from collections.abc import Mapping
 
 import cereal.messaging as messaging
 from openpilot.common.params import Params
+from openpilot.common.swaglog import cloudlog
 
 
 # #custom start: shared custom UI params and publisher
@@ -154,9 +155,10 @@ def speed_camera_debug_preview_active(params: Params | None = None, now: float |
 class CustomPublisher:
   def __init__(self, params: Params | None = None):
     self.params = params or Params()
-    self.pm = messaging.PubMaster(["uICustom"])
+    self.pm: messaging.PubMaster | None = None
     self._cmd_idx = 0
     self._last_publish = 0.0
+    self._last_pubmaster_error_log = 0.0
 
   def update(self, force: bool = False) -> None:
     now = time.monotonic()
@@ -211,7 +213,30 @@ class CustomPublisher:
     user_interface.autoScreenOff = int(values["ParamAutoScreenOff"])
     user_interface.brightness = int(values["ParamBrightness"])
 
-    self.pm.send("uICustom", msg)
+    if not self._ensure_pubmaster():
+      return
+
+    try:
+      self.pm.send("uICustom", msg)
+    except messaging.MultiplePublishersError:
+      self.pm = None
+      self._log_pubmaster_error("uICustom publisher already exists while sending")
+
+  def _ensure_pubmaster(self) -> bool:
+    if self.pm is not None:
+      return True
+    try:
+      self.pm = messaging.PubMaster(["uICustom"])
+      return True
+    except messaging.MultiplePublishersError:
+      self._log_pubmaster_error("uICustom publisher already exists")
+      return False
+
+  def _log_pubmaster_error(self, message: str) -> None:
+    now = time.monotonic()
+    if now - self._last_pubmaster_error_log >= 10.0:
+      self._last_pubmaster_error_log = now
+      cloudlog.warning(message)
 
 
 class AutoPowerOffController:

@@ -6,13 +6,14 @@ import pyray as rl
 from cereal import log
 from openpilot.common.constants import CV
 from openpilot.selfdrive.ui import UI_BORDER_SIZE
+from openpilot.selfdrive.ui.onroad.osm_road_overlay_renderer import minimap_rect
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import FontWeight, gui_app
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.widgets import Widget
 
 
-MAX_ITEMS = 9
+MAX_ITEMS = 6
 BASE_PANEL_WIDTH = 180
 BASE_ITEM_HEIGHT = 105
 BASE_PANEL_PADDING = 10
@@ -157,9 +158,7 @@ class KegmanRenderer(Widget):
     if mode != OSM_OVERLAY_MODE_MINIMAP:
       return None
 
-    panel_w = min(360.0, rect.width * 0.30)
-    panel_h = min(260.0, rect.height * 0.30)
-    return rl.Rectangle(rect.x + rect.width - panel_w - 34, rect.y + rect.height - panel_h - 34, panel_w, panel_h)
+    return minimap_rect(rect)
 
   @staticmethod
   def _rects_overlap(a: rl.Rectangle, b: rl.Rectangle) -> bool:
