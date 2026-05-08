@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import math
+import time
 
 import pyray as rl
 from openpilot.selfdrive.ui.onroad.custom_overlay_layout import overlay_two_column_width
@@ -13,6 +15,8 @@ from openpilot.system.ui.widgets import Widget
 MINIMAP_MARGIN = 30.0
 MINIMAP_MAX_HEIGHT = 300.0
 MINIMAP_HEIGHT_FRACTION = 0.34
+MINIMAP_RADIUS_ANIMATION_TAU_SECONDS = 0.22
+MINIMAP_RADIUS_ANIMATION_EPSILON_M = 0.5
 ROAD_DEFAULT = rl.Color(255, 255, 255, 86)
 ROAD_MAJOR = rl.Color(135, 190, 220, 135)
 ROAD_FORWARD = rl.Color(92, 230, 150, 170)
@@ -34,6 +38,8 @@ class OsmRoadOverlayRenderer(Widget):
     self._last_text = ""
     self._data: dict = {}
     self._font_medium = gui_app.font(FontWeight.MEDIUM)
+    self._animated_radius_m = 0.0
+    self._last_animation_t = 0.0
 
   def _render(self, rect: rl.Rectangle) -> None:
     mode = int(ui_state.custom_params.get("OsmRoadOverlayMode", OSM_OVERLAY_MODE_OFF))
@@ -73,7 +79,7 @@ class OsmRoadOverlayRenderer(Widget):
     rl.draw_rectangle_rounded(panel, 0.08, 8, PANEL_BG)
     rl.draw_rectangle_rounded_lines_ex(panel, 0.08, 8, 2.0, PANEL_BORDER)
 
-    radius = max(100.0, float(data.get("mapRadius", 140.0)))
+    radius = self._animated_radius(max(100.0, float(data.get("mapRadius", 140.0))))
     scale = min((panel_w * 0.46) / radius, (panel_h * 0.70) / radius)
     origin = rl.Vector2(panel.x + panel_w * 0.5, panel.y + panel_h * 0.78)
     rl.draw_line(int(panel.x + 18), int(origin.y), int(panel.x + panel_w - 18), int(origin.y), PANEL_GRID)
@@ -143,6 +149,21 @@ class OsmRoadOverlayRenderer(Widget):
       rl.Vector2(origin.x + 10, origin.y + 12),
     ]
     rl.draw_triangle(points[0], points[1], points[2], EGO_COLOR)
+
+  def _animated_radius(self, target_radius_m: float) -> float:
+    now = time.monotonic()
+    if self._animated_radius_m <= 0.0 or self._last_animation_t <= 0.0:
+      self._animated_radius_m = target_radius_m
+      self._last_animation_t = now
+      return self._animated_radius_m
+
+    dt = max(0.0, min(0.1, now - self._last_animation_t))
+    self._last_animation_t = now
+    alpha = 1.0 - math.exp(-dt / MINIMAP_RADIUS_ANIMATION_TAU_SECONDS)
+    self._animated_radius_m += (target_radius_m - self._animated_radius_m) * alpha
+    if abs(target_radius_m - self._animated_radius_m) <= MINIMAP_RADIUS_ANIMATION_EPSILON_M:
+      self._animated_radius_m = target_radius_m
+    return self._animated_radius_m
 
 
 def minimap_rect(rect: rl.Rectangle) -> rl.Rectangle:
