@@ -76,6 +76,11 @@ class Colors:
   SPEED_SIGN_INNER = rl.WHITE
   SPEED_SIGN_SEARCH_AREA = rl.Color(255, 198, 77, 45)
   SPEED_SIGN_TEXT = rl.Color(18, 18, 18, 255)
+  SIGNAL_BADGE_BODY = rl.Color(16, 18, 22, 230)
+  SIGNAL_BADGE_BORDER = rl.Color(52, 120, 246, 255)
+  SIGNAL_RED = rl.Color(235, 56, 64, 255)
+  SIGNAL_YELLOW = rl.Color(245, 190, 64, 255)
+  SIGNAL_GREEN = rl.Color(55, 210, 125, 255)
 
 
 UI_CONFIG = UIConfig()
@@ -310,6 +315,8 @@ class HudRenderer(Widget):
     sign_center_x = x + width / 2
     sign_center_y = y + 92
     self._draw_speed_limit_sign(sign_center_x, sign_center_y, sign_radius, sign_lines)
+    if self._is_signal_camera_category(self.camera_category, self.camera_type):
+      self._draw_signal_badge(sign_center_x, max(rect.y + 4, sign_center_y - sign_radius - 24))
 
     label_text, label_font_size, label_size = self._fit_text(info_label, width, 22, 18)
     rl.draw_text_ex(
@@ -376,6 +383,27 @@ class HudRenderer(Widget):
       0,
       COLORS.SPEED_SIGN_TEXT,
     )
+
+  def _draw_signal_badge(self, center_x: float, top_y: float) -> None:
+    badge_w = 54
+    badge_h = 18
+    lamp_r = 5
+    lamp_gap = 2
+    lamp_d = lamp_r * 2
+    lamps_w = lamp_d * 3 + lamp_gap * 2
+    badge_x = center_x - badge_w / 2
+    badge_y = top_y
+
+    badge_rect = rl.Rectangle(badge_x, badge_y, badge_w, badge_h)
+    rl.draw_rectangle_rounded(badge_rect, 0.45, 8, COLORS.SIGNAL_BADGE_BODY)
+    rl.draw_rectangle_rounded_lines_ex(badge_rect, 0.45, 8, 1, COLORS.SIGNAL_BADGE_BORDER)
+
+    start_x = badge_x + (badge_w - lamps_w) / 2 + lamp_r
+    lamp_y = badge_y + badge_h / 2
+    step = lamp_d + lamp_gap
+    rl.draw_circle(int(start_x), int(lamp_y), lamp_r, COLORS.SIGNAL_RED)
+    rl.draw_circle(int(start_x + step), int(lamp_y), lamp_r, COLORS.SIGNAL_YELLOW)
+    rl.draw_circle(int(start_x + step * 2), int(lamp_y), lamp_r, COLORS.SIGNAL_GREEN)
 
   def _draw_camera_direction_pointer(self, center_x: float, center_y: float, radius: int) -> None:
     angle_rad = math.radians(self._filtered_camera_pointer_angle())
