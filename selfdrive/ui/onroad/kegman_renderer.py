@@ -90,16 +90,16 @@ class KegmanRenderer(Widget):
 
     minimap_rect = self._minimap_rect(rect)
     columns = 2 if len(measures) >= 5 else 1
-    layout = self._layout(rect, len(measures), columns)
+    layout = self._panel_layout(rect, len(measures), columns)
     panel_rect = layout["panel_rect"]
 
     if minimap_rect is not None and self._rects_overlap(panel_rect, minimap_rect):
-      layout = self._layout(rect, len(measures), columns, minimap_rect)
+      layout = self._panel_layout(rect, len(measures), columns, minimap_rect)
       panel_rect = layout["panel_rect"]
 
     if minimap_rect is not None and self._rects_overlap(panel_rect, minimap_rect) and columns == 1 and len(measures) >= 3:
       columns = 2
-      layout = self._layout(rect, len(measures), columns, minimap_rect)
+      layout = self._panel_layout(rect, len(measures), columns, minimap_rect)
       panel_rect = layout["panel_rect"]
 
     rows = int(layout["rows"])
@@ -130,7 +130,7 @@ class KegmanRenderer(Widget):
       sep_x = x + padding + cell_width + column_gap / 2
       rl.draw_line(int(sep_x), int(y + padding * 1.5), int(sep_x), int(y + panel_height - padding * 1.5), SEPARATOR)
 
-  def _layout(
+  def _panel_layout(
     self,
     rect: rl.Rectangle,
     item_count: int,
