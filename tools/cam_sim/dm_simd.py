@@ -19,8 +19,11 @@ def main():
       driver_data.facePosition = [0.0, 0.0]
       driver_data.facePositionStd = [0.01, 0.01]
       driver_data.faceProb = 1.0
-      driver_data.eyesVisibleProb = 1.0
-      driver_data.eyesClosedProb = 0.0
+      driver_data.leftEyeProb = 1.0
+      driver_data.rightEyeProb = 1.0
+      driver_data.leftBlinkProb = 0.0
+      driver_data.rightBlinkProb = 0.0
+      driver_data.sunglassesProb = 0.0
       driver_data.phoneProb = 0.0
     pm.send("driverStateV2", driver_state)
 
