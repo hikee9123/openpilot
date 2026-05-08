@@ -494,9 +494,13 @@ def _send_camera(pm: messaging.PubMaster, camera, candidates=(), current_road_na
   category = getattr(camera, "camera_category", "")
   type_code = int(getattr(camera, "camera_type_code", 0))
   if not category or category == "UNKNOWN":
-    category = normalize_camera_category(camera.camera_type, camera.section_type)
+    category = normalize_camera_category(
+      camera.camera_type, camera.section_type, f"{camera.road_name} {camera.place}", camera.speed_limit
+    )
   if type_code == 0:
-    type_code = camera_type_code(camera.camera_type, camera.section_type)
+    type_code = camera_type_code(
+      camera.camera_type, camera.section_type, f"{camera.road_name} {camera.place}", camera.speed_limit
+    )
 
   road_class = getattr(camera, "road_class", "")
   road_class_code_value = int(getattr(camera, "road_class_code", 0))

@@ -31,7 +31,7 @@ except ModuleNotFoundError:
   from selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH, find_current_road, road_name_matches
 
 
-DB_VERSION = 7
+DB_VERSION = 9
 PUBLIC_DATA_PK = "15028200"
 PUBLIC_DATA_BASE_URL = "https://www.data.go.kr"
 DEFAULT_DATA_DIR = REPO_NAVD_DATA_DIR
@@ -299,6 +299,35 @@ def _parse_int(value: str) -> int:
   return int(parsed) if parsed is not None else 0
 
 
+def infer_missing_speed_limit(
+  camera_type: str,
+  section_type: str,
+  road_name: str,
+  place: str,
+  speed_limit: int,
+) -> int:
+  if speed_limit > 0:
+    return speed_limit
+
+  camera_type = (camera_type or "").strip()
+  if camera_type in ("02", "2"):
+    return speed_limit
+
+  text = f"{camera_type} {section_type or ''} {road_name or ''} {place or ''}".replace(" ", "")
+  protected_keywords = (
+    "어린이보호구역",
+    "보호구역",
+    "초등학교",
+    "초교",
+    "어린이",
+    "노인보호",
+  )
+  if camera_type in ("04", "4") or any(keyword in text for keyword in protected_keywords):
+    return 30
+
+  return speed_limit
+
+
 def _normalize_region(value: str) -> str:
   token = value.strip().split()[0] if value else ""
   return REGION_ALIASES.get(token, "")
@@ -364,6 +393,8 @@ def normalize_camera_category(
     "신호" in raw or
     "SIGNAL" in compact
   )
+  if camera_type in ("02", "2") and speed_limit > 0:
+    has_speed = True
 
   has_section = (
     (camera_type == "99" and section_type in ("01", "1", "02", "2")) or
@@ -451,8 +482,8 @@ def _alert_priority(camera: "SpeedCamera") -> tuple[int, int, int, float, float]
   )
 
 
-def camera_type_code(camera_type: str, section_type: str = "") -> int:
-  category = normalize_camera_category(camera_type, section_type)
+def camera_type_code(camera_type: str, section_type: str = "", context_text: str = "", speed_limit: int = 0) -> int:
+  category = normalize_camera_category(camera_type, section_type, context_text, speed_limit)
   return camera_category_code(category)
 
 
@@ -708,8 +739,11 @@ def _backfill_derived_columns(conn: sqlite3.Connection) -> None:
     ) = row
 
     raw_camera_type = camera_type_raw or camera_type or ""
+    speed_limit = infer_missing_speed_limit(
+      raw_camera_type, section_type or "", road_name or "", place or "", int(speed_limit or 0)
+    )
     category = normalize_camera_category(
-      raw_camera_type, section_type or "", f"{road_name or ''} {place or ''}", int(speed_limit or 0)
+      raw_camera_type, section_type or "", f"{road_name or ''} {place or ''}", speed_limit
     )
     type_code = camera_category_code(category)
 
@@ -732,6 +766,7 @@ def _backfill_derived_columns(conn: sqlite3.Connection) -> None:
         is_signal_camera = ?,
         is_section_camera = ?,
         is_etc_camera = ?,
+        speed_limit = ?,
         road_type_raw = ?,
         road_class = ?,
         road_class_code = ?,
@@ -749,6 +784,7 @@ def _backfill_derived_columns(conn: sqlite3.Connection) -> None:
       int(is_signal_category(category)),
       int(is_section_category(category)),
       int(is_etc_category(category)),
+      speed_limit,
       raw_road_type,
       normalized_road_class,
       road_code,
@@ -874,6 +910,7 @@ def _standardize_csv_row(row: dict[str, str], csv_source: CsvSource, idx: int) -
   speed_limit = _parse_int(_first(row, "speed_limit"))
   raw_camera_type = _first(row, "camera_type")
   section_type = _first(row, "section_type")
+  speed_limit = infer_missing_speed_limit(raw_camera_type, section_type, road_name, place, speed_limit)
   category = normalize_camera_category(raw_camera_type, section_type, f"{road_name} {place}", speed_limit)
   type_code = camera_category_code(category)
 
@@ -1538,12 +1575,14 @@ def _row_to_camera(row: sqlite3.Row, distance_m: float, bearing: float, angle_di
   place = str(_row_get(row, "place", ""))
 
   category = str(_row_get(row, "camera_category", ""))
+  speed_limit = int(row["speed_limit"])
+
   if not category or category == "UNKNOWN":
-    category = normalize_camera_category(camera_type, section_type)
+    category = normalize_camera_category(camera_type, section_type, f"{road_name} {place}", speed_limit)
 
   type_code = int(_row_get(row, "camera_type_code", 0))
   if type_code == 0:
-    type_code = camera_type_code(camera_type, section_type)
+    type_code = camera_type_code(camera_type, section_type, f"{road_name} {place}", speed_limit)
 
   road_type_raw = str(_row_get(row, "road_type_raw", ""))
   road_class = str(_row_get(row, "road_class", ""))
@@ -1562,7 +1601,7 @@ def _row_to_camera(row: sqlite3.Row, distance_m: float, bearing: float, angle_di
     lat=float(row["lat"]),
     lon=float(row["lon"]),
     camera_type=camera_type,
-    speed_limit=int(row["speed_limit"]),
+    speed_limit=speed_limit,
     road_name=road_name,
     place=place,
     direction=str(_row_get(row, "direction", "")),

@@ -145,6 +145,13 @@ def test_normalize_camera_category_uses_section_type() -> None:
   assert normalize_camera_category("99", context_text="학돌초등학교 사거리", speed_limit=50) == "UNKNOWN"
 
 
+def test_normalize_signal_type_with_speed_limit_as_speed_signal() -> None:
+  assert normalize_camera_category("2", speed_limit=50) == "SPEED_SIGNAL"
+  assert normalize_camera_category("02", speed_limit=30) == "SPEED_SIGNAL"
+  assert normalize_camera_category("2", speed_limit=0) == "SIGNAL"
+  assert normalize_camera_category("02") == "SIGNAL"
+
+
 @pytest.mark.parametrize(
   ("category", "expected"),
   [
@@ -214,10 +221,12 @@ def test_import_stores_camera_category_and_road_class_columns(tmp_path: Path) ->
     "A1,37.001,127.0,속도위반,80,고속국도,전방도로\n"
     "A2,37.002,127.0,신호위반,0,일반국도,교차로\n"
     "A3,37.003,127.0,신호+속도위반,60,지방도,복합단속\n"
-    "A4,37.004,127.0,주정차,0,시도,주차구역\n",
+    "A4,37.004,127.0,주정차,0,시도,주차구역\n"
+    "A5,37.005,127.0,2,50,시도,신호속도 교차로\n"
+    "A6,37.006,127.0,02,0,시도,신호 교차로\n",
   )
 
-  assert create_database_from_csv(csv_path, db_path) == 4
+  assert create_database_from_csv(csv_path, db_path) == 6
 
   a1 = _fetch_row(db_path, "A1")
   assert a1["camera_category"] == "SPEED"
@@ -242,6 +251,19 @@ def test_import_stores_camera_category_and_road_class_columns(tmp_path: Path) ->
   assert a3["is_speed_camera"] == 1
   assert a3["is_signal_camera"] == 1
   assert a3["road_class"] == "LOCAL_ROAD"
+
+  a5 = _fetch_row(db_path, "A5")
+  assert a5["camera_category"] == "SPEED_SIGNAL"
+  assert a5["camera_type_code"] == 3
+  assert a5["is_speed_camera"] == 1
+  assert a5["is_signal_camera"] == 1
+
+  a6 = _fetch_row(db_path, "A6")
+  assert a6["camera_category"] == "SIGNAL"
+  assert a6["camera_type_code"] == 2
+  assert a6["is_speed_camera"] == 0
+  assert a6["is_signal_camera"] == 1
+  assert a6["speed_limit"] == 0
 
   a4 = _fetch_row(db_path, "A4")
   assert a4["camera_category"] == "PARKING"
@@ -321,7 +343,7 @@ def test_type_three_and_four_are_non_speed_categories(tmp_path: Path) -> None:
     csv_path,
     "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,설치장소\n"
     "A1,37.001,127.0,3,0,보안구역\n"
-    "A2,37.002,127.0,4,30,어린이보호구역\n",
+    "A2,37.002,127.0,4,0,어린이보호구역\n",
   )
 
   assert create_database_from_csv(csv_path, db_path) == 2
@@ -336,6 +358,7 @@ def test_type_three_and_four_are_non_speed_categories(tmp_path: Path) -> None:
   assert protected["camera_type_code"] == 10
   assert protected["is_speed_camera"] == 0
   assert protected["is_etc_camera"] == 1
+  assert protected["speed_limit"] == 30
 
   camera = find_lead_camera(db_path, 37.0, 127.0, 0.0)
   assert camera is not None
@@ -650,8 +673,12 @@ def test_init_db_backfills_old_database_speed_flags(tmp_path: Path) -> None:
       INSERT INTO speed_cameras VALUES (
         'OLD', 37.001, 127.0, '01', 80, '', '고속도로', '전방도로', '', '', 0, '', '2026-01-01'
       );
+      INSERT INTO speed_cameras VALUES (
+        'OLD_PROTECTED', 37.002, 127.0, '04', 0, '', '칠중1길', '마지초등학교 정문 앞', '', '', 0, '', '2026-01-01'
+      );
     """)
     speed_camera.init_db(conn)
+    protected = conn.execute("SELECT speed_limit, camera_category FROM speed_cameras WHERE id = 'OLD_PROTECTED'").fetchone()
 
   camera = find_lead_camera(db_path, 37.0, 127.0, 0.0)
   assert camera is not None
@@ -660,6 +687,7 @@ def test_init_db_backfills_old_database_speed_flags(tmp_path: Path) -> None:
   assert camera.camera_type_code == 1
   assert camera.road_class == "EXPRESSWAY"
   assert camera.is_expressway is True
+  assert protected == (30, "PROTECTED_ZONE")
 
 
 def test_camera_type_code_backward_compatibility() -> None:
@@ -669,8 +697,10 @@ def test_camera_type_code_backward_compatibility() -> None:
   assert camera_type_code("구간단속") == 4
   assert camera_type_code("01") == 1
   assert camera_type_code("02") == 2
+  assert camera_type_code("02", speed_limit=30) == 3
   assert camera_type_code("1") == 1
   assert camera_type_code("2") == 2
+  assert camera_type_code("2", speed_limit=50) == 3
   assert camera_type_code("3") == 8
   assert camera_type_code("03") == 8
   assert camera_type_code("4") == 10
