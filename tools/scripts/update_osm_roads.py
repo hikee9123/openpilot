@@ -228,9 +228,13 @@ def main() -> None:
   parser.add_argument("--db", type=Path, default=DEFAULT_OSM_ROADS_DB_PATH, help=f"Output SQLite DB (default: {DEFAULT_OSM_ROADS_DB_PATH})")
   parser.add_argument("--tmp-dir", type=Path, default=DEFAULT_NAVD_TMP_DIR, help=f"Temporary build directory (default: {DEFAULT_NAVD_TMP_DIR})")
   parser.add_argument("--skip-download", action="store_true", help="Use the existing PBF file instead of downloading it")
+  parser.add_argument("--download-only", action="store_true", help="Download the PBF and exit without building the DB")
   parser.add_argument("--keep-pbf", action="store_true", help="Keep the downloaded PBF after building the DB")
   parser.add_argument("--no-auto-install-osmium", action="store_true", help="Fail instead of trying to install osmium when it is missing")
   args = parser.parse_args()
+
+  if args.download_only and args.skip_download:
+    parser.error("--download-only cannot be used with --skip-download")
 
   ensure_navd_dirs(
     db_dir=args.db.parent,
@@ -240,9 +244,11 @@ def main() -> None:
 
   params = Params()
   _put_progress(params, 0)
-  _put_segment_count(params, 0)
 
-  if not _ensure_osmium(params, not args.no_auto_install_osmium):
+  if not args.download_only:
+    _put_segment_count(params, 0)
+
+  if not args.download_only and not _ensure_osmium(params, not args.no_auto_install_osmium):
     return 1
 
   if not args.skip_download:
@@ -250,6 +256,11 @@ def main() -> None:
     _download(args.url, args.pbf, params, args.tmp_dir)
   elif not args.pbf.exists():
     parser.error(f"--skip-download requested but PBF does not exist: {args.pbf}")
+
+  if args.download_only:
+    _put_progress(params, 100)
+    print(f"downloaded OSM PBF {args.pbf}", flush=True)
+    return 0
 
   _put_progress(params, 75)
   args.tmp_dir.mkdir(parents=True, exist_ok=True)

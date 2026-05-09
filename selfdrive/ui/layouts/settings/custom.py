@@ -29,7 +29,7 @@ from openpilot.selfdrive.navd.osm_roads import (
   database_built_at as osm_roads_built_at,
   database_segment_count as osm_roads_segment_count,
 )
-from openpilot.selfdrive.navd.paths import DEFAULT_NAVD_TMP_DIR
+from openpilot.selfdrive.navd.paths import DEFAULT_NAVD_SOURCE_DIR, DEFAULT_NAVD_TMP_DIR
 from openpilot.selfdrive.ui.custom import (
   read_custom_param_map,
   read_custom_params,
@@ -127,6 +127,7 @@ OSM_ROADS_UPDATED_AT_KEY = "OsmRoadsUpdatedAt"
 OSM_ROADS_LOG_PATH = str(NAVD_TMP_ROOT / "openpilot_osm_roads_update.log")
 OSM_ROADS_LOCK_PATH = NAVD_TMP_ROOT / "openpilot_osm_roads_update.lock"
 OSM_ROADS_LOCK_STALE_SECONDS = 2 * 60 * 60
+OSM_ROADS_PBF_PATH = DEFAULT_NAVD_SOURCE_DIR / "south-korea-latest.osm.pbf"
 REPO_ROOT = Path(BASEDIR)
 MODELD_DIR = REPO_ROOT / "selfdrive/modeld"
 TAB_HEIGHT = 110
@@ -992,12 +993,13 @@ class CustomSettingsLayout(Widget):
       ],
       "Navigation": [
         SectionHeader(tr_noop("OSM roads DB")),
-        self._osm_roads_update_item(),
+        self._osm_roads_download_item(),
+        self._osm_roads_build_item(),
         CompactStatusProgressInfoGroup(
           self._osm_roads_status_text,
           self._osm_roads_progress_text,
           [],
-          status_details=[self._osm_roads_updated_status_text],
+          status_details=[self._osm_roads_updated_status_text, self._osm_roads_pbf_status_text],
           progress_detail_callback=self._osm_roads_progress_detail_text,
         ),
         CompileLogPanel(tr_noop("OSM roads detail"), self._osm_roads_log_lines, tr_noop("No OSM roads log yet")),
@@ -1318,13 +1320,22 @@ class CustomSettingsLayout(Widget):
       enabled=enabled,
     )
 
-  def _osm_roads_update_item(self):
+  def _osm_roads_download_item(self):
     return button_item(
-      lambda: tr("Update DB"),
-      self._osm_roads_button_text,
-      description=lambda: tr("Downloads the South Korea OSM PBF and builds the offline road-name DB used by speed camera matching."),
-      callback=self._handle_osm_roads_update,
+      lambda: tr("Download OSM Data"),
+      self._osm_roads_download_button_text,
+      description=lambda: tr("Downloads the South Korea OSM PBF used to build the offline road-name DB."),
+      callback=self._handle_osm_roads_download,
       enabled=lambda: self._osm_roads_update_status() != STATUS_RUNNING,
+    )
+
+  def _osm_roads_build_item(self):
+    return button_item(
+      lambda: tr("Build OSM DB"),
+      self._osm_roads_build_button_text,
+      description=lambda: tr("Builds the offline road-name DB from the downloaded South Korea OSM PBF."),
+      callback=self._handle_osm_roads_build,
+      enabled=lambda: self._osm_roads_update_status() != STATUS_RUNNING and OSM_ROADS_PBF_PATH.exists(),
     )
 
   def _handle_speed_camera_update(self) -> None:
@@ -1393,7 +1404,14 @@ class CustomSettingsLayout(Widget):
     self._last_speed_camera_log_check = time.monotonic()
     self._speed_camera_verify_log_until = time.monotonic() + 15.0
 
-  def _handle_osm_roads_update(self) -> None:
+  def _handle_osm_roads_command(
+    self,
+    command: list[str],
+    content: str,
+    confirm_text: str,
+    reset_segment_count: bool,
+    mark_db_updated: bool,
+  ) -> None:
     def run() -> None:
       if self._osm_roads_update_running():
         return
@@ -1409,7 +1427,8 @@ class CustomSettingsLayout(Widget):
           self._params.put(OSM_ROADS_STATUS_KEY, STATUS_RUNNING)
           self._params.put(OSM_ROADS_ERROR_KEY, "")
           self._params.put(OSM_ROADS_PROGRESS_KEY, 0)
-          self._params.put(OSM_ROADS_COUNT_KEY, 0)
+          if reset_segment_count:
+            self._params.put(OSM_ROADS_COUNT_KEY, 0)
           try:
             clear_log(OSM_ROADS_LOG_PATH)
           except OSError as e:
@@ -1417,7 +1436,7 @@ class CustomSettingsLayout(Widget):
             return
 
           try:
-            result = run_logged([sys.executable, "tools/scripts/update_osm_roads.py"], REPO_ROOT, OSM_ROADS_LOG_PATH)
+            result = run_logged(command, REPO_ROOT, OSM_ROADS_LOG_PATH)
           except OSError as e:
             self._set_osm_roads_failed(f"update start failed: {e}")
             return
@@ -1425,10 +1444,11 @@ class CustomSettingsLayout(Widget):
             self._set_osm_roads_failed(f"exit code {result.returncode}")
             return
 
-          count = osm_roads_segment_count(DEFAULT_OSM_ROADS_DB_PATH)
-          self._params.put(OSM_ROADS_COUNT_KEY, max(0, count))
+          if mark_db_updated:
+            count = osm_roads_segment_count(DEFAULT_OSM_ROADS_DB_PATH)
+            self._params.put(OSM_ROADS_COUNT_KEY, max(0, count))
+            self._params.put(OSM_ROADS_UPDATED_AT_KEY, time.strftime("%Y-%m-%d %H:%M"))
           self._params.put(OSM_ROADS_PROGRESS_KEY, 100)
-          self._params.put(OSM_ROADS_UPDATED_AT_KEY, time.strftime("%Y-%m-%d %H:%M"))
           self._params.put(OSM_ROADS_STATUS_KEY, STATUS_SUCCESS)
           self._params.put(OSM_ROADS_ERROR_KEY, "")
         finally:
@@ -1436,9 +1456,26 @@ class CustomSettingsLayout(Widget):
 
       threading.Thread(target=worker, daemon=True).start()
 
-    content = tr("Download South Korea OSM data and rebuild the local roads DB? This can take several minutes.")
-    dialog = ConfirmDialog(content, tr("UPDATE"), callback=lambda result: run() if result == DialogResult.CONFIRM else None)
+    dialog = ConfirmDialog(content, tr(confirm_text), callback=lambda result: run() if result == DialogResult.CONFIRM else None)
     gui_app.push_widget(dialog)
+
+  def _handle_osm_roads_download(self) -> None:
+    self._handle_osm_roads_command(
+      [sys.executable, "tools/scripts/update_osm_roads.py", "--download-only"],
+      tr("Download South Korea OSM data? This can take several minutes."),
+      "DOWNLOAD",
+      reset_segment_count=False,
+      mark_db_updated=False,
+    )
+
+  def _handle_osm_roads_build(self) -> None:
+    self._handle_osm_roads_command(
+      [sys.executable, "tools/scripts/update_osm_roads.py", "--skip-download", "--keep-pbf"],
+      tr("Build the local OSM roads DB from the downloaded OSM data? This can take several minutes."),
+      "BUILD",
+      reset_segment_count=True,
+      mark_db_updated=True,
+    )
 
   def _speed_camera_update_status(self) -> str:
     if self._speed_camera_update_running():
@@ -1516,13 +1553,21 @@ class CustomSettingsLayout(Widget):
       return tr("RETRY")
     return tr("UPDATE")
 
-  def _osm_roads_button_text(self) -> str:
+  def _osm_roads_download_button_text(self) -> str:
     status = self._osm_roads_update_status()
     if status == STATUS_RUNNING:
       return tr("WAIT")
     if status == STATUS_FAILED:
       return tr("RETRY")
-    return tr("UPDATE")
+    return tr("DOWNLOAD")
+
+  def _osm_roads_build_button_text(self) -> str:
+    status = self._osm_roads_update_status()
+    if status == STATUS_RUNNING:
+      return tr("WAIT")
+    if status == STATUS_FAILED:
+      return tr("RETRY")
+    return tr("BUILD")
 
   def _speed_camera_db_count_from_log(self, log_path: str = SPEED_CAMERA_LOG_PATH) -> int:
     try:
@@ -1594,6 +1639,49 @@ class CustomSettingsLayout(Widget):
     updated = self._osm_roads_updated_text()
     return f"{tr('Updated')} {updated}" if updated != "--" else f"{tr('Updated')} --"
 
+  def _format_bytes_text(self, size_bytes: int) -> str:
+    if size_bytes >= 1024 * 1024 * 1024:
+      return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+    if size_bytes >= 1024 * 1024:
+      return f"{size_bytes / (1024 * 1024):.1f} MB"
+    if size_bytes >= 1024:
+      return f"{size_bytes / 1024:.1f} KB"
+    return f"{size_bytes} B"
+
+  def _osm_roads_pbf_size_text(self) -> str:
+    try:
+      return self._format_bytes_text(OSM_ROADS_PBF_PATH.stat().st_size)
+    except OSError:
+      return "--"
+
+  def _osm_roads_pbf_status_text(self) -> str:
+    size_text = self._osm_roads_pbf_size_text()
+    return f"PBF {size_text}" if size_text != "--" else "PBF --"
+
+  def _osm_roads_log_operation(self) -> str:
+    try:
+      with open(OSM_ROADS_LOG_PATH, encoding="utf-8", errors="replace") as log_file:
+        head = log_file.read(4096)
+    except OSError:
+      return ""
+    if "--download-only" in head:
+      return "download"
+    if "--skip-download" in head:
+      return "build"
+    if "tools/scripts/update_osm_roads.py" in head:
+      return "update"
+    return ""
+
+  def _osm_roads_download_detail_text(self) -> str:
+    for line in reversed(self._osm_roads_log_lines()):
+      match = re.search(r"download\s+[0-9]+%\s+\(([0-9]+)/([0-9]+)\)", line)
+      if match is not None:
+        return f"{self._format_bytes_text(int(match.group(1)))} / {self._format_bytes_text(int(match.group(2)))}"
+      match = re.search(r"downloaded\s+([0-9]+)", line)
+      if match is not None:
+        return self._format_bytes_text(int(match.group(1)))
+    return self._osm_roads_pbf_size_text() if OSM_ROADS_PBF_PATH.exists() else ""
+
   def _format_count_text(self, count: str) -> str:
     try:
       return f"{int(count):,}"
@@ -1620,14 +1708,20 @@ class CustomSettingsLayout(Widget):
   def _osm_roads_progress_detail_text(self) -> str:
     if self._osm_roads_update_status() != STATUS_RUNNING:
       return ""
+    if self._osm_roads_log_operation() == "download":
+      return self._osm_roads_download_detail_text()
     count = self._osm_roads_current_segment_count()
     return f"segments {count:,}" if count > 0 else ""
 
   def _osm_roads_status_text(self) -> str:
     status = self._osm_roads_update_status()
     if status == STATUS_RUNNING:
+      if self._osm_roads_log_operation() == "download":
+        return tr("OSM Downloading")
       return tr("OSM Building")
     if status == STATUS_SUCCESS:
+      if self._osm_roads_log_operation() == "download":
+        return f"{tr('PBF Ready')} / {self._osm_roads_pbf_size_text()}"
       count = self._format_count_text(self._param_text(OSM_ROADS_COUNT_KEY) or str(osm_roads_segment_count(DEFAULT_OSM_ROADS_DB_PATH)))
       return f"{tr('Ready')} / {count} segments"
     if status == STATUS_FAILED:
@@ -1639,6 +1733,8 @@ class CustomSettingsLayout(Widget):
     count = osm_roads_segment_count(DEFAULT_OSM_ROADS_DB_PATH)
     if count > 0:
       return f"{tr('Ready')} / {count:,} segments"
+    if OSM_ROADS_PBF_PATH.exists():
+      return f"{tr('PBF Ready')} / {self._osm_roads_pbf_size_text()}"
     return tr("Idle")
 
   def _osm_roads_log_lines(self) -> list[str]:
