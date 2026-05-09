@@ -1485,17 +1485,7 @@ def database_category_counts(db_path: Path = DEFAULT_DB_PATH) -> list[tuple[str,
         SELECT camera_category, COUNT(*)
         FROM speed_cameras
         GROUP BY camera_category
-        ORDER BY
-          CASE camera_category
-            WHEN 'SPEED' THEN 1
-            WHEN 'SECTION_SPEED' THEN 2
-            WHEN 'SIGNAL' THEN 3
-            WHEN 'SECURITY' THEN 4
-            WHEN 'PROTECTED_ZONE' THEN 5
-            WHEN 'UNKNOWN' THEN 6
-            ELSE 7
-          END,
-          camera_category
+        ORDER BY COUNT(*) DESC, camera_category
       """).fetchall()
       return [(str(category or "UNKNOWN"), int(count)) for category, count in rows]
     except sqlite3.Error:

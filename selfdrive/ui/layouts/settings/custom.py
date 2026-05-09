@@ -814,10 +814,15 @@ class SpeedCameraRegionsPanel(Widget):
       "SIGNAL": "Signal",
       "UNKNOWN": "Unknown",
     }
-    labels = [f"{label_map.get(category, category.title())} {count:,}" for category, count in category_counts]
+    sorted_counts = sorted(category_counts, key=lambda item: (-item[1], item[0]))
+    display_counts = sorted_counts[:4]
+    if len(sorted_counts) > 4:
+      display_counts.append(("OTHER", sum(count for _, count in sorted_counts[4:])))
+    labels = [f"{label_map.get(category, category.title())} {count:,}" for category, count in display_counts]
     item_width = width / max(1, len(labels))
     for idx, label in enumerate(labels):
-      self._draw_text(label, rl.Vector2(x + idx * item_width, y))
+      fitted = self._truncate(label, max(1, item_width - SPEED_CAMERA_DETAIL_TAB_GAP))
+      self._draw_text(fitted, rl.Vector2(x + idx * item_width, y))
 
   def _draw_headers(
     self,
@@ -1011,8 +1016,7 @@ class CustomSettingsLayout(Widget):
           (tr_noop("Regions"), self._speed_camera_regions_text),
         ], status_details=[
           self._speed_camera_updated_status_text,
-          self._speed_camera_osm_matched_status_text,
-          self._speed_camera_osm_empty_status_text,
+          self._speed_camera_osm_summary_status_text,
         ], progress_detail_callback=self._speed_camera_progress_detail_text),
         SpeedCameraRegionsPanel(
           self._speed_camera_region_stats,
@@ -1901,6 +1905,16 @@ class CustomSettingsLayout(Widget):
     if stats.total_count <= 0:
       return ""
     return f"OSM empty {stats.unmatched_count:,}"
+
+  def _speed_camera_osm_summary_status_text(self) -> str:
+    if self._speed_camera_update_status() == STATUS_RUNNING:
+      return self._speed_camera_osm_matched_status_text()
+
+    stats = self._speed_camera_osm_stats()
+    if stats.total_count <= 0:
+      return self._refresh_speed_camera_osm_status()
+    extended_text = f" / +{stats.extended_match_count:,} ext" if stats.extended_match_count > 0 else ""
+    return f"OSM matched {stats.matched_count:,}{extended_text} / empty {stats.unmatched_count:,}"
 
   def _speed_camera_status_text(self) -> str:
     status = self._speed_camera_update_status()
