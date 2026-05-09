@@ -1002,8 +1002,8 @@ class CustomSettingsLayout(Widget):
       "Navigation": [
         SectionHeader(tr_noop("OSM roads DB")),
         self._osm_roads_download_item(),
-        self._cycle_choice_item("OsmRoadBuildMode", tr_noop("OSM DB build mode"), OSM_ROADS_BUILD_MODE_OPTIONS,
-                                tr_noop("Skip Graph builds on device without road graph tables. Build Graph creates road_nodes, road_edges, and road_adjacency. Install OSM DB from Git installs the prebuilt full DB.")),
+        self._choice_button_item("OsmRoadBuildMode", tr_noop("OSM DB build mode"), OSM_ROADS_BUILD_MODE_OPTIONS,
+                                 tr_noop("Skip Graph builds on device without road graph tables. Build Graph creates road_nodes, road_edges, and road_adjacency. Install OSM DB from Git installs the prebuilt full DB.")),
         self._osm_roads_build_item(),
         CompactStatusProgressInfoGroup(
           self._osm_roads_status_text,
@@ -1172,6 +1172,30 @@ class CustomSettingsLayout(Widget):
     action = StepperAction(current_value, lambda: step(-1), lambda: step(1))
     action.set_enabled(enabled)
     return ListItem(title=lambda: tr(title), description=(lambda: tr(description)) if description else None, action_item=action)
+
+  def _choice_index(self, key: str, options: list[tuple[int, str]]) -> int:
+    try:
+      value = int(self._values()[key])
+    except (KeyError, TypeError, ValueError):
+      return 0
+    for idx, (option_value, _) in enumerate(options):
+      if option_value == value:
+        return idx
+    return 0
+
+  def _choice_text(self, key: str, options: list[tuple[int, str]]) -> str:
+    return tr(options[self._choice_index(key, options)][1])
+
+  def _choice_button_item(self, key: str, title: str, options: list[tuple[int, str]], description: str | None = None):
+    item = button_item(
+      lambda: tr(title),
+      lambda: tr("SELECT"),
+      description=(lambda: tr(description)) if description else None,
+      callback=lambda k=key, t=title, opts=options: self._show_choice_dialog(k, t, opts),
+      value_font_size=36,
+    )
+    item.action_item.set_value(lambda k=key, opts=options: self._choice_text(k, opts))
+    return item
 
   def _toggle_json_item(self, key: str, title: str, description: str | None = None, enabled: bool | Callable[[], bool] = True):
     return toggle_item(
@@ -2233,6 +2257,22 @@ class CustomSettingsLayout(Widget):
       self._dialog = None
 
     self._dialog = MultiOptionDialog(tr(title), options, current, callback=handle_selection)
+    gui_app.push_widget(self._dialog)
+
+  def _show_choice_dialog(self, key: str, title: str, options: list[tuple[int, str]]) -> None:
+    labels = [tr(option_label) for _, option_label in options]
+    current = self._choice_text(key, options)
+
+    def handle_selection(result: DialogResult) -> None:
+      if result == DialogResult.CONFIRM and self._dialog is not None:
+        try:
+          selected_idx = labels.index(self._dialog.selection)
+        except ValueError:
+          selected_idx = self._choice_index(key, options)
+        self._save_value(key, options[selected_idx][0])
+      self._dialog = None
+
+    self._dialog = MultiOptionDialog(tr(title), labels, current, callback=handle_selection)
     gui_app.push_widget(self._dialog)
 
   def _compile_selected_model(self, model_name: str) -> None:
