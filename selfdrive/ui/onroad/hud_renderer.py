@@ -315,7 +315,7 @@ class HudRenderer(Widget):
     sign_center_y = y + 92
     self._draw_speed_limit_sign(sign_center_x, sign_center_y, sign_radius, sign_lines)
     if self._is_signal_camera_category(self.camera_category, self.camera_type):
-      self._draw_signal_badge(sign_center_x, max(rect.y + 4, sign_center_y - sign_radius - 24))
+      self._draw_signal_badge(sign_center_x, max(rect.y + 4, sign_center_y - sign_radius + 2))
 
     distance_size = measure_text_cached(self._font_medium, distance_text, 30)
     rl.draw_text_ex(

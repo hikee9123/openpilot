@@ -69,6 +69,8 @@ OSM_MINIMAP_FORWARD_START_M = -100.0
 OSM_MINIMAP_CORRIDOR_SIDE_M = 70.0
 OSM_MINIMAP_CORRIDOR_MAJOR_SIDE_M = 140.0
 OSM_MINIMAP_HEADING_REFRESH_DEG = 25.0
+OSM_MINIMAP_STALE_OVERLAY_HOLD_SECONDS = 3.0
+OSM_MINIMAP_MIN_REFRESH_SEGMENTS = 3
 OSM_OVERLAY_MODE_MINIMAP = 1
 KPH_TO_MPS = 1000.0 / 3600.0
 MAX_CAMERA_CANDIDATES = 3
@@ -436,19 +438,8 @@ def _ensure_osm_corridor_cache(
   ):
     return
 
-  cache.center_lat = gps.latitude
-  cache.center_lon = gps.longitude
-  cache.heading_deg = float(gps.bearingDeg)
-  cache.query_radius_m = forward_end_m
-  cache.forward_start_m = forward_start_m
-  cache.forward_end_m = forward_end_m
-  cache.side_limit_m = OSM_MINIMAP_CORRIDOR_SIDE_M
-  cache.major_side_limit_m = OSM_MINIMAP_CORRIDOR_MAJOR_SIDE_M
-  cache.refresh_distance_m = refresh_distance_m
-  cache.loaded_at = now
-  cache.db_mtime = _osm_db_mtime(db_path)
-  cache.cache_kind = "corridor"
-  cache.segments = forward_road_segments(
+  db_mtime = _osm_db_mtime(db_path)
+  segments = forward_road_segments(
     db_path,
     gps.latitude,
     gps.longitude,
@@ -459,6 +450,27 @@ def _ensure_osm_corridor_cache(
     OSM_MINIMAP_CORRIDOR_MAJOR_SIDE_M,
     OSM_MINIMAP_CACHE_MAX_SEGMENTS,
   )
+  if (
+    cache.segments and
+    db_mtime == cache.db_mtime and
+    len(segments) < OSM_MINIMAP_MIN_REFRESH_SEGMENTS
+  ):
+    cache.loaded_at = now
+    return
+
+  cache.center_lat = gps.latitude
+  cache.center_lon = gps.longitude
+  cache.heading_deg = float(gps.bearingDeg)
+  cache.query_radius_m = forward_end_m
+  cache.forward_start_m = forward_start_m
+  cache.forward_end_m = forward_end_m
+  cache.side_limit_m = OSM_MINIMAP_CORRIDOR_SIDE_M
+  cache.major_side_limit_m = OSM_MINIMAP_CORRIDOR_MAJOR_SIDE_M
+  cache.refresh_distance_m = refresh_distance_m
+  cache.loaded_at = now
+  cache.db_mtime = db_mtime
+  cache.cache_kind = "corridor"
+  cache.segments = segments
 
 
 def _road_payload(segment, gps, current_road_name: str, include_distance: bool = False) -> dict:
@@ -646,6 +658,19 @@ def _build_osm_road_overlay_text(
     return ""
 
 
+def _stable_osm_overlay_text(
+  new_overlay_text: str,
+  last_good_overlay_text: str,
+  last_good_overlay_t: float,
+  now: float,
+) -> tuple[str, str, float]:
+  if new_overlay_text:
+    return new_overlay_text, new_overlay_text, now
+  if last_good_overlay_text and now - last_good_overlay_t <= OSM_MINIMAP_STALE_OVERLAY_HOLD_SECONDS:
+    return last_good_overlay_text, last_good_overlay_text, last_good_overlay_t
+  return "", "", 0.0
+
+
 def _send_camera(pm: messaging.PubMaster, camera, candidates=(), current_road_name: str = "", osm_road_overlay_text: str = "") -> None:
   msg = messaging.new_message("naviCustom")
   nav = msg.naviCustom.naviData
@@ -724,6 +749,8 @@ def main() -> None:
   last_osm_overlay_t = 0.0
   current_road_name = ""
   osm_road_overlay_text = ""
+  last_good_osm_overlay_text = ""
+  last_good_osm_overlay_t = 0.0
   local_osm_cache = OsmRoadCache()
   osm_corridor_cache = OsmRoadCache()
 
@@ -746,6 +773,8 @@ def main() -> None:
       active_candidates = []
       current_road_name = ""
       osm_road_overlay_text = ""
+      last_good_osm_overlay_text = ""
+      last_good_osm_overlay_t = 0.0
       _send_inactive(pm)
       rk.keep_time()
       continue
@@ -760,18 +789,25 @@ def main() -> None:
         if int(tuning["osm_road_overlay_mode"]) > 0:
           if now - last_osm_overlay_t >= OSM_ROAD_OVERLAY_INTERVAL_SECONDS:
             last_osm_overlay_t = now
-            osm_road_overlay_text = _build_osm_road_overlay_text(
-              _osm_roads_db_path(),
-              gps,
-              [],
-              current_road_name,
-              int(tuning["osm_road_overlay_mode"]),
-              tuning,
-              osm_corridor_cache,
+            osm_road_overlay_text, last_good_osm_overlay_text, last_good_osm_overlay_t = _stable_osm_overlay_text(
+              _build_osm_road_overlay_text(
+                _osm_roads_db_path(),
+                gps,
+                [],
+                current_road_name,
+                int(tuning["osm_road_overlay_mode"]),
+                tuning,
+                osm_corridor_cache,
+                now,
+              ),
+              last_good_osm_overlay_text,
+              last_good_osm_overlay_t,
               now,
             )
         else:
           osm_road_overlay_text = ""
+          last_good_osm_overlay_text = ""
+          last_good_osm_overlay_t = 0.0
       _send_inactive(pm, osm_road_overlay_text)
       rk.keep_time()
       continue
@@ -821,18 +857,25 @@ def main() -> None:
       if int(tuning["osm_road_overlay_mode"]) > 0:
         if now - last_osm_overlay_t >= OSM_ROAD_OVERLAY_INTERVAL_SECONDS:
           last_osm_overlay_t = now
-          osm_road_overlay_text = _build_osm_road_overlay_text(
-            _osm_roads_db_path(),
-            gps,
-            active_candidates,
-            current_road_name,
-            int(tuning["osm_road_overlay_mode"]),
-            tuning,
-            osm_corridor_cache,
+          osm_road_overlay_text, last_good_osm_overlay_text, last_good_osm_overlay_t = _stable_osm_overlay_text(
+            _build_osm_road_overlay_text(
+              _osm_roads_db_path(),
+              gps,
+              active_candidates,
+              current_road_name,
+              int(tuning["osm_road_overlay_mode"]),
+              tuning,
+              osm_corridor_cache,
+              now,
+            ),
+            last_good_osm_overlay_text,
+            last_good_osm_overlay_t,
             now,
           )
       else:
         osm_road_overlay_text = ""
+        last_good_osm_overlay_text = ""
+        last_good_osm_overlay_t = 0.0
 
     if active_camera is None:
       active_camera_id = None

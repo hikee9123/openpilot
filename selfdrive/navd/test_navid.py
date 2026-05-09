@@ -148,3 +148,53 @@ def test_osm_corridor_cache_refreshes_on_heading_change(tmp_path: Path) -> None:
   assert navid._osm_corridor_cache_needs_refresh(
     cache, tmp_path / "missing.sqlite3", gps, -100.0, 1500.0, 70.0, 140.0, 900.0, 3.0
   )
+
+
+def test_stable_osm_overlay_keeps_last_good_text_briefly() -> None:
+  navid = _load_navid_module()
+
+  overlay, last_good, last_good_t = navid._stable_osm_overlay_text('{"mapRoads":[1]}', "", 0.0, 10.0)
+  assert overlay == '{"mapRoads":[1]}'
+  assert last_good == '{"mapRoads":[1]}'
+  assert last_good_t == 10.0
+
+  overlay, last_good, last_good_t = navid._stable_osm_overlay_text("", last_good, last_good_t, 12.0)
+  assert overlay == '{"mapRoads":[1]}'
+  assert last_good == '{"mapRoads":[1]}'
+  assert last_good_t == 10.0
+
+  overlay, last_good, last_good_t = navid._stable_osm_overlay_text("", last_good, last_good_t, 14.0)
+  assert overlay == ""
+  assert last_good == ""
+  assert last_good_t == 0.0
+
+
+def test_osm_corridor_cache_keeps_existing_segments_on_sparse_refresh(tmp_path: Path, monkeypatch) -> None:
+  navid = _load_navid_module()
+  db_path = tmp_path / "osm.sqlite3"
+  db_path.write_text("")
+  old_segments = [object(), object(), object(), object()]
+  new_segments = [object()]
+  cache = navid.OsmRoadCache(
+    center_lat=37.0,
+    center_lon=127.0,
+    heading_deg=0.0,
+    forward_start_m=-100.0,
+    forward_end_m=1500.0,
+    side_limit_m=70.0,
+    major_side_limit_m=140.0,
+    refresh_distance_m=900.0,
+    loaded_at=1.0,
+    db_mtime=123.0,
+    cache_kind="corridor",
+    segments=old_segments,
+  )
+  gps = types.SimpleNamespace(latitude=37.0, longitude=127.0, bearingDeg=30.0)
+
+  monkeypatch.setattr(navid, "_osm_db_mtime", lambda path: 123.0)
+  monkeypatch.setattr(navid, "forward_road_segments", lambda *args, **kwargs: new_segments)
+
+  navid._ensure_osm_corridor_cache(cache, db_path, gps, 500.0, 3.0)
+
+  assert cache.segments == old_segments
+  assert cache.loaded_at == 3.0
