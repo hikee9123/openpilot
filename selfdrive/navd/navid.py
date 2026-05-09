@@ -1110,7 +1110,6 @@ def main() -> None:
   current_road_name = ""
   current_road_match: CurrentRoadMatch | None = None
   osm_road_overlay_text = ""
-  osm_road_overlay_pending = False
   last_good_osm_overlay_text = ""
   last_good_osm_overlay_t = 0.0
   local_osm_cache = OsmRoadCache()
@@ -1139,7 +1138,6 @@ def main() -> None:
       current_road_name = ""
       current_road_match = None
       osm_road_overlay_text = ""
-      osm_road_overlay_pending = False
       last_good_osm_overlay_text = ""
       last_good_osm_overlay_t = 0.0
       _send_inactive(pm)
@@ -1176,14 +1174,11 @@ def main() -> None:
               last_good_osm_overlay_t,
               now,
             )
-            osm_road_overlay_pending = bool(osm_road_overlay_text)
         else:
           osm_road_overlay_text = ""
-          osm_road_overlay_pending = False
           last_good_osm_overlay_text = ""
           last_good_osm_overlay_t = 0.0
-      _send_inactive(pm, osm_road_overlay_text if osm_road_overlay_pending else "")
-      osm_road_overlay_pending = False
+      _send_inactive(pm, osm_road_overlay_text)
       rk.keep_time()
       continue
 
@@ -1272,17 +1267,14 @@ def main() -> None:
             last_good_osm_overlay_t,
             now,
           )
-          osm_road_overlay_pending = bool(osm_road_overlay_text)
       else:
         osm_road_overlay_text = ""
-        osm_road_overlay_pending = False
         last_good_osm_overlay_text = ""
         last_good_osm_overlay_t = 0.0
 
     if active_camera is None:
       active_camera_id = None
-      _send_inactive(pm, osm_road_overlay_text if osm_road_overlay_pending else "")
-      osm_road_overlay_pending = False
+      _send_inactive(pm, osm_road_overlay_text)
       rk.keep_time()
       continue
 
@@ -1293,8 +1285,7 @@ def main() -> None:
       active_camera = None
       active_camera_id = None
       active_candidates = []
-      _send_inactive(pm, osm_road_overlay_text if osm_road_overlay_pending else "")
-      osm_road_overlay_pending = False
+      _send_inactive(pm, osm_road_overlay_text)
       rk.keep_time()
       continue
 
@@ -1305,8 +1296,7 @@ def main() -> None:
         f"{active_camera.camera_type} limit={active_camera.speed_limit}"
       )
 
-    _send_camera(pm, active_camera, active_candidates, current_road_name, osm_road_overlay_text if osm_road_overlay_pending else "")
-    osm_road_overlay_pending = False
+    _send_camera(pm, active_camera, active_candidates, current_road_name, osm_road_overlay_text)
     rk.keep_time()
 
 
