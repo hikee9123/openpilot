@@ -12,9 +12,9 @@ except ModuleNotFoundError:
   osmium = None
 
 try:
-  from openpilot.selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH, init_db, insert_road_segments
+  from openpilot.selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH, build_road_graph, init_db, insert_road_segments
 except ModuleNotFoundError:
-  from selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH, init_db, insert_road_segments
+  from selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH, build_road_graph, init_db, insert_road_segments
 
 import sqlite3
 
@@ -137,12 +137,14 @@ def main() -> None:
     handler = RoadSegmentHandler(conn, max(1000, args.batch_size))
     handler.apply_file(str(args.pbf), locations=True)
     handler.flush()
+    graph_stats = build_road_graph(conn)
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("segment_count", str(handler.segment_count)))
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("source_pbf", str(args.pbf)))
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("built_at", str(int(time.time()))))
 
   elapsed = time.monotonic() - started
   print(f"built {handler.segment_count} road segments from {handler.way_count} ways into {args.db}")
+  print(f"graph {graph_stats.node_count} nodes, {graph_stats.edge_count} edges, {graph_stats.adjacency_count} transitions")
   if handler.skipped_ways:
     print(f"skipped {handler.skipped_ways} ways with invalid geometry")
   print(f"elapsed {elapsed:.1f}s")

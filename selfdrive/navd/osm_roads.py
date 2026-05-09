@@ -82,6 +82,19 @@ class OSMRoadSegment:
     return self.name or self.ref
 
 
+@dataclass(frozen=True)
+class OSMRoadTransition:
+  road: OSMRoadSegment
+  turn_angle_deg: float
+
+
+@dataclass(frozen=True)
+class RoadGraphStats:
+  node_count: int
+  edge_count: int
+  adjacency_count: int
+
+
 def normalize_road_name(value: str) -> str:
   normalized = (value or "").strip().upper()
   normalized = re.sub(r"\s+", "", normalized)
@@ -242,6 +255,28 @@ def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
   return row is not None
 
 
+def _road_node_key(lat: float, lon: float) -> str:
+  return f"{lat:.7f},{lon:.7f}"
+
+
+def _row_to_segment(row) -> OSMRoadSegment:
+  return OSMRoadSegment(
+    road_id=int(row["id"]),
+    osm_id=int(row["osm_id"]),
+    name=str(row["name"] or ""),
+    ref=str(row["ref"] or ""),
+    highway=str(row["highway"] or ""),
+    road_class=str(row["road_class"] or ""),
+    oneway=int(row["oneway"]),
+    lat1=float(row["lat1"]),
+    lon1=float(row["lon1"]),
+    lat2=float(row["lat2"]),
+    lon2=float(row["lon2"]),
+    bearing_deg=float(row["bearing_deg"]),
+    distance_m=float(row["distance_m"]) if "distance_m" in row.keys() else 0.0,
+  )
+
+
 def init_db(conn: sqlite3.Connection) -> None:
   conn.execute("""
     CREATE TABLE IF NOT EXISTS metadata (
@@ -273,9 +308,35 @@ def init_db(conn: sqlite3.Connection) -> None:
     CREATE VIRTUAL TABLE IF NOT EXISTS roads_rtree
     USING rtree(id, min_lat, max_lat, min_lon, max_lon)
   """)
+  conn.execute("""
+    CREATE TABLE IF NOT EXISTS road_nodes (
+      id INTEGER PRIMARY KEY,
+      node_key TEXT NOT NULL UNIQUE,
+      lat REAL NOT NULL,
+      lon REAL NOT NULL
+    )
+  """)
+  conn.execute("""
+    CREATE TABLE IF NOT EXISTS road_edges (
+      road_id INTEGER PRIMARY KEY,
+      start_node_id INTEGER NOT NULL,
+      end_node_id INTEGER NOT NULL
+    )
+  """)
+  conn.execute("""
+    CREATE TABLE IF NOT EXISTS road_adjacency (
+      from_road_id INTEGER NOT NULL,
+      to_road_id INTEGER NOT NULL,
+      turn_angle_deg REAL NOT NULL,
+      PRIMARY KEY(from_road_id, to_road_id)
+    )
+  """)
   conn.execute("CREATE INDEX IF NOT EXISTS idx_roads_name ON roads(name)")
   conn.execute("CREATE INDEX IF NOT EXISTS idx_roads_ref ON roads(ref)")
   conn.execute("CREATE INDEX IF NOT EXISTS idx_roads_highway ON roads(highway)")
+  conn.execute("CREATE INDEX IF NOT EXISTS idx_road_edges_start_node ON road_edges(start_node_id)")
+  conn.execute("CREATE INDEX IF NOT EXISTS idx_road_edges_end_node ON road_edges(end_node_id)")
+  conn.execute("CREATE INDEX IF NOT EXISTS idx_road_adjacency_to ON road_adjacency(to_road_id)")
   conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("version", "1"))
 
 
@@ -352,6 +413,7 @@ def insert_road_segments(
 
   count += _flush_segments(conn, batch)
   if replace:
+    build_road_graph(conn)
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("segment_count", str(count)))
   return count
 
@@ -377,6 +439,126 @@ def _flush_segments(conn: sqlite3.Connection, batch: list[tuple[object, ...]]) -
     ((road_id, row[11], row[12], row[13], row[14]) for road_id, row in zip(ids, batch, strict=False)),
   )
   return len(batch)
+
+
+def _directed_bearing(bearing_deg: float, reverse: bool) -> float:
+  return (bearing_deg + 180.0) % 360.0 if reverse else bearing_deg % 360.0
+
+
+def _turn_angle_deg(from_bearing_deg: float, to_bearing_deg: float) -> float:
+  return abs((to_bearing_deg - from_bearing_deg + 180.0) % 360.0 - 180.0)
+
+
+def _road_traversals(road_id: int, start_node_id: int, end_node_id: int, bearing_deg: float, oneway: int) -> list[tuple[int, int, int, float]]:
+  if oneway > 0:
+    return [(road_id, start_node_id, end_node_id, _directed_bearing(bearing_deg, False))]
+  if oneway < 0:
+    return [(road_id, end_node_id, start_node_id, _directed_bearing(bearing_deg, True))]
+  return [
+    (road_id, start_node_id, end_node_id, _directed_bearing(bearing_deg, False)),
+    (road_id, end_node_id, start_node_id, _directed_bearing(bearing_deg, True)),
+  ]
+
+
+def build_road_graph(conn: sqlite3.Connection) -> RoadGraphStats:
+  init_db(conn)
+  conn.execute("DELETE FROM road_adjacency")
+  conn.execute("DELETE FROM road_edges")
+  conn.execute("DELETE FROM road_nodes")
+
+  old_row_factory = conn.row_factory
+  conn.row_factory = sqlite3.Row
+  try:
+    road_rows = conn.execute("""
+      SELECT id, osm_id, name, ref, highway, road_class, oneway,
+             lat1, lon1, lat2, lon2, bearing_deg,
+             0.0 AS distance_m
+      FROM roads
+      ORDER BY id
+    """).fetchall()
+
+    node_coords: dict[str, tuple[float, float]] = {}
+    for row in road_rows:
+      node_coords.setdefault(_road_node_key(float(row["lat1"]), float(row["lon1"])), (float(row["lat1"]), float(row["lon1"])))
+      node_coords.setdefault(_road_node_key(float(row["lat2"]), float(row["lon2"])), (float(row["lat2"]), float(row["lon2"])))
+
+    conn.executemany(
+      "INSERT INTO road_nodes(node_key, lat, lon) VALUES (?, ?, ?)",
+      ((node_key, lat, lon) for node_key, (lat, lon) in node_coords.items()),
+    )
+    node_ids = {
+      str(row["node_key"]): int(row["id"])
+      for row in conn.execute("SELECT id, node_key FROM road_nodes")
+    }
+
+    edge_rows: list[tuple[int, int, int]] = []
+    traversals: list[tuple[int, int, int, float]] = []
+    for row in road_rows:
+      road_id = int(row["id"])
+      start_node_id = node_ids[_road_node_key(float(row["lat1"]), float(row["lon1"]))]
+      end_node_id = node_ids[_road_node_key(float(row["lat2"]), float(row["lon2"]))]
+      edge_rows.append((road_id, start_node_id, end_node_id))
+      traversals.extend(_road_traversals(road_id, start_node_id, end_node_id, float(row["bearing_deg"]), int(row["oneway"])))
+
+    conn.executemany(
+      "INSERT INTO road_edges(road_id, start_node_id, end_node_id) VALUES (?, ?, ?)",
+      edge_rows,
+    )
+
+    outgoing_by_node: dict[int, list[tuple[int, int, int, float]]] = {}
+    for traversal in traversals:
+      outgoing_by_node.setdefault(traversal[1], []).append(traversal)
+
+    adjacency: dict[tuple[int, int], float] = {}
+    for from_road_id, _from_node_id, to_node_id, from_bearing_deg in traversals:
+      for to_road_id, _next_from_node_id, _next_to_node_id, to_bearing_deg in outgoing_by_node.get(to_node_id, []):
+        if from_road_id == to_road_id:
+          continue
+        key = (from_road_id, to_road_id)
+        turn_angle = _turn_angle_deg(from_bearing_deg, to_bearing_deg)
+        if key not in adjacency or turn_angle < adjacency[key]:
+          adjacency[key] = turn_angle
+
+    conn.executemany(
+      "INSERT INTO road_adjacency(from_road_id, to_road_id, turn_angle_deg) VALUES (?, ?, ?)",
+      ((from_road_id, to_road_id, turn_angle) for (from_road_id, to_road_id), turn_angle in adjacency.items()),
+    )
+    conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("road_graph_node_count", str(len(node_ids))))
+    conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("road_graph_edge_count", str(len(edge_rows))))
+    conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("road_graph_adjacency_count", str(len(adjacency))))
+
+    return RoadGraphStats(len(node_ids), len(edge_rows), len(adjacency))
+  finally:
+    conn.row_factory = old_row_factory
+
+
+def road_successors(db_path: Path = DEFAULT_OSM_ROADS_DB_PATH, road_id: int = 0, limit: int = 32) -> list[OSMRoadTransition]:
+  if not db_path.exists():
+    return []
+
+  try:
+    with closing(sqlite3.connect(db_path)) as conn:
+      conn.row_factory = sqlite3.Row
+      if not _table_exists(conn, "roads") or not _table_exists(conn, "road_adjacency"):
+        return []
+      rows = conn.execute("""
+        SELECT roads.id, roads.osm_id, roads.name, roads.ref, roads.highway, roads.road_class, roads.oneway,
+               roads.lat1, roads.lon1, roads.lat2, roads.lon2, roads.bearing_deg,
+               0.0 AS distance_m,
+               road_adjacency.turn_angle_deg
+        FROM road_adjacency
+        JOIN roads ON roads.id = road_adjacency.to_road_id
+        WHERE road_adjacency.from_road_id = ?
+        ORDER BY road_adjacency.turn_angle_deg ASC, roads.id ASC
+        LIMIT ?
+      """, (road_id, max(0, limit))).fetchall()
+  except sqlite3.Error:
+    return []
+
+  return [
+    OSMRoadTransition(_row_to_segment(row), float(row["turn_angle_deg"]))
+    for row in rows
+  ]
 
 
 def find_current_road(

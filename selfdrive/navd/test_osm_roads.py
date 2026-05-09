@@ -4,19 +4,23 @@ from pathlib import Path
 try:
   from openpilot.selfdrive.navd.osm_roads import (
     OSMRoadSegment,
+    build_road_graph,
     find_current_road,
     forward_road_segments,
     insert_road_segments,
     road_name_matches,
+    road_successors,
     segment_allowed_bearings,
   )
 except ModuleNotFoundError:
   from selfdrive.navd.osm_roads import (
     OSMRoadSegment,
+    build_road_graph,
     find_current_road,
     forward_road_segments,
     insert_road_segments,
     road_name_matches,
+    road_successors,
     segment_allowed_bearings,
   )
 
@@ -176,3 +180,129 @@ def test_segment_allowed_bearings_respects_oneway() -> None:
   assert segment_allowed_bearings(base_segment) == (10.0,)
   assert segment_allowed_bearings(base_segment.__class__(**{**base_segment.__dict__, "oneway": -1})) == (190.0,)
   assert segment_allowed_bearings(base_segment.__class__(**{**base_segment.__dict__, "oneway": 0})) == (10.0, 190.0)
+
+
+def test_road_graph_successors_orders_by_turn_angle(tmp_path: Path) -> None:
+  db_path = tmp_path / "osm_roads.sqlite3"
+  with sqlite3.connect(db_path) as conn:
+    insert_road_segments(conn, [
+      {
+        "osm_id": 30,
+        "name": "Approach Road",
+        "ref": "",
+        "highway": "residential",
+        "road_class": "CITY_ROAD",
+        "oneway": 0,
+        "lat1": 37.0000,
+        "lon1": 127.0000,
+        "lat2": 37.0010,
+        "lon2": 127.0000,
+      },
+      {
+        "osm_id": 31,
+        "name": "Straight Road",
+        "ref": "",
+        "highway": "residential",
+        "road_class": "CITY_ROAD",
+        "oneway": 0,
+        "lat1": 37.0010,
+        "lon1": 127.0000,
+        "lat2": 37.0020,
+        "lon2": 127.0000,
+      },
+      {
+        "osm_id": 32,
+        "name": "Right Road",
+        "ref": "",
+        "highway": "residential",
+        "road_class": "CITY_ROAD",
+        "oneway": 0,
+        "lat1": 37.0010,
+        "lon1": 127.0000,
+        "lat2": 37.0010,
+        "lon2": 127.0010,
+      },
+    ])
+    approach_id = conn.execute("SELECT id FROM roads WHERE name = ?", ("Approach Road",)).fetchone()[0]
+
+  successors = road_successors(db_path, approach_id)
+
+  assert [transition.road.name for transition in successors] == ["Straight Road", "Right Road"]
+  assert successors[0].turn_angle_deg < 1.0
+  assert 89.0 < successors[1].turn_angle_deg < 91.0
+
+
+def test_road_graph_respects_oneway_direction(tmp_path: Path) -> None:
+  db_path = tmp_path / "osm_roads.sqlite3"
+  with sqlite3.connect(db_path) as conn:
+    insert_road_segments(conn, [
+      {
+        "osm_id": 40,
+        "name": "One Way A",
+        "ref": "",
+        "highway": "residential",
+        "road_class": "CITY_ROAD",
+        "oneway": 1,
+        "lat1": 37.0000,
+        "lon1": 127.0000,
+        "lat2": 37.0010,
+        "lon2": 127.0000,
+      },
+      {
+        "osm_id": 41,
+        "name": "One Way B",
+        "ref": "",
+        "highway": "residential",
+        "road_class": "CITY_ROAD",
+        "oneway": 1,
+        "lat1": 37.0010,
+        "lon1": 127.0000,
+        "lat2": 37.0020,
+        "lon2": 127.0000,
+      },
+    ])
+    road_a_id = conn.execute("SELECT id FROM roads WHERE name = ?", ("One Way A",)).fetchone()[0]
+    road_b_id = conn.execute("SELECT id FROM roads WHERE name = ?", ("One Way B",)).fetchone()[0]
+
+  assert [transition.road.name for transition in road_successors(db_path, road_a_id)] == ["One Way B"]
+  assert road_successors(db_path, road_b_id) == []
+
+
+def test_build_road_graph_reports_metadata(tmp_path: Path) -> None:
+  db_path = tmp_path / "osm_roads.sqlite3"
+  with sqlite3.connect(db_path) as conn:
+    insert_road_segments(conn, [
+      {
+        "osm_id": 50,
+        "name": "Graph Road A",
+        "ref": "",
+        "highway": "residential",
+        "road_class": "CITY_ROAD",
+        "oneway": 0,
+        "lat1": 37.0000,
+        "lon1": 127.0000,
+        "lat2": 37.0010,
+        "lon2": 127.0000,
+      },
+      {
+        "osm_id": 51,
+        "name": "Graph Road B",
+        "ref": "",
+        "highway": "residential",
+        "road_class": "CITY_ROAD",
+        "oneway": 0,
+        "lat1": 37.0010,
+        "lon1": 127.0000,
+        "lat2": 37.0020,
+        "lon2": 127.0000,
+      },
+    ])
+    stats = build_road_graph(conn)
+    metadata = dict(conn.execute("SELECT key, value FROM metadata WHERE key LIKE 'road_graph_%'"))
+
+  assert stats.node_count == 3
+  assert stats.edge_count == 2
+  assert stats.adjacency_count == 2
+  assert metadata["road_graph_node_count"] == "3"
+  assert metadata["road_graph_edge_count"] == "2"
+  assert metadata["road_graph_adjacency_count"] == "2"
