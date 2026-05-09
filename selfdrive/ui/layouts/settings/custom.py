@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -177,6 +178,7 @@ COMPACT_INFO_LABEL_COLOR = rl.WHITE
 COMPACT_INFO_VALUE_COLOR = rl.Color(170, 170, 170, 255)
 COMPACT_PROGRESS_BAR_BG = rl.Color(72, 72, 72, 255)
 COMPACT_PROGRESS_BAR_FILL = rl.Color(52, 168, 83, 255)
+COMPACT_PROGRESS_BAR_COMPLETE_FILL = rl.Color(88, 214, 141, 255)
 COMPACT_PROGRESS_BAR_HEIGHT = 18
 COMPACT_PROGRESS_BAR_WIDTH = 300
 COMPACT_PROGRESS_PERCENT_WIDTH = 86
@@ -186,12 +188,12 @@ COMPACT_STATUS_MIN_FONT_SIZE = 24
 COMPACT_STATUS_LINE_HEIGHT = 34
 
 
-def run_logged(command: list[str], cwd: Path, log_path: str) -> subprocess.CompletedProcess:
+def run_logged(command: list[str], cwd: Path, log_path: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
   Path(log_path).parent.mkdir(parents=True, exist_ok=True)
   with open(log_path, "a", encoding="utf-8") as log_file:
     log_file.write(f"\n$ {' '.join(command)}\n")
     log_file.flush()
-    return subprocess.run(command, cwd=cwd, stdout=log_file, stderr=subprocess.STDOUT, text=True, check=False)
+    return subprocess.run(command, cwd=cwd, stdout=log_file, stderr=subprocess.STDOUT, text=True, check=False, env=env)
 
 
 def clear_log(log_path: str) -> None:
@@ -506,15 +508,18 @@ class CompactStatusProgressGroup(CompactInfoGroup):
     fill_rect = rl.Rectangle(rect.x, y, rect.width * progress / 100.0, COMPACT_PROGRESS_BAR_HEIGHT)
     rl.draw_rectangle_rounded(bg_rect, 1.0, 16, COMPACT_PROGRESS_BAR_BG)
     if fill_rect.width > 0:
-      rl.draw_rectangle_rounded(fill_rect, 1.0, 16, COMPACT_PROGRESS_BAR_FILL)
+      fill_color = COMPACT_PROGRESS_BAR_COMPLETE_FILL if progress >= 100 else COMPACT_PROGRESS_BAR_FILL
+      rl.draw_rectangle_rounded(fill_rect, 1.0, 16, fill_color)
 
 
 class CompactStatusProgressInfoGroup(CompactStatusProgressGroup):
   def __init__(self, status_callback: Callable[[], str], progress_callback: Callable[[], str],
-               rows: list[tuple[str, Callable[[], str]]], status_details: list[Callable[[], str]] | None = None):
+               rows: list[tuple[str, Callable[[], str]]], status_details: list[Callable[[], str]] | None = None,
+               progress_detail_callback: Callable[[], str] | None = None):
     super().__init__(status_callback, progress_callback)
     self._extra_rows = rows
     self._status_details = status_details or []
+    self._progress_detail_callback = progress_detail_callback
     self._status_row_height = max(
       COMPACT_INFO_ROW_HEIGHT,
       COMPACT_STATUS_LINE_HEIGHT * (1 + len(self._status_details)) + COMPACT_INFO_PADDING_Y,
@@ -566,6 +571,8 @@ class CompactStatusProgressInfoGroup(CompactStatusProgressGroup):
 
     bar_x = percent_x + COMPACT_PROGRESS_PERCENT_WIDTH + COMPACT_PROGRESS_GAP
     self._draw_progress_bar(rl.Rectangle(bar_x, row_y, bar_width, COMPACT_INFO_ROW_HEIGHT), progress)
+    if self._progress_detail_callback is not None:
+      self._draw_progress_detail(self._progress_detail_callback(), bar_x, row_y, bar_width)
 
   def _draw_status_detail_lines(self, lines: list[str], x: float, y: float, max_width: float) -> None:
     visible_lines = [line for line in lines if line]
@@ -574,6 +581,15 @@ class CompactStatusProgressInfoGroup(CompactStatusProgressGroup):
       fitted = self._elide_status_line(line, COMPACT_STATUS_FONT_SIZE, max_width)
       rl.draw_text_ex(self._font_regular, fitted, rl.Vector2(x, start_y + i * COMPACT_STATUS_LINE_HEIGHT),
                       COMPACT_STATUS_FONT_SIZE, 0, COMPACT_INFO_VALUE_COLOR)
+
+  def _draw_progress_detail(self, text: str, x: float, y: float, max_width: float) -> None:
+    if not text:
+      return
+    font_size = COMPACT_STATUS_MIN_FONT_SIZE
+    fitted = self._elide_status_line(text, font_size, max_width)
+    text_size = measure_text_cached(self._font_regular, fitted, font_size)
+    text_pos = rl.Vector2(x + max(0, max_width - text_size.x), y + COMPACT_INFO_ROW_HEIGHT - text_size.y - 1)
+    rl.draw_text_ex(self._font_regular, fitted, text_pos, font_size, 0, COMPACT_INFO_VALUE_COLOR)
 
 
 class CompileLogPanel(Widget):
@@ -977,6 +993,7 @@ class CustomSettingsLayout(Widget):
           self._osm_roads_progress_text,
           [],
           status_details=[self._osm_roads_updated_status_text, self._osm_roads_camera_refresh_status_text],
+          progress_detail_callback=self._osm_roads_progress_detail_text,
         ),
         CompileLogPanel(tr_noop("OSM roads detail"), self._osm_roads_log_lines, tr_noop("No OSM roads log yet")),
         SectionHeader(tr_noop("OSM matching")),
@@ -1321,6 +1338,7 @@ class CustomSettingsLayout(Widget):
         try:
           self._params.put(SPEED_CAMERA_ERROR_KEY, "")
           self._params.put(SPEED_CAMERA_PROGRESS_KEY, 0)
+          self._params.put(SPEED_CAMERA_COUNT_KEY, 0)
           try:
             clear_log(SPEED_CAMERA_LOG_PATH)
           except OSError as e:
@@ -1387,6 +1405,7 @@ class CustomSettingsLayout(Widget):
           self._params.put(OSM_ROADS_STATUS_KEY, STATUS_RUNNING)
           self._params.put(OSM_ROADS_ERROR_KEY, "")
           self._params.put(OSM_ROADS_PROGRESS_KEY, 0)
+          self._params.put(OSM_ROADS_COUNT_KEY, 0)
           try:
             clear_log(OSM_ROADS_LOG_PATH)
           except OSError as e:
@@ -1429,6 +1448,7 @@ class CustomSettingsLayout(Widget):
     self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_RUNNING)
     self._params.put(SPEED_CAMERA_ERROR_KEY, "")
     self._params.put(SPEED_CAMERA_PROGRESS_KEY, 0)
+    self._params.put(SPEED_CAMERA_COUNT_KEY, 0)
     self._params.put(OSM_ROADS_PROGRESS_KEY, 90)
     command = (
       [sys.executable, "tools/scripts/import_speed_cameras.py"]
@@ -1442,7 +1462,8 @@ class CustomSettingsLayout(Widget):
     except OSError:
       pass
 
-    result = run_logged(command, REPO_ROOT, OSM_ROADS_LOG_PATH)
+    env = {**os.environ, "OSM_ROADS_CAMERA_REFRESH_PROGRESS": "1"}
+    result = run_logged(command, REPO_ROOT, OSM_ROADS_LOG_PATH, env=env)
     if result.returncode != 0:
       self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_FAILED)
       self._params.put(SPEED_CAMERA_ERROR_KEY, f"OSM road-name refresh failed: exit code {result.returncode}")
@@ -1557,6 +1578,8 @@ class CustomSettingsLayout(Widget):
         for line in reversed(log_file.readlines()):
           if line.startswith("imported "):
             return int(line.split()[1])
+          if line.startswith("cameras "):
+            return int(line.split()[1].split("/")[0].replace(",", ""))
     except (OSError, ValueError, IndexError):
       pass
     return 0
@@ -1634,6 +1657,41 @@ class CustomSettingsLayout(Widget):
       return f"{int(count):,}"
     except ValueError:
       return count
+
+  def _osm_roads_current_segment_count(self) -> int:
+    try:
+      count = int(self._param_text(OSM_ROADS_COUNT_KEY) or 0)
+    except ValueError:
+      count = 0
+    if count > 0:
+      return count
+
+    for line in reversed(self._osm_roads_log_lines()):
+      match = re.search(r"^segments\s+([0-9,]+)", line.strip())
+      if match is not None:
+        try:
+          return int(match.group(1).replace(",", ""))
+        except ValueError:
+          return 0
+    return 0
+
+  def _speed_camera_current_update_count(self) -> int:
+    try:
+      count = int(self._param_text(SPEED_CAMERA_COUNT_KEY) or 0)
+    except ValueError:
+      count = 0
+    if count > 0:
+      return count
+    return self._speed_camera_db_count_from_log(OSM_ROADS_LOG_PATH)
+
+  def _osm_roads_progress_detail_text(self) -> str:
+    if self._osm_roads_update_status() != STATUS_RUNNING:
+      return ""
+    if self._osm_roads_progress_percent() >= 90:
+      count = self._speed_camera_current_update_count()
+      return f"cameras {count:,}" if count > 0 else tr("Camera DB refreshing")
+    count = self._osm_roads_current_segment_count()
+    return f"segments {count:,}" if count > 0 else ""
 
   def _osm_roads_status_text(self) -> str:
     status = self._osm_roads_update_status()

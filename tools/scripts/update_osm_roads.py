@@ -2,6 +2,7 @@
 import argparse
 import importlib.util
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -33,6 +34,9 @@ OSM_ROADS_PROGRESS_KEY = "OsmRoadsUpdateProgress"
 OSM_ROADS_COUNT_KEY = "OsmRoadsSegmentCount"
 OSM_USER_AGENT = "Mozilla/5.0 (openpilot OSM roads updater)"
 STALE_BUILD_SECONDS = 24 * 60 * 60
+OSM_BUILD_PROGRESS_START = 75
+OSM_BUILD_PROGRESS_END = 89
+OSM_BUILD_PROGRESS_TARGET_SEGMENTS = 4_000_000
 
 
 def _put_progress(params: Params, progress: int) -> None:
@@ -40,6 +44,19 @@ def _put_progress(params: Params, progress: int) -> None:
     params.put(OSM_ROADS_PROGRESS_KEY, max(0, min(100, int(progress))))
   except Exception:
     pass
+
+
+def _put_segment_count(params: Params, count: int) -> None:
+  try:
+    params.put(OSM_ROADS_COUNT_KEY, max(0, int(count)))
+  except Exception:
+    pass
+
+
+def _build_progress_from_segments(segment_count: int) -> int:
+  segment_count = max(0, min(OSM_BUILD_PROGRESS_TARGET_SEGMENTS, int(segment_count)))
+  progress_range = OSM_BUILD_PROGRESS_END - OSM_BUILD_PROGRESS_START
+  return OSM_BUILD_PROGRESS_START + int(segment_count * progress_range / OSM_BUILD_PROGRESS_TARGET_SEGMENTS)
 
 
 def _osmium_available() -> bool:
@@ -181,6 +198,29 @@ def _replace_db_atomically(build_path: Path, final_path: Path) -> None:
     raise
 
 
+def _build_osm_roads_db(pbf_path: Path, build_db: Path, params: Params) -> int:
+  command = [sys.executable, "tools/scripts/build_osm_roads.py", str(pbf_path), "--db", str(build_db)]
+  segment_pattern = re.compile(r"^segments\s+([0-9]+)")
+  with subprocess.Popen(
+    command,
+    cwd=Path(__file__).resolve().parents[2],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True,
+  ) as process:
+    assert process.stdout is not None
+    for line in process.stdout:
+      text = line.rstrip()
+      print(text, flush=True)
+      match = segment_pattern.match(text)
+      if match is None:
+        continue
+      segment_count = int(match.group(1))
+      _put_segment_count(params, segment_count)
+      _put_progress(params, _build_progress_from_segments(segment_count))
+    return process.wait()
+
+
 def main() -> None:
   parser = argparse.ArgumentParser(description="Download South Korea OSM PBF and build the local OSM roads DB")
   parser.add_argument("--url", default=DEFAULT_OSM_PBF_URL, help=f"OSM PBF URL (default: {DEFAULT_OSM_PBF_URL})")
@@ -200,6 +240,7 @@ def main() -> None:
 
   params = Params()
   _put_progress(params, 0)
+  _put_segment_count(params, 0)
 
   if not _ensure_osmium(params, not args.no_auto_install_osmium):
     return 1
@@ -216,16 +257,11 @@ def main() -> None:
   build_db = args.tmp_dir / f"{args.db.name}.building"
   _unlink_if_exists(build_db)
   print(f"building temporary OSM roads DB {build_db}", flush=True)
-  result = subprocess.run(
-    [sys.executable, "tools/scripts/build_osm_roads.py", str(args.pbf), "--db", str(build_db)],
-    cwd=Path(__file__).resolve().parents[2],
-    text=True,
-    check=False,
-  )
-  if result.returncode != 0:
+  build_returncode = _build_osm_roads_db(args.pbf, build_db, params)
+  if build_returncode != 0:
     print(f"build failed; keeping existing DB {args.db}", flush=True)
     _unlink_if_exists(build_db)
-    return result.returncode
+    return build_returncode
 
   try:
     print("validating temporary OSM roads DB", flush=True)
@@ -238,11 +274,8 @@ def main() -> None:
     _unlink_if_exists(build_db)
     return 1
 
-  try:
-    params.put(OSM_ROADS_COUNT_KEY, count)
-  except Exception:
-    pass
-  _put_progress(params, 80)
+  _put_segment_count(params, count)
+  _put_progress(params, 89)
   print(f"osm road segments {count}", flush=True)
 
   if not args.keep_pbf:

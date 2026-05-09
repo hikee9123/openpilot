@@ -1089,13 +1089,21 @@ def create_database_from_csvs(
   db_path: Path = DEFAULT_DB_PATH,
   osm_roads_db_path: Path | None = None,
   osm_lookup_radius_m: float = 60.0,
+  progress_callback: Callable[[int, int], None] | None = None,
 ) -> int:
   merged: dict[str, dict[str, object]] = {}
   manage_no_clusters: dict[str, list[dict[str, object]]] = {}
-  for csv_source in csv_sources:
-    rows = _read_csv_rows(csv_source.path)
+  csv_rows = [(csv_source, _read_csv_rows(csv_source.path)) for csv_source in csv_sources]
+  total_rows = sum(len(rows) for _, rows in csv_rows)
+  processed_rows = 0
+  if progress_callback is not None:
+    progress_callback(processed_rows, total_rows)
+  for csv_source, rows in csv_rows:
     for idx, row in enumerate(rows):
       record = _standardize_csv_row(row, csv_source, idx)
+      processed_rows += 1
+      if progress_callback is not None and (processed_rows == total_rows or processed_rows % 1000 == 0):
+        progress_callback(processed_rows, total_rows)
       if record is None:
         continue
 

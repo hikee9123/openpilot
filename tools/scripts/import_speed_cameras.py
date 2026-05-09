@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 import argparse
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+try:
+  from openpilot.common.params import Params
+except ImportError:
+  class Params:
+    def put(self, key: str, value: object) -> None:
+      pass
 
 try:
   from openpilot.selfdrive.navd.speed_camera import (
@@ -33,6 +41,29 @@ except ModuleNotFoundError:
     find_lead_camera,
   )
   from selfdrive.navd.paths import ensure_navd_dirs
+
+
+SPEED_CAMERA_PROGRESS_KEY = "SpeedCameraUpdateProgress"
+SPEED_CAMERA_COUNT_KEY = "SpeedCameraUpdateCount"
+OSM_ROADS_PROGRESS_KEY = "OsmRoadsUpdateProgress"
+OSM_ROADS_CAMERA_REFRESH_PROGRESS = "OSM_ROADS_CAMERA_REFRESH_PROGRESS"
+
+
+def _put_progress(params: Params, progress: int) -> None:
+  progress = max(0, min(100, int(progress)))
+  try:
+    params.put(SPEED_CAMERA_PROGRESS_KEY, progress)
+    if os.getenv(OSM_ROADS_CAMERA_REFRESH_PROGRESS) == "1":
+      params.put(OSM_ROADS_PROGRESS_KEY, min(99, 90 + int(progress * 9 / 100)))
+  except Exception:
+    pass
+
+
+def _put_camera_count(params: Params, count: int) -> None:
+  try:
+    params.put(SPEED_CAMERA_COUNT_KEY, max(0, int(count)))
+  except Exception:
+    pass
 
 
 def _csv_sources(args: argparse.Namespace) -> list[CsvSource]:
@@ -117,11 +148,29 @@ def main() -> None:
   if not csv_sources:
     parser.error("no CSV sources found")
 
+  params = Params()
+  _put_progress(params, 0)
+  _put_camera_count(params, 0)
+
   osm_roads_db = args.osm_roads_db
   if osm_roads_db is None and DEFAULT_OSM_ROADS_DB_PATH.exists():
     osm_roads_db = DEFAULT_OSM_ROADS_DB_PATH
 
-  count = create_database_from_csvs(csv_sources, args.db, osm_roads_db_path=osm_roads_db, osm_lookup_radius_m=args.osm_radius)
+  def update_import_progress(written: int, total: int) -> None:
+    progress = int((written / max(1, total)) * 95)
+    _put_progress(params, progress)
+    _put_camera_count(params, written)
+    print(f"cameras {written}/{total}", flush=True)
+
+  count = create_database_from_csvs(
+    csv_sources,
+    args.db,
+    osm_roads_db_path=osm_roads_db,
+    osm_lookup_radius_m=args.osm_radius,
+    progress_callback=update_import_progress,
+  )
+  _put_camera_count(params, count)
+  _put_progress(params, 100)
   osm_stats = database_osm_road_enrichment_stats(args.db)
   counts = _source_counts(csv_sources)
   print(f"imported {count} speed cameras into {args.db}")
