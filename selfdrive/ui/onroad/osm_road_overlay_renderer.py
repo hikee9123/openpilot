@@ -95,9 +95,10 @@ class OsmRoadOverlayRenderer(Widget):
     for road in data.get("mapRoads", []):
       p1 = self._project_to_map(origin, scale, float(road.get("x1", 0.0)), float(road.get("y1", 0.0)))
       p2 = self._project_to_map(origin, scale, float(road.get("x2", 0.0)), float(road.get("y2", 0.0)))
-      if not self._point_in_panel(panel, p1) and not self._point_in_panel(panel, p2):
+      clipped = self._clip_line_to_panel(panel, p1, p2)
+      if clipped is None:
         continue
-      rl.draw_line_ex(p1, p2, self._road_thickness(road), self._road_color(road))
+      rl.draw_line_ex(clipped[0], clipped[1], self._road_thickness(road), self._road_color(road))
 
     self._draw_ego(origin)
     for camera in data.get("cameras", []):
@@ -147,6 +148,39 @@ class OsmRoadOverlayRenderer(Widget):
   @staticmethod
   def _point_in_panel(panel: rl.Rectangle, point: rl.Vector2) -> bool:
     return panel.x <= point.x <= panel.x + panel.width and panel.y <= point.y <= panel.y + panel.height
+
+  @staticmethod
+  def _clip_line_to_panel(panel: rl.Rectangle, p1: rl.Vector2, p2: rl.Vector2) -> tuple[rl.Vector2, rl.Vector2] | None:
+    min_x = panel.x
+    max_x = panel.x + panel.width
+    min_y = panel.y
+    max_y = panel.y + panel.height
+    if min_x <= p1.x <= max_x and min_y <= p1.y <= max_y and min_x <= p2.x <= max_x and min_y <= p2.y <= max_y:
+      return p1, p2
+
+    dx = p2.x - p1.x
+    dy = p2.y - p1.y
+    u1 = 0.0
+    u2 = 1.0
+    for p, q in ((-dx, p1.x - min_x), (dx, max_x - p1.x), (-dy, p1.y - min_y), (dy, max_y - p1.y)):
+      if p == 0.0:
+        if q < 0.0:
+          return None
+        continue
+      t = q / p
+      if p < 0.0:
+        if t > u2:
+          return None
+        u1 = max(u1, t)
+      else:
+        if t < u1:
+          return None
+        u2 = min(u2, t)
+
+    return (
+      rl.Vector2(p1.x + u1 * dx, p1.y + u1 * dy),
+      rl.Vector2(p1.x + u2 * dx, p1.y + u2 * dy),
+    )
 
   @staticmethod
   def _draw_ego(origin: rl.Vector2) -> None:

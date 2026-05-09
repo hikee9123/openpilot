@@ -198,3 +198,49 @@ def test_osm_corridor_cache_keeps_existing_segments_on_sparse_refresh(tmp_path: 
 
   assert cache.segments == old_segments
   assert cache.loaded_at == 3.0
+
+
+def test_minimap_roads_include_full_visible_view(monkeypatch) -> None:
+  navid = _load_navid_module()
+  cache = types.SimpleNamespace(segments=["visible_top", "outside_side"])
+  payloads = {
+    "visible_top": {"x1": 360.0, "y1": 0.0, "x2": 390.0, "y2": 5.0, "d": 360.0, "n": "visible", "h": "residential", "c": False},
+    "outside_side": {"x1": 80.0, "y1": 520.0, "x2": 120.0, "y2": 540.0, "d": 80.0, "n": "outside", "h": "residential", "c": False},
+  }
+
+  monkeypatch.setattr(navid, "_road_payload", lambda segment, gps, current_road_name, include_distance=False: payloads[segment])
+
+  roads = navid._minimap_roads(cache, types.SimpleNamespace(), "", 300.0)
+
+  assert [road["n"] for road in roads] == ["visible"]
+
+
+def test_osm_corridor_cache_covers_minimap_visible_width(tmp_path: Path, monkeypatch) -> None:
+  navid = _load_navid_module()
+  db_path = tmp_path / "osm.sqlite3"
+  db_path.write_text("")
+  cache = navid.OsmRoadCache()
+  gps = types.SimpleNamespace(latitude=37.0, longitude=127.0, bearingDeg=0.0)
+  captured = {}
+
+  def fake_forward_road_segments(db_path, lat, lon, heading_deg, forward_start_m, forward_end_m,
+                                 side_limit_m, major_side_limit_m, limit):
+    captured.update({
+      "forward_start_m": forward_start_m,
+      "forward_end_m": forward_end_m,
+      "side_limit_m": side_limit_m,
+      "major_side_limit_m": major_side_limit_m,
+      "limit": limit,
+    })
+    return [object()]
+
+  monkeypatch.setattr(navid, "_osm_db_mtime", lambda path: 123.0)
+  monkeypatch.setattr(navid, "forward_road_segments", fake_forward_road_segments)
+
+  navid._ensure_osm_corridor_cache(cache, db_path, gps, 300.0, 3.0)
+
+  assert captured["forward_start_m"] <= -120.0
+  assert captured["forward_end_m"] >= 1300.0
+  assert captured["side_limit_m"] >= 480.0
+  assert captured["major_side_limit_m"] >= 480.0
+  assert cache.side_limit_m == captured["side_limit_m"]

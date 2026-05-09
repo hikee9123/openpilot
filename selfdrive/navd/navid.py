@@ -60,7 +60,6 @@ OSM_MINIMAP_CACHE_MAX_AGE_SECONDS = 120.0
 OSM_MINIMAP_CACHE_MAX_SEGMENTS = 1000
 OSM_MINIMAP_RENDER_MAX_SEGMENTS = 500
 OSM_MINIMAP_CURRENT_ROAD_MAX_SEGMENTS = 150
-OSM_MINIMAP_CURRENT_ROAD_RADIUS_FACTOR = 1.15
 OSM_MINIMAP_MIN_RADIUS_M = 300.0
 OSM_MINIMAP_REFRESH_MARGIN_FRACTION = 0.9
 OSM_MINIMAP_FORWARD_EXTRA_M = 1000.0
@@ -68,6 +67,9 @@ OSM_MINIMAP_FORWARD_MAX_M = 6000.0
 OSM_MINIMAP_FORWARD_START_M = -100.0
 OSM_MINIMAP_CORRIDOR_SIDE_M = 70.0
 OSM_MINIMAP_CORRIDOR_MAJOR_SIDE_M = 140.0
+OSM_MINIMAP_VISIBLE_BACK_FACTOR = 0.40
+OSM_MINIMAP_VISIBLE_FORWARD_FACTOR = 1.35
+OSM_MINIMAP_VISIBLE_SIDE_FACTOR = 1.60
 OSM_MINIMAP_HEADING_REFRESH_DEG = 25.0
 OSM_MINIMAP_STALE_OVERLAY_HOLD_SECONDS = 3.0
 OSM_MINIMAP_MIN_REFRESH_SEGMENTS = 3
@@ -323,6 +325,62 @@ def _minimap_forward_end_m(display_radius_m: float) -> float:
   return min(display_radius_m + OSM_MINIMAP_FORWARD_EXTRA_M, OSM_MINIMAP_FORWARD_MAX_M)
 
 
+def _minimap_visible_bounds(display_radius_m: float) -> tuple[float, float, float, float]:
+  radius_m = max(100.0, display_radius_m)
+  return (
+    -OSM_MINIMAP_VISIBLE_BACK_FACTOR * radius_m,
+    OSM_MINIMAP_VISIBLE_FORWARD_FACTOR * radius_m,
+    -OSM_MINIMAP_VISIBLE_SIDE_FACTOR * radius_m,
+    OSM_MINIMAP_VISIBLE_SIDE_FACTOR * radius_m,
+  )
+
+
+def _segment_intersects_bounds(
+  x1: float,
+  y1: float,
+  x2: float,
+  y2: float,
+  min_x: float,
+  max_x: float,
+  min_y: float,
+  max_y: float,
+) -> bool:
+  if min_x <= x1 <= max_x and min_y <= y1 <= max_y:
+    return True
+  if min_x <= x2 <= max_x and min_y <= y2 <= max_y:
+    return True
+
+  dx = x2 - x1
+  dy = y2 - y1
+  u1 = 0.0
+  u2 = 1.0
+  for p, q in ((-dx, x1 - min_x), (dx, max_x - x1), (-dy, y1 - min_y), (dy, max_y - y1)):
+    if p == 0.0:
+      if q < 0.0:
+        return False
+      continue
+    t = q / p
+    if p < 0.0:
+      if t > u2:
+        return False
+      u1 = max(u1, t)
+    else:
+      if t < u1:
+        return False
+      u2 = min(u2, t)
+  return True
+
+
+def _segment_intersects_minimap_view(road: dict, display_radius_m: float) -> bool:
+  return _segment_intersects_bounds(
+    float(road.get("x1", 0.0)),
+    float(road.get("y1", 0.0)),
+    float(road.get("x2", 0.0)),
+    float(road.get("y2", 0.0)),
+    *_minimap_visible_bounds(display_radius_m),
+  )
+
+
 def _minimap_refresh_distance_m(display_radius_m: float, query_radius_m: float) -> float:
   return max(1.0, (query_radius_m - display_radius_m) * OSM_MINIMAP_REFRESH_MARGIN_FRACTION)
 
@@ -422,8 +480,12 @@ def _ensure_osm_corridor_cache(
   display_radius_m: float,
   now: float,
 ) -> None:
-  forward_start_m = OSM_MINIMAP_FORWARD_START_M
-  forward_end_m = _minimap_forward_end_m(display_radius_m)
+  visible_forward_start_m, visible_forward_end_m, visible_side_min_m, visible_side_max_m = _minimap_visible_bounds(display_radius_m)
+  visible_side_limit_m = max(abs(visible_side_min_m), abs(visible_side_max_m))
+  forward_start_m = min(OSM_MINIMAP_FORWARD_START_M, visible_forward_start_m)
+  forward_end_m = max(_minimap_forward_end_m(display_radius_m), visible_forward_end_m)
+  side_limit_m = max(OSM_MINIMAP_CORRIDOR_SIDE_M, visible_side_limit_m)
+  major_side_limit_m = max(OSM_MINIMAP_CORRIDOR_MAJOR_SIDE_M, visible_side_limit_m)
   refresh_distance_m = _minimap_refresh_distance_m(display_radius_m, forward_end_m)
   if not _osm_corridor_cache_needs_refresh(
     cache,
@@ -431,8 +493,8 @@ def _ensure_osm_corridor_cache(
     gps,
     forward_start_m,
     forward_end_m,
-    OSM_MINIMAP_CORRIDOR_SIDE_M,
-    OSM_MINIMAP_CORRIDOR_MAJOR_SIDE_M,
+    side_limit_m,
+    major_side_limit_m,
     refresh_distance_m,
     now,
   ):
@@ -446,8 +508,8 @@ def _ensure_osm_corridor_cache(
     gps.bearingDeg,
     forward_start_m,
     forward_end_m,
-    OSM_MINIMAP_CORRIDOR_SIDE_M,
-    OSM_MINIMAP_CORRIDOR_MAJOR_SIDE_M,
+    side_limit_m,
+    major_side_limit_m,
     OSM_MINIMAP_CACHE_MAX_SEGMENTS,
   )
   if (
@@ -464,8 +526,8 @@ def _ensure_osm_corridor_cache(
   cache.query_radius_m = forward_end_m
   cache.forward_start_m = forward_start_m
   cache.forward_end_m = forward_end_m
-  cache.side_limit_m = OSM_MINIMAP_CORRIDOR_SIDE_M
-  cache.major_side_limit_m = OSM_MINIMAP_CORRIDOR_MAJOR_SIDE_M
+  cache.side_limit_m = side_limit_m
+  cache.major_side_limit_m = major_side_limit_m
   cache.refresh_distance_m = refresh_distance_m
   cache.loaded_at = now
   cache.db_mtime = db_mtime
@@ -590,8 +652,7 @@ def _minimap_roads(cache: OsmRoadCache, gps, current_road_name: str, display_rad
   for segment in cache.segments:
     road = _road_payload(segment, gps, current_road_name, include_distance=True)
     is_current = bool(road.get("c"))
-    radius_limit_m = display_radius_m * OSM_MINIMAP_CURRENT_ROAD_RADIUS_FACTOR if is_current else display_radius_m
-    if float(road["d"]) > radius_limit_m:
+    if not _segment_intersects_minimap_view(road, display_radius_m):
       continue
     if is_current:
       current_roads.append(road)
