@@ -995,6 +995,7 @@ class CustomSettingsLayout(Widget):
         SectionHeader(tr_noop("OSM roads DB")),
         self._osm_roads_download_item(),
         self._osm_roads_build_item(),
+        self._osm_roads_git_db_item(),
         CompactStatusProgressInfoGroup(
           self._osm_roads_status_text,
           self._osm_roads_progress_text,
@@ -1338,6 +1339,15 @@ class CustomSettingsLayout(Widget):
       enabled=lambda: self._osm_roads_update_status() != STATUS_RUNNING and OSM_ROADS_PBF_PATH.exists(),
     )
 
+  def _osm_roads_git_db_item(self):
+    return button_item(
+      lambda: tr("Install OSM DB from Git"),
+      self._osm_roads_git_db_button_text,
+      description=lambda: tr("Downloads the prebuilt OSM roads DB from GitHub LFS and installs it."),
+      callback=self._handle_osm_roads_git_db,
+      enabled=lambda: self._osm_roads_update_status() != STATUS_RUNNING,
+    )
+
   def _handle_speed_camera_update(self) -> None:
     def run() -> None:
       if self._speed_camera_update_running():
@@ -1477,6 +1487,15 @@ class CustomSettingsLayout(Widget):
       mark_db_updated=True,
     )
 
+  def _handle_osm_roads_git_db(self) -> None:
+    self._handle_osm_roads_command(
+      [sys.executable, "tools/scripts/install_osm_roads_db_from_git.py", "--require-road-graph"],
+      tr("Download the prebuilt OSM roads DB from GitHub and replace the local DB? This can take several minutes."),
+      "INSTALL",
+      reset_segment_count=True,
+      mark_db_updated=True,
+    )
+
   def _speed_camera_update_status(self) -> str:
     if self._speed_camera_update_running():
       return STATUS_RUNNING
@@ -1568,6 +1587,14 @@ class CustomSettingsLayout(Widget):
     if status == STATUS_FAILED:
       return tr("RETRY")
     return tr("BUILD")
+
+  def _osm_roads_git_db_button_text(self) -> str:
+    status = self._osm_roads_update_status()
+    if status == STATUS_RUNNING:
+      return tr("WAIT")
+    if status == STATUS_FAILED:
+      return tr("RETRY")
+    return tr("INSTALL")
 
   def _speed_camera_db_count_from_log(self, log_path: str = SPEED_CAMERA_LOG_PATH) -> int:
     try:
@@ -1664,6 +1691,8 @@ class CustomSettingsLayout(Widget):
         head = log_file.read(4096)
     except OSError:
       return ""
+    if "tools/scripts/install_osm_roads_db_from_git.py" in head:
+      return "git_db"
     if "--download-only" in head:
       return "download"
     if "--skip-download" in head:
@@ -1681,6 +1710,16 @@ class CustomSettingsLayout(Widget):
       if match is not None:
         return self._format_bytes_text(int(match.group(1)))
     return self._osm_roads_pbf_size_text() if OSM_ROADS_PBF_PATH.exists() else ""
+
+  def _osm_roads_git_db_detail_text(self) -> str:
+    for line in reversed(self._osm_roads_log_lines()):
+      match = re.search(r"downloaded git DB .*\(([0-9]+) bytes\)", line)
+      if match is not None:
+        return self._format_bytes_text(int(match.group(1)))
+      match = re.search(r"validated downloaded DB: ([0-9,]+) segments", line)
+      if match is not None:
+        return f"segments {match.group(1)}"
+    return ""
 
   def _format_count_text(self, count: str) -> str:
     try:
@@ -1710,6 +1749,8 @@ class CustomSettingsLayout(Widget):
       return ""
     if self._osm_roads_log_operation() == "download":
       return self._osm_roads_download_detail_text()
+    if self._osm_roads_log_operation() == "git_db":
+      return self._osm_roads_git_db_detail_text()
     count = self._osm_roads_current_segment_count()
     return f"segments {count:,}" if count > 0 else ""
 
@@ -1718,6 +1759,8 @@ class CustomSettingsLayout(Widget):
     if status == STATUS_RUNNING:
       if self._osm_roads_log_operation() == "download":
         return tr("OSM Downloading")
+      if self._osm_roads_log_operation() == "git_db":
+        return tr("OSM DB Installing")
       return tr("OSM Building")
     if status == STATUS_SUCCESS:
       if self._osm_roads_log_operation() == "download":
