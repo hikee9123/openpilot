@@ -1703,8 +1703,10 @@ def _leaflet_html_template() -> str:
       --muted: #5d6978;
       --strong: #0f172a;
       --accent: #2563eb;
-      --popup-width: 2520px;
-      --popup-viewport-width: 98vw;
+      --popup-min-width: 620px;
+      --popup-width: 760px;
+      --popup-viewport-width: 42vw;
+      --popup-opacity: 0.70;
     }
     * { box-sizing: border-box; }
     html, body { height: 100%; margin: 0; }
@@ -1945,32 +1947,39 @@ def _leaflet_html_template() -> str:
 	      font-size: 12px;
 	    }
 	    .leaflet-popup-content {
-	      width: min(var(--popup-width), var(--popup-viewport-width));
+	      width: clamp(var(--popup-min-width), var(--popup-viewport-width), var(--popup-width));
 	      max-width: var(--popup-width);
+	    }
+	    .leaflet-popup-content-wrapper,
+	    .leaflet-popup-tip {
+	      background: rgba(255, 255, 255, var(--popup-opacity));
+	    }
+	    .leaflet-popup-content-wrapper {
+	      backdrop-filter: blur(2px);
 	    }
 	    .popup-grid {
 	      display: grid;
-	      grid-template-columns: repeat(2, minmax(0, 1fr));
-	      gap: 12px;
-	      margin-top: 8px;
+	      grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+	      gap: 8px;
+	      margin-top: 6px;
 	    }
 	    .popup-section {
 	      min-width: 0;
 	      max-height: 520px;
 	      overflow: auto;
-	      padding: 10px;
-	      border: 1px solid #e5e7eb;
+	      padding: 8px;
+	      border: 1px solid rgba(226, 232, 240, 0.86);
 	      border-radius: 8px;
-	      background: #f8fafc;
+	      background: rgba(248, 250, 252, 0.8);
 	    }
 	    .popup-title {
 	      position: sticky;
 	      top: 0;
 	      z-index: 1;
-	      margin: -10px -10px 8px;
-	      padding: 8px 10px;
+	      margin: -8px -8px 6px;
+	      padding: 7px 8px;
 	      border-bottom: 1px solid #e5e7eb;
-	      background: #f8fafc;
+	      background: rgba(248, 250, 252, 0.9);
 	      color: #0f172a;
 	      font-weight: 760;
 	    }
@@ -2306,7 +2315,7 @@ def _leaflet_html_template() -> str:
 	      const label = optionValue(category);
 	      return `<span class="category-chip">${categoryDot(label)}<span>${escapeHtml(label)}</span></span>`;
 	    }
-	
+
 	    function objectRows(obj) {
 	      return Object.entries(obj || {})
 	        .filter(([, value]) => value !== undefined && value !== null && String(value) !== "")
@@ -2318,7 +2327,7 @@ def _leaflet_html_template() -> str:
 	        `)
 	        .join("");
 	    }
-	
+
 	    function markerStyle(category) {
 	      const color = categoryColor(category);
 	      return {
@@ -2334,6 +2343,29 @@ def _leaflet_html_template() -> str:
 	    function speedLimitLabel(camera) {
 	      const speed = Number(camera.speed || 0);
 	      return speed > 0 ? String(speed) : "";
+	    }
+
+	    function cssLengthPx(name, fallback) {
+	      const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+	      if (!value) return fallback;
+	      if (value.endsWith("vw")) return (window.innerWidth * Number.parseFloat(value)) / 100;
+	      if (value.endsWith("px")) return Number.parseFloat(value);
+	      const parsed = Number.parseFloat(value);
+	      return Number.isFinite(parsed) ? parsed : fallback;
+	    }
+
+	    function popupOptions() {
+	      const maxWidth = Math.floor(Math.min(
+	        cssLengthPx("--popup-width", 760),
+	        cssLengthPx("--popup-viewport-width", window.innerWidth * 0.42),
+	      ));
+	      const minWidth = Math.floor(Math.min(maxWidth, cssLengthPx("--popup-min-width", 620)));
+	      return {
+	        maxWidth,
+	        minWidth,
+	        autoPan: true,
+	        keepInView: true,
+	      };
 	    }
 	
 	    function makePopup(camera) {
@@ -2380,7 +2412,7 @@ def _leaflet_html_template() -> str:
 	            opacity: 1,
 	          });
 	        }
-	        marker.bindPopup(makePopup(camera));
+	        marker.bindPopup(makePopup(camera), popupOptions());
 	        markerById.set(camera.uid || camera.id, marker);
         layers.push(marker);
       }

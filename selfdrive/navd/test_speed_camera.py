@@ -132,9 +132,18 @@ def test_export_speed_camera_leaflet_html(tmp_path: Path) -> None:
   assert "categoryDot(label)" in html
   assert "#d73027" in html
   assert "popup-grid" in html
-  assert "--popup-width: 2520px" in html
-  assert "--popup-viewport-width: 98vw" in html
-  assert "width: min(var(--popup-width), var(--popup-viewport-width))" in html
+  assert "--popup-min-width: 620px" in html
+  assert "--popup-width: 760px" in html
+  assert "--popup-viewport-width: 42vw" in html
+  assert "--popup-opacity: 0.70" in html
+  assert "width: clamp(var(--popup-min-width), var(--popup-viewport-width), var(--popup-width))" in html
+  assert "background: rgba(255, 255, 255, var(--popup-opacity))" in html
+  assert "backdrop-filter: blur(2px)" in html
+  assert "grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr)" in html
+  assert "function popupOptions()" in html
+  assert 'cssLengthPx("--popup-width", 760)' in html
+  assert 'cssLengthPx("--popup-min-width", 620)' in html
+  assert "marker.bindPopup(makePopup(camera), popupOptions())" in html
   assert "max-height: 520px" in html
   assert "overflow-wrap: anywhere" in html
   assert "Speed camera debug" in html
