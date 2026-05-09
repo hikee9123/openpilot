@@ -139,6 +139,9 @@ def test_export_speed_camera_leaflet_html(tmp_path: Path) -> None:
   assert "overflow-wrap: anywhere" in html
   assert "Speed camera debug" in html
   assert "dataset-source" in html
+  assert "dataset-load-status" in html
+  assert "데이터 로딩 중" in html
+  assert "데이터 로드 완료" in html
   assert "setActiveDataset" in html
   assert "setActiveDataset(activeDatasetKey, true)" in html
   assert "setActiveDataset(event.target.value, false)" in html

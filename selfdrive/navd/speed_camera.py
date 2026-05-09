@@ -1825,6 +1825,21 @@ def _leaflet_html_template() -> str:
       font-size: 13px;
     }
     input, select { padding: 6px 8px; }
+    .load-status {
+      min-height: 18px;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .load-status.error {
+      color: #b91c1c;
+      font-weight: 650;
+    }
+    .load-status.loading {
+      color: #1d4ed8;
+      font-weight: 650;
+    }
     button {
       cursor: pointer;
       background: #f8fafc;
@@ -2042,6 +2057,7 @@ def _leaflet_html_template() -> str:
           <div>
             <label for="dataset-source">입력 데이터</label>
             <select id="dataset-source"></select>
+            <div id="dataset-load-status" class="load-status" aria-live="polite"></div>
           </div>
           <div>
             <label for="search">검색어</label>
@@ -2196,11 +2212,18 @@ def _leaflet_html_template() -> str:
 	      select.value = datasets[activeDatasetKey] ? activeDatasetKey : (datasetEntries()[0]?.[0] || "");
 	    }
 
-	    function showLoadStatus(message, isError = false) {
+	    function showLoadStatus(message, isError = false, updateTableNote = true) {
 	      const note = document.getElementById("table-note");
-	      if (!note) return;
-	      note.textContent = message || "";
-	      note.style.color = isError ? "#b91c1c" : "";
+	      const datasetStatus = document.getElementById("dataset-load-status");
+	      if (note && updateTableNote) {
+	        note.textContent = message || "";
+	        note.style.color = isError ? "#b91c1c" : "";
+	      }
+	      if (datasetStatus) {
+	        datasetStatus.textContent = message || "";
+	        datasetStatus.classList.toggle("error", Boolean(isError));
+	        datasetStatus.classList.toggle("loading", Boolean(message && !isError));
+	      }
 	    }
 
 	    async function loadDataset(key) {
@@ -2510,6 +2533,7 @@ def _leaflet_html_template() -> str:
         updateHeader();
         refreshFilterOptions();
         render(fit);
+        showLoadStatus(`${datasetName(activeDatasetKey, activeDataset)} 데이터 로드 완료 (${formatNumber(cameras.length)}건)`, false, false);
       } catch (error) {
         cameras = [];
         cluster.clearLayers();
