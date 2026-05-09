@@ -997,7 +997,7 @@ class CustomSettingsLayout(Widget):
           self._osm_roads_status_text,
           self._osm_roads_progress_text,
           [],
-          status_details=[self._osm_roads_updated_status_text, self._osm_roads_camera_refresh_status_text],
+          status_details=[self._osm_roads_updated_status_text],
           progress_detail_callback=self._osm_roads_progress_detail_text,
         ),
         CompileLogPanel(tr_noop("OSM roads detail"), self._osm_roads_log_lines, tr_noop("No OSM roads log yet")),
@@ -1427,8 +1427,6 @@ class CustomSettingsLayout(Widget):
 
           count = osm_roads_segment_count(DEFAULT_OSM_ROADS_DB_PATH)
           self._params.put(OSM_ROADS_COUNT_KEY, max(0, count))
-          if not self._refresh_speed_camera_db_after_osm_update():
-            return
           self._params.put(OSM_ROADS_PROGRESS_KEY, 100)
           self._params.put(OSM_ROADS_UPDATED_AT_KEY, time.strftime("%Y-%m-%d %H:%M"))
           self._params.put(OSM_ROADS_STATUS_KEY, STATUS_SUCCESS)
@@ -1441,56 +1439,6 @@ class CustomSettingsLayout(Widget):
     content = tr("Download South Korea OSM data and rebuild the local roads DB? This can take several minutes.")
     dialog = ConfirmDialog(content, tr("UPDATE"), callback=lambda result: run() if result == DialogResult.CONFIRM else None)
     gui_app.push_widget(dialog)
-
-  def _refresh_speed_camera_db_after_osm_update(self) -> bool:
-    if self._speed_camera_update_running():
-      with open(OSM_ROADS_LOG_PATH, "a", encoding="utf-8") as log_file:
-        log_file.write("speed camera DB update already running; skipping OSM road-name refresh\n")
-      self._set_osm_roads_failed("speed camera DB update already running")
-      return False
-
-    self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_RUNNING)
-    self._params.put(SPEED_CAMERA_ERROR_KEY, "")
-    self._params.put(SPEED_CAMERA_PROGRESS_KEY, 0)
-    self._params.put(SPEED_CAMERA_COUNT_KEY, 0)
-    self._params.put(OSM_ROADS_PROGRESS_KEY, 90)
-    command = (
-      [sys.executable, "tools/scripts/import_speed_cameras.py"]
-      if SPEED_CAMERA_CSV_PATH.exists() or SPEED_CAMERA_REGION_DIR.exists()
-      else [sys.executable, "tools/scripts/update_speed_cameras.py"]
-    )
-
-    try:
-      with open(OSM_ROADS_LOG_PATH, "a", encoding="utf-8") as log_file:
-        log_file.write("refreshing speed camera DB with OSM road names\n")
-    except OSError:
-      pass
-
-    env = {**os.environ, "OSM_ROADS_CAMERA_REFRESH_PROGRESS": "1"}
-    result = run_logged(command, REPO_ROOT, OSM_ROADS_LOG_PATH, env=env)
-    if result.returncode != 0:
-      self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_FAILED)
-      self._params.put(SPEED_CAMERA_ERROR_KEY, f"OSM road-name refresh failed: exit code {result.returncode}")
-      self._set_osm_roads_failed(f"camera refresh failed: exit code {result.returncode}")
-      try:
-        with open(OSM_ROADS_LOG_PATH, "a", encoding="utf-8") as log_file:
-          log_file.write(f"speed camera DB refresh failed: exit code {result.returncode}\n")
-      except OSError:
-        pass
-      return False
-
-    count = self._speed_camera_db_count_from_log(OSM_ROADS_LOG_PATH)
-    self._params.put(SPEED_CAMERA_COUNT_KEY, max(0, count))
-    self._params.put(SPEED_CAMERA_PROGRESS_KEY, 100)
-    data_date = database_data_date(SPEED_CAMERA_DB_PATH)
-    if data_date:
-      self._params.put(SPEED_CAMERA_DATA_DATE_KEY, data_date)
-    self._refresh_speed_camera_region_counts(force=True)
-    self._refresh_speed_camera_osm_status(force=True)
-    self._params.put(SPEED_CAMERA_UPDATED_AT_KEY, time.strftime("%Y-%m-%d %H:%M"))
-    self._params.put(SPEED_CAMERA_STATUS_KEY, STATUS_SUCCESS)
-    self._params.put(SPEED_CAMERA_ERROR_KEY, "")
-    return True
 
   def _speed_camera_update_status(self) -> str:
     if self._speed_camera_update_running():
@@ -1646,16 +1594,6 @@ class CustomSettingsLayout(Widget):
     updated = self._osm_roads_updated_text()
     return f"{tr('Updated')} {updated}" if updated != "--" else f"{tr('Updated')} --"
 
-  def _osm_roads_camera_refresh_status_text(self) -> str:
-    status = self._osm_roads_update_status()
-    if status == STATUS_RUNNING:
-      return tr("Camera DB refreshing") if self._osm_roads_progress_percent() >= 90 else tr("Camera DB refresh pending")
-    if status == STATUS_FAILED:
-      return tr("Camera DB refresh failed")
-    if self._speed_camera_count() > 0:
-      return tr("Camera DB refreshed")
-    return tr("Camera DB refresh pending")
-
   def _format_count_text(self, count: str) -> str:
     try:
       return f"{int(count):,}"
@@ -1679,28 +1617,16 @@ class CustomSettingsLayout(Widget):
           return 0
     return 0
 
-  def _speed_camera_current_update_count(self) -> int:
-    try:
-      count = int(self._param_text(SPEED_CAMERA_COUNT_KEY) or 0)
-    except ValueError:
-      count = 0
-    if count > 0:
-      return count
-    return self._speed_camera_db_count_from_log(OSM_ROADS_LOG_PATH)
-
   def _osm_roads_progress_detail_text(self) -> str:
     if self._osm_roads_update_status() != STATUS_RUNNING:
       return ""
-    if self._osm_roads_progress_percent() >= 90:
-      count = self._speed_camera_current_update_count()
-      return f"cameras {count:,}" if count > 0 else tr("Camera DB refreshing")
     count = self._osm_roads_current_segment_count()
     return f"segments {count:,}" if count > 0 else ""
 
   def _osm_roads_status_text(self) -> str:
     status = self._osm_roads_update_status()
     if status == STATUS_RUNNING:
-      return tr("Camera Refreshing") if self._osm_roads_progress_percent() >= 90 else tr("OSM Building")
+      return tr("OSM Building")
     if status == STATUS_SUCCESS:
       count = self._format_count_text(self._param_text(OSM_ROADS_COUNT_KEY) or str(osm_roads_segment_count(DEFAULT_OSM_ROADS_DB_PATH)))
       return f"{tr('Ready')} / {count} segments"
