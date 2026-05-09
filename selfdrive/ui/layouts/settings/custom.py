@@ -15,9 +15,7 @@ from cereal import car, messaging
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
 from openpilot.selfdrive.navd.speed_camera import (
-  DEFAULT_CSV_PATH as SPEED_CAMERA_CSV_PATH,
   DEFAULT_DB_PATH as SPEED_CAMERA_DB_PATH,
-  DEFAULT_REGION_DIR as SPEED_CAMERA_REGION_DIR,
   OsmRoadEnrichmentStats,
   database_category_counts,
   database_data_date,
@@ -1786,6 +1784,35 @@ class CustomSettingsLayout(Widget):
           return 0
     return 0
 
+  def _osm_roads_latest_memory_text(self) -> str:
+    for line in reversed(self._osm_roads_log_lines()):
+      match = re.search(r"memory\s+rss\s+([0-9.]+\s+[KMG]?B)(?:\s+peak\s+([0-9.]+\s+[KMG]?B))?", line)
+      if match is not None:
+        if match.group(2):
+          return f"mem {match.group(1)} / peak {match.group(2)}"
+        return f"mem {match.group(1)}"
+    return ""
+
+  def _osm_roads_build_phase_text(self) -> str:
+    for line in reversed(self._osm_roads_log_lines()):
+      stripped = line.strip()
+      match = re.search(r"^phase\s+([0-9]+)%\s+(.+?)(?:\s+-\s+.*)?(?:\s+memory\s+rss\s+.*)?$", stripped)
+      if match is not None:
+        return f"{match.group(1)}% {match.group(2).strip()}"
+      if stripped.startswith("replacing "):
+        return tr("Replacing DB")
+      if stripped.startswith("validated temporary DB"):
+        return tr("DB validated")
+      if stripped.startswith("validating temporary OSM roads DB"):
+        return tr("Validating DB")
+      if stripped.startswith("graph built") or re.match(r"^graph\s+[0-9,]+\s+nodes", stripped):
+        return tr("Graph built")
+      if stripped.startswith("graph building"):
+        return tr("Building graph")
+      if stripped.startswith("built "):
+        return tr("Finalizing DB")
+    return ""
+
   def _osm_roads_progress_detail_text(self) -> str:
     if self._osm_roads_update_status() != STATUS_RUNNING:
       return ""
@@ -1794,7 +1821,17 @@ class CustomSettingsLayout(Widget):
     if self._osm_roads_log_operation() == "git_db":
       return self._osm_roads_git_db_detail_text()
     count = self._osm_roads_current_segment_count()
-    return f"segments {count:,}" if count > 0 else ""
+    memory = self._osm_roads_latest_memory_text()
+    phase = self._osm_roads_build_phase_text()
+    if phase and memory:
+      return f"{phase} / {memory}"
+    if phase:
+      return phase
+    if count > 0 and memory:
+      return f"segments {count:,} / {memory}"
+    if count > 0:
+      return f"segments {count:,}"
+    return memory
 
   def _osm_roads_status_text(self) -> str:
     status = self._osm_roads_update_status()

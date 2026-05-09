@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -15,8 +16,6 @@ try:
   from openpilot.selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH, build_road_graph, init_db, insert_road_segments
 except ModuleNotFoundError:
   from selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH, build_road_graph, init_db, insert_road_segments
-
-import sqlite3
 
 
 HIGHWAY_CLASS = {
@@ -37,6 +36,44 @@ HIGHWAY_CLASS = {
 }
 
 SUPPORTED_HIGHWAYS = set(HIGHWAY_CLASS)
+
+
+def _format_memory_kb(kb: int) -> str:
+  if kb >= 1024 * 1024:
+    return f"{kb / (1024 * 1024):.1f} GB"
+  if kb >= 1024:
+    return f"{kb / 1024:.0f} MB"
+  return f"{kb} KB"
+
+
+def _memory_status_text() -> str:
+  try:
+    values: dict[str, int] = {}
+    with open("/proc/self/status", encoding="utf-8") as status_file:
+      for line in status_file:
+        if line.startswith(("VmRSS:", "VmHWM:")):
+          parts = line.split()
+          if len(parts) >= 2:
+            values[parts[0].rstrip(":")] = int(parts[1])
+    rss = values.get("VmRSS")
+    if rss is None:
+      return ""
+    peak = values.get("VmHWM", rss)
+    return f"memory rss {_format_memory_kb(rss)} peak {_format_memory_kb(peak)}"
+  except (OSError, ValueError):
+    return ""
+
+
+def _print_with_memory(prefix: str) -> None:
+  memory_text = _memory_status_text()
+  if memory_text:
+    print(f"{prefix} {memory_text}", flush=True)
+  else:
+    print(prefix, flush=True)
+
+
+def _print_phase_with_memory(progress: int, label: str, meaning: str) -> None:
+  _print_with_memory(f"phase {progress}% {label} - {meaning}")
 
 
 def _tag(tags, key: str) -> str:
@@ -113,7 +150,7 @@ class RoadSegmentHandler(osmium.SimpleHandler if osmium is not None else object)
       return
     self.segment_count += insert_road_segments(self.conn, self.segments, replace=False)
     self.segments.clear()
-    print(f"segments {self.segment_count}", flush=True)
+    _print_with_memory(f"segments {self.segment_count}")
 
 
 def main() -> None:
@@ -145,6 +182,7 @@ def main() -> None:
     handler = RoadSegmentHandler(conn, max(1000, args.batch_size))
     handler.apply_file(str(args.pbf), locations=True)
     handler.flush()
+    _print_phase_with_memory(89, "Saving road segments", "PBF road segments are being written to SQLite")
     if args.skip_road_graph:
       graph_stats = None
       conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("road_graph_node_count", "0"))
@@ -152,11 +190,14 @@ def main() -> None:
       conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("road_graph_adjacency_count", "0"))
       conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("road_graph_skipped", "1"))
     else:
+      _print_phase_with_memory(90, "Building road index", "Road graph and index tables are being generated")
       graph_stats = build_road_graph(conn)
+      _print_phase_with_memory(92, "Writing metadata", "Segment count, built_at, and graph metadata are being stored")
       conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("road_graph_skipped", "0"))
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("segment_count", str(handler.segment_count)))
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("source_pbf", str(args.pbf)))
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("built_at", str(int(time.time()))))
+    _print_phase_with_memory(94, "Optimizing database", "SQLite commit and final database checks are running")
 
   elapsed = time.monotonic() - started
   print(f"built {handler.segment_count} road segments from {handler.way_count} ways into {args.db}")

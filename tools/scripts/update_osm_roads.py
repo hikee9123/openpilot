@@ -37,6 +37,10 @@ STALE_BUILD_SECONDS = 24 * 60 * 60
 OSM_BUILD_PROGRESS_START = 75
 OSM_BUILD_PROGRESS_END = 89
 OSM_BUILD_PROGRESS_TARGET_SEGMENTS = 4_000_000
+OSM_BUILD_GRAPH_PROGRESS = 90
+OSM_BUILD_GRAPH_DONE_PROGRESS = 94
+OSM_BUILD_VALIDATE_PROGRESS = 95
+OSM_BUILD_REPLACE_PROGRESS = 96
 
 
 def _put_progress(params: Params, progress: int) -> None:
@@ -51,6 +55,11 @@ def _put_segment_count(params: Params, count: int) -> None:
     params.put(OSM_ROADS_COUNT_KEY, max(0, int(count)))
   except Exception:
     pass
+
+
+def _put_phase(params: Params, progress: int, label: str, meaning: str) -> None:
+  _put_progress(params, progress)
+  print(f"phase {progress}% {label} - {meaning}", flush=True)
 
 
 def _build_progress_from_segments(segment_count: int) -> int:
@@ -203,6 +212,7 @@ def _build_osm_roads_db(pbf_path: Path, build_db: Path, params: Params, skip_roa
   if skip_road_graph:
     command.append("--skip-road-graph")
   segment_pattern = re.compile(r"^segments\s+([0-9]+)")
+  phase_pattern = re.compile(r"^phase\s+([0-9]+)%")
   with subprocess.Popen(
     command,
     cwd=Path(__file__).resolve().parents[2],
@@ -214,6 +224,16 @@ def _build_osm_roads_db(pbf_path: Path, build_db: Path, params: Params, skip_roa
     for line in process.stdout:
       text = line.rstrip()
       print(text, flush=True)
+      phase_match = phase_pattern.match(text)
+      if phase_match is not None:
+        _put_progress(params, int(phase_match.group(1)))
+        continue
+      if text.startswith("graph building"):
+        _put_progress(params, OSM_BUILD_GRAPH_PROGRESS)
+        continue
+      if text.startswith("graph built"):
+        _put_progress(params, OSM_BUILD_GRAPH_DONE_PROGRESS)
+        continue
       match = segment_pattern.match(text)
       if match is None:
         continue
@@ -283,9 +303,11 @@ def main() -> None:
 
   try:
     print("validating temporary OSM roads DB", flush=True)
+    _put_progress(params, OSM_BUILD_VALIDATE_PROGRESS)
     count = _validate_osm_db(build_db)
     print(f"validated temporary DB: {count} segments", flush=True)
     _replace_db_atomically(build_db, args.db)
+    _put_phase(params, OSM_BUILD_REPLACE_PROGRESS, "OSM DB ready", "OSM road DB was built, installed, and marked ready")
   except Exception as e:
     print(f"validation or replace failed: {e}", flush=True)
     print(f"keeping existing DB {args.db}", flush=True)
@@ -293,7 +315,6 @@ def main() -> None:
     return 1
 
   _put_segment_count(params, count)
-  _put_progress(params, 89)
   print(f"osm road segments {count}", flush=True)
 
   if not args.keep_pbf:
