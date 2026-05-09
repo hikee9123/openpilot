@@ -233,7 +233,7 @@ class Modem:
           lines.append(line)
         return lines
     except (RuntimeError, TimeoutError, OSError) as e:
-      logging.info(f"AT {cmd} failed: {e}")
+      #logging.info(f"AT {cmd} failed: {e}")
       return []
     finally:
       fcntl.flock(fd, fcntl.LOCK_UN)
