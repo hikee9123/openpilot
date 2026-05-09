@@ -30,6 +30,7 @@ MAJOR_HIGHWAYS = {
   "secondary",
   "secondary_link",
 }
+DbSource = Path | sqlite3.Connection
 
 ROAD_NAME_SUFFIXES = (
   "EXPRESSWAY",
@@ -253,6 +254,19 @@ def _segment_intersects_rect(x1: float, y1: float, x2: float, y2: float,
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
   row = conn.execute("SELECT 1 FROM sqlite_master WHERE name = ? LIMIT 1", (name,)).fetchone()
   return row is not None
+
+
+def _db_source_exists(db_source: DbSource) -> bool:
+  return isinstance(db_source, sqlite3.Connection) or Path(db_source).exists()
+
+
+def _connect_read_db(db_source: DbSource):
+  if isinstance(db_source, sqlite3.Connection):
+    db_source.row_factory = sqlite3.Row
+    return None, db_source
+  conn = sqlite3.connect(db_source)
+  conn.row_factory = sqlite3.Row
+  return conn, conn
 
 
 def _road_node_key(lat: float, lon: float) -> str:
@@ -532,28 +546,30 @@ def build_road_graph(conn: sqlite3.Connection) -> RoadGraphStats:
     conn.row_factory = old_row_factory
 
 
-def road_successors(db_path: Path = DEFAULT_OSM_ROADS_DB_PATH, road_id: int = 0, limit: int = 32) -> list[OSMRoadTransition]:
-  if not db_path.exists():
+def road_successors(db_path: DbSource = DEFAULT_OSM_ROADS_DB_PATH, road_id: int = 0, limit: int = 32) -> list[OSMRoadTransition]:
+  if not _db_source_exists(db_path):
     return []
 
+  close_conn, conn = _connect_read_db(db_path)
   try:
-    with closing(sqlite3.connect(db_path)) as conn:
-      conn.row_factory = sqlite3.Row
-      if not _table_exists(conn, "roads") or not _table_exists(conn, "road_adjacency"):
-        return []
-      rows = conn.execute("""
-        SELECT roads.id, roads.osm_id, roads.name, roads.ref, roads.highway, roads.road_class, roads.oneway,
-               roads.lat1, roads.lon1, roads.lat2, roads.lon2, roads.bearing_deg,
-               0.0 AS distance_m,
-               road_adjacency.turn_angle_deg
-        FROM road_adjacency
-        JOIN roads ON roads.id = road_adjacency.to_road_id
-        WHERE road_adjacency.from_road_id = ?
-        ORDER BY road_adjacency.turn_angle_deg ASC, roads.id ASC
-        LIMIT ?
-      """, (road_id, max(0, limit))).fetchall()
+    if not _table_exists(conn, "roads") or not _table_exists(conn, "road_adjacency"):
+      return []
+    rows = conn.execute("""
+      SELECT roads.id, roads.osm_id, roads.name, roads.ref, roads.highway, roads.road_class, roads.oneway,
+             roads.lat1, roads.lon1, roads.lat2, roads.lon2, roads.bearing_deg,
+             0.0 AS distance_m,
+             road_adjacency.turn_angle_deg
+      FROM road_adjacency
+      JOIN roads ON roads.id = road_adjacency.to_road_id
+      WHERE road_adjacency.from_road_id = ?
+      ORDER BY road_adjacency.turn_angle_deg ASC, roads.id ASC
+      LIMIT ?
+    """, (road_id, max(0, limit))).fetchall()
   except sqlite3.Error:
     return []
+  finally:
+    if close_conn is not None:
+      close_conn.close()
 
   return [
     OSMRoadTransition(_row_to_segment(row), float(row["turn_angle_deg"]))
@@ -562,33 +578,35 @@ def road_successors(db_path: Path = DEFAULT_OSM_ROADS_DB_PATH, road_id: int = 0,
 
 
 def find_current_road(
-  db_path: Path = DEFAULT_OSM_ROADS_DB_PATH,
+  db_path: DbSource = DEFAULT_OSM_ROADS_DB_PATH,
   lat: float = 0.0,
   lon: float = 0.0,
   heading_deg: float | None = 0.0,
   radius_m: float = DEFAULT_LOOKUP_RADIUS_M,
   previous_name: str = "",
 ) -> OSMRoadMatch | None:
-  if not db_path.exists():
+  if not _db_source_exists(db_path):
     return None
 
   lat_min, lat_max, lon_min, lon_max = _bounding_box(lat, lon, radius_m)
+  close_conn, conn = _connect_read_db(db_path)
   try:
-    with closing(sqlite3.connect(db_path)) as conn:
-      conn.row_factory = sqlite3.Row
-      if not _table_exists(conn, "roads") or not _table_exists(conn, "roads_rtree"):
-        return None
-      rows = conn.execute("""
-        SELECT roads.*
-        FROM roads
-        JOIN roads_rtree ON roads.id = roads_rtree.id
-        WHERE roads_rtree.min_lat <= ?
-          AND roads_rtree.max_lat >= ?
-          AND roads_rtree.min_lon <= ?
-          AND roads_rtree.max_lon >= ?
-      """, (lat_max, lat_min, lon_max, lon_min)).fetchall()
+    if not _table_exists(conn, "roads") or not _table_exists(conn, "roads_rtree"):
+      return None
+    rows = conn.execute("""
+      SELECT roads.*
+      FROM roads
+      JOIN roads_rtree ON roads.id = roads_rtree.id
+      WHERE roads_rtree.min_lat <= ?
+        AND roads_rtree.max_lat >= ?
+        AND roads_rtree.min_lon <= ?
+        AND roads_rtree.max_lon >= ?
+    """, (lat_max, lat_min, lon_max, lon_min)).fetchall()
   except sqlite3.Error:
     return None
+  finally:
+    if close_conn is not None:
+      close_conn.close()
 
   best: OSMRoadMatch | None = None
   for row in rows:
@@ -627,32 +645,34 @@ def find_current_road(
 
 
 def nearby_road_segments(
-  db_path: Path = DEFAULT_OSM_ROADS_DB_PATH,
+  db_path: DbSource = DEFAULT_OSM_ROADS_DB_PATH,
   lat: float = 0.0,
   lon: float = 0.0,
   radius_m: float = 140.0,
   limit: int = 90,
 ) -> list[OSMRoadSegment]:
-  if not db_path.exists():
+  if not _db_source_exists(db_path):
     return []
 
   lat_min, lat_max, lon_min, lon_max = _bounding_box(lat, lon, radius_m)
+  close_conn, conn = _connect_read_db(db_path)
   try:
-    with closing(sqlite3.connect(db_path)) as conn:
-      conn.row_factory = sqlite3.Row
-      if not _table_exists(conn, "roads") or not _table_exists(conn, "roads_rtree"):
-        return []
-      rows = conn.execute("""
-        SELECT roads.*
-        FROM roads
-        JOIN roads_rtree ON roads.id = roads_rtree.id
-        WHERE roads_rtree.min_lat <= ?
-          AND roads_rtree.max_lat >= ?
-          AND roads_rtree.min_lon <= ?
-          AND roads_rtree.max_lon >= ?
-      """, (lat_max, lat_min, lon_max, lon_min)).fetchall()
+    if not _table_exists(conn, "roads") or not _table_exists(conn, "roads_rtree"):
+      return []
+    rows = conn.execute("""
+      SELECT roads.*
+      FROM roads
+      JOIN roads_rtree ON roads.id = roads_rtree.id
+      WHERE roads_rtree.min_lat <= ?
+        AND roads_rtree.max_lat >= ?
+        AND roads_rtree.min_lon <= ?
+        AND roads_rtree.max_lon >= ?
+    """, (lat_max, lat_min, lon_max, lon_min)).fetchall()
   except sqlite3.Error:
     return []
+  finally:
+    if close_conn is not None:
+      close_conn.close()
 
   segments: list[OSMRoadSegment] = []
   for row in rows:
@@ -680,7 +700,7 @@ def nearby_road_segments(
 
 
 def forward_road_segments(
-  db_path: Path = DEFAULT_OSM_ROADS_DB_PATH,
+  db_path: DbSource = DEFAULT_OSM_ROADS_DB_PATH,
   lat: float = 0.0,
   lon: float = 0.0,
   heading_deg: float = 0.0,
@@ -690,29 +710,31 @@ def forward_road_segments(
   major_side_limit_m: float = 140.0,
   limit: int = 1000,
 ) -> list[OSMRoadSegment]:
-  if not db_path.exists() or forward_end_m <= forward_start_m:
+  if not _db_source_exists(db_path) or forward_end_m <= forward_start_m:
     return []
 
   max_side_m = max(side_limit_m, major_side_limit_m)
   lat_min, lat_max, lon_min, lon_max = _corridor_bounding_box(
     lat, lon, heading_deg, forward_start_m, forward_end_m, max_side_m
   )
+  close_conn, conn = _connect_read_db(db_path)
   try:
-    with closing(sqlite3.connect(db_path)) as conn:
-      conn.row_factory = sqlite3.Row
-      if not _table_exists(conn, "roads") or not _table_exists(conn, "roads_rtree"):
-        return []
-      rows = conn.execute("""
-        SELECT roads.*
-        FROM roads
-        JOIN roads_rtree ON roads.id = roads_rtree.id
-        WHERE roads_rtree.min_lat <= ?
-          AND roads_rtree.max_lat >= ?
-          AND roads_rtree.min_lon <= ?
-          AND roads_rtree.max_lon >= ?
-      """, (lat_max, lat_min, lon_max, lon_min)).fetchall()
+    if not _table_exists(conn, "roads") or not _table_exists(conn, "roads_rtree"):
+      return []
+    rows = conn.execute("""
+      SELECT roads.*
+      FROM roads
+      JOIN roads_rtree ON roads.id = roads_rtree.id
+      WHERE roads_rtree.min_lat <= ?
+        AND roads_rtree.max_lat >= ?
+        AND roads_rtree.min_lon <= ?
+        AND roads_rtree.max_lon >= ?
+    """, (lat_max, lat_min, lon_max, lon_min)).fetchall()
   except sqlite3.Error:
     return []
+  finally:
+    if close_conn is not None:
+      close_conn.close()
 
   segments_with_sort_key: list[tuple[float, float, OSMRoadSegment]] = []
   for row in rows:

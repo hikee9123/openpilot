@@ -53,6 +53,7 @@ from openpilot.selfdrive.ui.custom import read_custom_params
 
 
 DB_RETRY_SECONDS = 60.0
+DB_CACHE_REFRESH_INTERVAL_SECONDS = 1.0
 LOOKUP_INTERVAL_SECONDS = 1.0
 OSM_ROAD_LOOKUP_INTERVAL_SECONDS = 2.0
 OSM_ROAD_OVERLAY_INTERVAL_SECONDS = 1.0
@@ -139,6 +140,71 @@ class PredictedRoad:
   rank: int
   probability: float
   score: float
+
+
+class _ReadonlyDbConnection:
+  def __init__(self, path: Path):
+    self.path = path
+    self.conn: sqlite3.Connection | None = None
+    self.mtime = 0.0
+
+  def refresh(self) -> bool:
+    current_mtime = self.path.stat().st_mtime if self.path.exists() else 0.0
+    changed = current_mtime != self.mtime
+    if changed:
+      self.close()
+      self.mtime = current_mtime
+
+    if self.conn is None and current_mtime > 0.0:
+      try:
+        self.conn = sqlite3.connect(f"file:{self.path.resolve()}?mode=ro", uri=True)
+        self.conn.row_factory = sqlite3.Row
+      except sqlite3.Error:
+        cloudlog.exception(f"navid: failed to open read-only DB {self.path}")
+        self.conn = None
+    return changed
+
+  def close(self) -> None:
+    if self.conn is not None:
+      self.conn.close()
+      self.conn = None
+
+  @property
+  def source(self):
+    return self.conn if self.conn is not None else self.path
+
+
+class NavdDbCache:
+  def __init__(self, speed_path: Path, osm_path: Path):
+    self.speed = _ReadonlyDbConnection(speed_path)
+    self.osm = _ReadonlyDbConnection(osm_path)
+    self.road_successor_cache = {}
+    self.road_prediction_cache = {}
+    self._last_refresh_t = -DB_CACHE_REFRESH_INTERVAL_SECONDS
+
+  def refresh(self, now: float | None = None, force: bool = False) -> tuple[bool, bool]:
+    now = time.monotonic() if now is None else now
+    if not force and now - self._last_refresh_t < DB_CACHE_REFRESH_INTERVAL_SECONDS:
+      return False, False
+    self._last_refresh_t = now
+    speed_changed = self.speed.refresh()
+    osm_changed = self.osm.refresh()
+    if osm_changed:
+      self.road_successor_cache.clear()
+      self.road_prediction_cache.clear()
+    return speed_changed, osm_changed
+
+  @property
+  def speed_source(self):
+    return self.speed.source
+
+  @property
+  def osm_source(self):
+    return self.osm.source
+
+  @property
+  def osm_mtime(self) -> float:
+    return self.osm.mtime
 
 
 def _clip(value: float, min_value: float, max_value: float) -> float:
@@ -437,12 +503,13 @@ def _osm_cache_needs_refresh(
   gps,
   query_radius_m: float,
   now: float,
+  db_mtime: float | None = None,
 ) -> bool:
   if cache.loaded_at <= 0.0:
     return True
   if now - cache.loaded_at < OSM_CACHE_MIN_REFRESH_INTERVAL_SECONDS:
     return False
-  if _osm_db_mtime(db_path) != cache.db_mtime:
+  if (db_mtime if db_mtime is not None else _osm_db_mtime(db_path)) != cache.db_mtime:
     return True
   if cache.cache_kind != "radius":
     return True
@@ -464,20 +531,24 @@ def _ensure_osm_cache(
   display_radius_m: float,
   query_radius_m: float,
   now: float,
+  db_source=None,
+  db_mtime: float | None = None,
 ) -> None:
   query_radius_m = max(query_radius_m, OSM_CACHE_MIN_QUERY_RADIUS_M)
-  if not _osm_cache_needs_refresh(cache, db_path, gps, query_radius_m, now):
+  current_db_mtime = db_mtime if db_mtime is not None else _osm_db_mtime(db_path)
+  if not _osm_cache_needs_refresh(cache, db_path, gps, query_radius_m, now, current_db_mtime):
     return
 
+  db_source = db_path if db_source is None else db_source
   cache.center_lat = gps.latitude
   cache.center_lon = gps.longitude
   cache.query_radius_m = query_radius_m
   cache.refresh_distance_m = _minimap_refresh_distance_m(display_radius_m, query_radius_m)
   cache.loaded_at = now
-  cache.db_mtime = _osm_db_mtime(db_path)
+  cache.db_mtime = current_db_mtime
   cache.cache_kind = "radius"
   cache.segments = nearby_road_segments(
-    db_path,
+    db_source,
     gps.latitude,
     gps.longitude,
     query_radius_m,
@@ -495,12 +566,13 @@ def _osm_corridor_cache_needs_refresh(
   major_side_limit_m: float,
   refresh_distance_m: float,
   now: float,
+  db_mtime: float | None = None,
 ) -> bool:
   if cache.loaded_at <= 0.0:
     return True
   if now - cache.loaded_at < OSM_CACHE_MIN_REFRESH_INTERVAL_SECONDS:
     return False
-  if _osm_db_mtime(db_path) != cache.db_mtime:
+  if (db_mtime if db_mtime is not None else _osm_db_mtime(db_path)) != cache.db_mtime:
     return True
   if cache.cache_kind != "corridor":
     return True
@@ -525,6 +597,8 @@ def _ensure_osm_corridor_cache(
   gps,
   display_radius_m: float,
   now: float,
+  db_source=None,
+  db_mtime: float | None = None,
 ) -> None:
   visible_forward_start_m, visible_forward_end_m, visible_side_min_m, visible_side_max_m = _minimap_visible_bounds(display_radius_m)
   visible_side_limit_m = max(abs(visible_side_min_m), abs(visible_side_max_m))
@@ -533,6 +607,7 @@ def _ensure_osm_corridor_cache(
   side_limit_m = max(OSM_MINIMAP_CORRIDOR_SIDE_M, visible_side_limit_m)
   major_side_limit_m = max(OSM_MINIMAP_CORRIDOR_MAJOR_SIDE_M, visible_side_limit_m)
   refresh_distance_m = _minimap_refresh_distance_m(display_radius_m, forward_end_m)
+  current_db_mtime = db_mtime if db_mtime is not None else _osm_db_mtime(db_path)
   if not _osm_corridor_cache_needs_refresh(
     cache,
     db_path,
@@ -543,12 +618,13 @@ def _ensure_osm_corridor_cache(
     major_side_limit_m,
     refresh_distance_m,
     now,
+    current_db_mtime,
   ):
     return
 
-  db_mtime = _osm_db_mtime(db_path)
+  db_source = db_path if db_source is None else db_source
   segments = forward_road_segments(
-    db_path,
+    db_source,
     gps.latitude,
     gps.longitude,
     gps.bearingDeg,
@@ -560,7 +636,7 @@ def _ensure_osm_corridor_cache(
   )
   if (
     cache.segments and
-    db_mtime == cache.db_mtime and
+    current_db_mtime == cache.db_mtime and
     len(segments) < OSM_MINIMAP_MIN_REFRESH_SEGMENTS
   ):
     cache.loaded_at = now
@@ -576,7 +652,7 @@ def _ensure_osm_corridor_cache(
   cache.major_side_limit_m = major_side_limit_m
   cache.refresh_distance_m = refresh_distance_m
   cache.loaded_at = now
-  cache.db_mtime = db_mtime
+  cache.db_mtime = current_db_mtime
   cache.cache_kind = "corridor"
   cache.segments = segments
 
@@ -905,6 +981,8 @@ def _build_osm_road_overlay_text(
   current_road_match: CurrentRoadMatch | None = None,
   successor_cache: dict | None = None,
   prediction_cache: dict | None = None,
+  db_source=None,
+  db_mtime: float | None = None,
   now: float | None = None,
 ) -> str:
   try:
@@ -919,8 +997,9 @@ def _build_osm_road_overlay_text(
       map_radius_m = _minimap_display_radius_m(gps, tuning)
       display_radius_m = map_radius_m
 
-      _ensure_osm_corridor_cache(osm_cache, db_path, gps, display_radius_m, now)
-      predicted_roads = _predict_forward_roads(db_path, current_road_match, successor_cache, prediction_cache)
+      db_source = db_path if db_source is None else db_source
+      _ensure_osm_corridor_cache(osm_cache, db_path, gps, display_radius_m, now, db_source, db_mtime)
+      predicted_roads = _predict_forward_roads(db_source, current_road_match, successor_cache, prediction_cache)
       map_roads = _minimap_roads(osm_cache, gps, current_road_name, map_radius_m, predicted_roads)
 
     cameras = _osm_overlay_cameras(gps, candidates)
@@ -1017,6 +1096,7 @@ def main() -> None:
   db_path = _db_path()
   csv_path = _csv_path()
   db_ready = _ensure_database(db_path, csv_path)
+  db_cache = NavdDbCache(db_path, _osm_roads_db_path())
   next_db_retry_t = time.monotonic() + DB_RETRY_SECONDS
 
   ignored_until: dict[str, float] = {}
@@ -1024,10 +1104,6 @@ def main() -> None:
   active_camera = None
   active_candidates = []
   tuning = _speed_camera_tuning()
-  osm_roads_db_path = _osm_roads_db_path()
-  osm_roads_db_mtime = 0.0
-  road_successor_cache = {}
-  road_prediction_cache = {}
   last_lookup_t = 0.0
   last_osm_lookup_t = 0.0
   last_osm_overlay_t = 0.0
@@ -1047,11 +1123,14 @@ def main() -> None:
     if not db_ready:
       if now >= next_db_retry_t:
         db_ready = _ensure_database(db_path, csv_path)
+        if db_ready:
+          db_cache.refresh(now, force=True)
         next_db_retry_t = now + DB_RETRY_SECONDS
       _send_inactive(pm)
       rk.keep_time()
       continue
 
+    db_cache.refresh(now)
     gps = _select_gps(sm)
     if gps is None:
       active_camera_id = None
@@ -1079,7 +1158,7 @@ def main() -> None:
             last_osm_overlay_t = now
             osm_road_overlay_text, last_good_osm_overlay_text, last_good_osm_overlay_t = _stable_osm_overlay_text(
               _build_osm_road_overlay_text(
-                osm_roads_db_path,
+                db_cache.osm.path,
                 gps,
                 [],
                 current_road_name,
@@ -1087,8 +1166,10 @@ def main() -> None:
                 tuning,
                 osm_corridor_cache,
                 current_road_match=None,
-                successor_cache=road_successor_cache,
-                prediction_cache=road_prediction_cache,
+                successor_cache=db_cache.road_successor_cache,
+                prediction_cache=db_cache.road_prediction_cache,
+                db_source=db_cache.osm_source,
+                db_mtime=db_cache.osm_mtime,
                 now=now,
               ),
               last_good_osm_overlay_text,
@@ -1111,31 +1192,28 @@ def main() -> None:
       tuning = _speed_camera_tuning()
       ignored_ids = {camera_id for camera_id, until in ignored_until.items() if until > now}
       ignored_until = {camera_id: until for camera_id, until in ignored_until.items() if until > now}
-      current_osm_mtime = _osm_db_mtime(osm_roads_db_path)
-      if current_osm_mtime != osm_roads_db_mtime:
-        road_successor_cache.clear()
-        road_prediction_cache.clear()
-        osm_roads_db_mtime = current_osm_mtime
 
       if bool(tuning["use_local_osm_roads"]) and now - last_osm_lookup_t >= OSM_ROAD_LOOKUP_INTERVAL_SECONDS:
         last_osm_lookup_t = now
         local_radius_m = float(tuning["local_osm_road_radius_m"])
         _ensure_osm_cache(
           local_osm_cache,
-          osm_roads_db_path,
+          db_cache.osm.path,
           gps,
           local_radius_m,
           max(OSM_CACHE_MIN_QUERY_RADIUS_M, local_radius_m * 2.0),
           now,
+          db_cache.osm_source,
+          db_cache.osm_mtime,
         )
         current_road_match = _current_road_match_from_cache(
           local_osm_cache,
-          osm_roads_db_path,
+          db_cache.osm_source,
           gps,
           local_radius_m,
           current_road_match,
           now,
-          road_successor_cache,
+          db_cache.road_successor_cache,
         )
         current_road_name = current_road_match.name if current_road_match is not None else ""
       elif not bool(tuning["use_local_osm_roads"]):
@@ -1145,11 +1223,19 @@ def main() -> None:
       osm_context_segments = []
       if bool(tuning["use_local_osm_roads"]) or int(tuning["osm_road_overlay_mode"]) > 0:
         map_radius_m = _minimap_display_radius_m(gps, tuning)
-        _ensure_osm_corridor_cache(osm_corridor_cache, osm_roads_db_path, gps, map_radius_m, now)
+        _ensure_osm_corridor_cache(
+          osm_corridor_cache,
+          db_cache.osm.path,
+          gps,
+          map_radius_m,
+          now,
+          db_cache.osm_source,
+          db_cache.osm_mtime,
+        )
         osm_context_segments = build_osm_road_context(osm_corridor_cache.segments, gps.latitude, gps.longitude, gps.bearingDeg)
 
       active_candidates = find_lead_cameras(
-        db_path,
+        db_cache.speed_source,
         gps.latitude,
         gps.longitude,
         gps.bearingDeg,
@@ -1168,7 +1254,7 @@ def main() -> None:
           last_osm_overlay_t = now
           osm_road_overlay_text, last_good_osm_overlay_text, last_good_osm_overlay_t = _stable_osm_overlay_text(
             _build_osm_road_overlay_text(
-              osm_roads_db_path,
+              db_cache.osm.path,
               gps,
               active_candidates,
               current_road_name,
@@ -1176,8 +1262,10 @@ def main() -> None:
               tuning,
               osm_corridor_cache,
               current_road_match=current_road_match,
-              successor_cache=road_successor_cache,
-              prediction_cache=road_prediction_cache,
+              successor_cache=db_cache.road_successor_cache,
+              prediction_cache=db_cache.road_prediction_cache,
+              db_source=db_cache.osm_source,
+              db_mtime=db_cache.osm_mtime,
               now=now,
             ),
             last_good_osm_overlay_text,

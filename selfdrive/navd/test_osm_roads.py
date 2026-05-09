@@ -73,6 +73,19 @@ def test_find_current_road_prefers_heading_aligned_segment(tmp_path: Path) -> No
   assert match.distance_m < 5.0
 
 
+def test_osm_road_queries_accept_reused_connection(tmp_path: Path) -> None:
+  db_path = tmp_path / "osm_roads.sqlite3"
+  _build_roads_db(db_path)
+
+  with sqlite3.connect(db_path) as conn:
+    match = find_current_road(conn, 37.0050, 127.00002, 0.0, radius_m=80.0)
+    segments = forward_road_segments(conn, 37.0, 127.0, 0.0, -100.0, 1500.0, 70.0, 140.0, 10)
+
+  assert match is not None
+  assert match.name == "Test Expressway"
+  assert [segment.name for segment in segments] == ["Test Expressway", "Cross Road"]
+
+
 def test_find_current_road_returns_none_when_db_missing(tmp_path: Path) -> None:
   assert find_current_road(tmp_path / "missing.sqlite3", 37.0, 127.0, 0.0) is None
 

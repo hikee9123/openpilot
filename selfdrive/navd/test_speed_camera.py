@@ -568,6 +568,23 @@ def test_find_lead_camera_prioritizes_speed_camera_over_nearest_signal(tmp_path:
   assert [camera.camera_category for camera in cameras] == ["SPEED", "SIGNAL"]
 
 
+def test_find_lead_cameras_accepts_reused_connection(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,설치장소\n"
+    "A1,37.001,127.0,속도위반,80,과속단속\n",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 1
+  with sqlite3.connect(db_path) as conn:
+    cameras = find_lead_cameras(conn, 37.0, 127.0, 0.0)
+
+  assert len(cameras) == 1
+  assert cameras[0].camera_category == "SPEED"
+
+
 def test_find_lead_camera_prefers_same_corridor_within_speed_candidates(tmp_path: Path) -> None:
   csv_path = tmp_path / "speed_cameras.csv"
   db_path = tmp_path / "speed_cameras.sqlite3"

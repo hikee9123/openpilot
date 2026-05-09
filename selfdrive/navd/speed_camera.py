@@ -257,6 +257,7 @@ SPEED_CAMERA_COLUMNS = (
   "osm_road_match_dist_m",
   "osm_road_match_heading_deg",
 )
+DbSource = Path | sqlite3.Connection
 
 
 @dataclass(frozen=True)
@@ -3132,6 +3133,19 @@ def _candidate_rows(
   """, (lat_min, lat_max, lon_min, lon_max)).fetchall()
 
 
+def _db_source_exists(db_source: DbSource) -> bool:
+  return isinstance(db_source, sqlite3.Connection) or Path(db_source).exists()
+
+
+def _connect_read_db(db_source: DbSource):
+  if isinstance(db_source, sqlite3.Connection):
+    db_source.row_factory = sqlite3.Row
+    return None, db_source
+  conn = sqlite3.connect(db_source)
+  conn.row_factory = sqlite3.Row
+  return conn, conn
+
+
 def _max_side_distance_m(camera: SpeedCamera) -> float:
   if camera.local_road_match:
     return LOOKAHEAD_LOCAL_ROAD_SIDE_DISTANCE_M
@@ -3141,7 +3155,7 @@ def _max_side_distance_m(camera: SpeedCamera) -> float:
 
 
 def find_lead_cameras(
-  db_path: Path,
+  db_path: DbSource,
   lat: float,
   lon: float,
   heading_deg: float,
@@ -3153,15 +3167,18 @@ def find_lead_cameras(
   current_road_name: str = "",
   osm_road_segments=None,
 ) -> list[SpeedCamera]:
-  if not db_path.exists():
+  if not _db_source_exists(db_path):
     return []
 
   ignored_ids = ignored_ids or set()
   lat_min, lat_max, lon_min, lon_max = _bounding_box(lat, lon, max_distance_m)
 
-  with closing(sqlite3.connect(db_path)) as conn:
-    conn.row_factory = sqlite3.Row
+  close_conn, conn = _connect_read_db(db_path)
+  try:
     rows = _candidate_rows(conn, lat_min, lat_max, lon_min, lon_max)
+  finally:
+    if close_conn is not None:
+      close_conn.close()
 
   candidates: list[SpeedCamera] = []
   for row in rows:

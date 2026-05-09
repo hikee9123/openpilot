@@ -1,4 +1,6 @@
 import importlib.util
+import os
+import sqlite3
 import sys
 import types
 from pathlib import Path
@@ -148,6 +150,30 @@ def test_osm_corridor_cache_refreshes_on_heading_change(tmp_path: Path) -> None:
   assert navid._osm_corridor_cache_needs_refresh(
     cache, tmp_path / "missing.sqlite3", gps, -100.0, 1500.0, 70.0, 140.0, 900.0, 3.0
   )
+
+
+def test_navd_db_cache_clears_osm_caches_when_db_changes(tmp_path: Path) -> None:
+  navid = _load_navid_module()
+  speed_db = tmp_path / "speed.sqlite3"
+  osm_db = tmp_path / "osm.sqlite3"
+  for db_path in (speed_db, osm_db):
+    with sqlite3.connect(db_path):
+      pass
+
+  cache = navid.NavdDbCache(speed_db, osm_db)
+  cache.refresh(1.0, force=True)
+  cache.road_successor_cache["x"] = object()
+  cache.road_prediction_cache["y"] = object()
+
+  os_stat = osm_db.stat()
+  new_mtime = os_stat.st_mtime + 5.0
+  osm_db.touch()
+  os.utime(osm_db, (new_mtime, new_mtime))
+
+  cache.refresh(3.0, force=True)
+
+  assert cache.road_successor_cache == {}
+  assert cache.road_prediction_cache == {}
 
 
 def test_stable_osm_overlay_keeps_last_good_text_briefly() -> None:
