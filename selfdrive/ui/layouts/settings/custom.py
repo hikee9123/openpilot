@@ -1013,7 +1013,7 @@ class CustomSettingsLayout(Widget):
           self._speed_camera_updated_status_text,
           self._speed_camera_osm_matched_status_text,
           self._speed_camera_osm_empty_status_text,
-        ]),
+        ], progress_detail_callback=self._speed_camera_progress_detail_text),
         SpeedCameraRegionsPanel(
           self._speed_camera_region_stats,
           self._speed_camera_category_counts,
@@ -1821,6 +1821,30 @@ class CustomSettingsLayout(Widget):
 
   def _format_speed_camera_count(self) -> str:
     return f"{self._speed_camera_count():,}"
+
+  def _speed_camera_current_update_count(self) -> int:
+    try:
+      count = int(self._param_text(SPEED_CAMERA_COUNT_KEY) or 0)
+    except ValueError:
+      count = 0
+    if count > 0:
+      return count
+    return self._speed_camera_db_count_from_log()
+
+  def _speed_camera_progress_detail_text(self) -> str:
+    if self._speed_camera_update_status() != STATUS_RUNNING:
+      return ""
+    progress = self._param_text(SPEED_CAMERA_PROGRESS_KEY)
+    try:
+      progress_value = int(progress or 0)
+    except ValueError:
+      progress_value = 0
+    if progress_value >= 99:
+      return tr("Saving camera DB")
+    if progress_value >= 95 and DEFAULT_OSM_ROADS_DB_PATH.exists():
+      return tr("Applying OSM road names")
+    count = self._speed_camera_current_update_count()
+    return f"cameras {count:,}" if count > 0 else ""
 
   def _speed_camera_osm_stats(self, force: bool = False) -> OsmRoadEnrichmentStats:
     if force or not self._speed_camera_osm_stats_loaded:
