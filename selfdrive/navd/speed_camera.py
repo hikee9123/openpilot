@@ -33,7 +33,7 @@ except ModuleNotFoundError:
   from selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH, find_current_road, road_name_matches
 
 
-DB_VERSION = 10
+DB_VERSION = 11
 PUBLIC_DATA_PK = "15028200"
 PUBLIC_DATA_BASE_URL = "https://www.data.go.kr"
 DEFAULT_DATA_DIR = REPO_NAVD_DATA_DIR
@@ -209,7 +209,6 @@ SPEED_CAMERA_COLUMNS = (
   "lat",
   "lon",
   "camera_type",
-  "camera_type_raw",
   "camera_category",
   "camera_type_code",
   "is_speed_camera",
@@ -646,6 +645,24 @@ def _quality_for_camera_row(manage_no: str, lat: float, lon: float) -> tuple[str
   return QUALITY_NORMAL, ""
 
 
+def normalize_code_for_db(value: str) -> str:
+  normalized = str(value or "").strip()
+  if re.fullmatch(r"\d+", normalized):
+    return str(int(normalized))
+  if re.fullmatch(r"\d+(?:[+/]\d+)+", normalized):
+    return re.sub(r"\d+", lambda match: str(int(match.group(0))), normalized)
+  return normalized
+
+
+def normalize_direction_for_db(direction: str) -> str:
+  return normalize_code_for_db(direction)
+
+
+def normalize_record_codes_for_db(record: dict[str, object]) -> None:
+  for column in ("camera_type", "direction", "section_type", "school_zone"):
+    record[column] = normalize_code_for_db(str(record[column]))
+
+
 def init_db(conn: sqlite3.Connection, backfill: bool = True) -> None:
   conn.executescript("""
     CREATE TABLE IF NOT EXISTS metadata (
@@ -658,7 +675,6 @@ def init_db(conn: sqlite3.Connection, backfill: bool = True) -> None:
       lat REAL NOT NULL,
       lon REAL NOT NULL,
       camera_type TEXT NOT NULL,
-      camera_type_raw TEXT NOT NULL,
       camera_category TEXT NOT NULL,
       camera_type_code INTEGER NOT NULL,
       is_speed_camera INTEGER NOT NULL,
@@ -698,7 +714,6 @@ def init_db(conn: sqlite3.Connection, backfill: bool = True) -> None:
 
   column_defaults = {
     "region": "TEXT NOT NULL DEFAULT ''",
-    "camera_type_raw": "TEXT NOT NULL DEFAULT ''",
     "camera_category": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
     "camera_type_code": "INTEGER NOT NULL DEFAULT 0",
     "is_speed_camera": "INTEGER NOT NULL DEFAULT 0",
@@ -721,6 +736,9 @@ def init_db(conn: sqlite3.Connection, backfill: bool = True) -> None:
     "osm_road_match_heading_deg": "REAL NOT NULL DEFAULT 0.0",
   }
   columns = {row[1] for row in conn.execute("PRAGMA table_info(speed_cameras)")}
+  if "camera_type_raw" in columns:
+    conn.execute("ALTER TABLE speed_cameras DROP COLUMN camera_type_raw")
+    columns.remove("camera_type_raw")
   for column, definition in column_defaults.items():
     if column not in columns:
       conn.execute(f"ALTER TABLE speed_cameras ADD COLUMN {column} {definition}")
@@ -771,9 +789,9 @@ def init_db(conn: sqlite3.Connection, backfill: bool = True) -> None:
 def _backfill_derived_columns(conn: sqlite3.Connection) -> None:
   rows = conn.execute("""
     SELECT
-      id, lat, lon, camera_type, camera_type_raw, camera_category, camera_type_code,
-      speed_limit, region, road_type_raw, road_class, road_name, place, section_type,
-      source_type, source_file, dedup_key
+      id, lat, lon, camera_type, camera_category, camera_type_code,
+      speed_limit, region, road_type_raw, road_class, road_name, place, direction, section_type,
+      school_zone, source_type, source_file, dedup_key
     FROM speed_cameras
   """).fetchall()
 
@@ -783,7 +801,6 @@ def _backfill_derived_columns(conn: sqlite3.Connection) -> None:
       lat,
       lon,
       camera_type,
-      camera_type_raw,
       camera_category,
       _stored_type_code,
       speed_limit,
@@ -792,13 +809,15 @@ def _backfill_derived_columns(conn: sqlite3.Connection) -> None:
       road_class,
       road_name,
       place,
+      direction,
       section_type,
+      school_zone,
       source_type,
       source_file,
       dedup_key,
     ) = row
 
-    raw_camera_type = camera_type_raw or camera_type or ""
+    raw_camera_type = camera_type or ""
     speed_limit = infer_missing_speed_limit(
       raw_camera_type, section_type or "", road_name or "", place or "", int(speed_limit or 0)
     )
@@ -817,11 +836,15 @@ def _backfill_derived_columns(conn: sqlite3.Connection) -> None:
     normalized_dedup_key = dedup_key or f"GPS|{float(lat):.6f}|{float(lon):.6f}|{int(speed_limit or 0)}"
     manage_no = str(camera_id).split("-")[0]
     quality_category, quality_reason = _quality_for_camera_row(manage_no, float(lat), float(lon))
+    normalized_camera_type = normalize_code_for_db(raw_camera_type)
+    normalized_direction = normalize_direction_for_db(str(direction or ""))
+    normalized_section_type = normalize_code_for_db(str(section_type or ""))
+    normalized_school_zone = normalize_code_for_db(str(school_zone or ""))
 
     conn.execute("""
       UPDATE speed_cameras
       SET
-        camera_type_raw = ?,
+        camera_type = ?,
         camera_category = ?,
         camera_type_code = ?,
         is_speed_camera = ?,
@@ -837,11 +860,14 @@ def _backfill_derived_columns(conn: sqlite3.Connection) -> None:
         source_type = ?,
         source_file = ?,
         dedup_key = ?,
+        direction = ?,
+        section_type = ?,
+        school_zone = ?,
         quality_category = ?,
         quality_reason = ?
       WHERE id = ?
     """, (
-      raw_camera_type,
+      normalized_camera_type,
       category,
       type_code,
       int(is_speed_category(category)),
@@ -857,6 +883,9 @@ def _backfill_derived_columns(conn: sqlite3.Connection) -> None:
       normalized_source_type,
       source_file or "",
       normalized_dedup_key,
+      normalized_direction,
+      normalized_section_type,
+      normalized_school_zone,
       quality_category,
       quality_reason,
       camera_id,
@@ -992,7 +1021,6 @@ def _standardize_csv_row(row: dict[str, str], csv_source: CsvSource, idx: int) -
     "lat": lat,
     "lon": lon,
     "camera_type": raw_camera_type,
-    "camera_type_raw": raw_camera_type,
     "camera_category": category,
     "camera_type_code": type_code,
     "is_speed_camera": int(is_speed_category(category)),
@@ -1045,6 +1073,7 @@ def create_database_from_csvs(
       if record is None:
         continue
 
+      normalize_record_codes_for_db(record)
       dedup_key = _manage_no_dedup_key(record, manage_no_clusters) or str(record["dedup_key"])
       record["dedup_key"] = dedup_key
       current = merged.get(dedup_key)

@@ -28,6 +28,8 @@ database_region_counts = speed_camera.database_region_counts
 database_region_stats = speed_camera.database_region_stats
 direction_bearing_deg = speed_camera.direction_bearing_deg
 direction_kind = speed_camera.direction_kind
+normalize_code_for_db = speed_camera.normalize_code_for_db
+normalize_direction_for_db = speed_camera.normalize_direction_for_db
 download_public_speed_camera_csv = speed_camera.download_public_speed_camera_csv
 export_speed_camera_leaflet_html = speed_camera.export_speed_camera_leaflet_html
 find_lead_camera = speed_camera.find_lead_camera
@@ -941,6 +943,49 @@ def test_init_db_backfills_old_database_speed_flags(tmp_path: Path) -> None:
   assert protected == (30, "PROTECTED_ZONE")
 
 
+def test_init_db_removes_legacy_camera_type_raw_column(tmp_path: Path) -> None:
+  db_path = tmp_path / "legacy_raw_speed_cameras.sqlite3"
+  with sqlite3.connect(db_path) as conn:
+    conn.executescript("""
+      CREATE TABLE metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      INSERT INTO metadata(key, value) VALUES('version', '10');
+
+      CREATE TABLE speed_cameras (
+        id TEXT PRIMARY KEY,
+        lat REAL NOT NULL,
+        lon REAL NOT NULL,
+        camera_type TEXT NOT NULL,
+        camera_type_raw TEXT NOT NULL,
+        speed_limit INTEGER NOT NULL,
+        region TEXT NOT NULL,
+        road_name TEXT NOT NULL,
+        place TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        section_type TEXT NOT NULL,
+        section_length_m INTEGER NOT NULL,
+        school_zone TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO speed_cameras VALUES (
+        'LEGACY_RAW', 37.001, 127.0, '01', '01', 80, '', '고속도로', '전방도로', '03', '01', 0, '02', '2026-01-01'
+      );
+    """)
+
+    speed_camera.init_db(conn)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(speed_cameras)")}
+    row = conn.execute("""
+      SELECT camera_type, direction, section_type, school_zone, camera_category
+      FROM speed_cameras
+      WHERE id = 'LEGACY_RAW'
+    """).fetchone()
+
+  assert "camera_type_raw" not in columns
+  assert row == ("1", "3", "1", "2", "SPEED")
+
+
 def test_camera_type_code_backward_compatibility() -> None:
   assert camera_type_code("속도위반") == 1
   assert camera_type_code("신호위반") == 2
@@ -985,15 +1030,45 @@ def test_numeric_road_direction_codes_are_not_absolute_bearings(tmp_path: Path) 
   _write_csv(
     csv_path,
     "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,도로노선방향,설치장소\n"
-    "A1,37.001,127.0,속도위반,80,1,상행 후보\n"
-    "A2,37.002,127.0,속도위반,60,2,하행 후보\n"
-    "A3,37.003,127.0,속도위반,50,3,양방향 후보\n",
+    "A1,37.001,127.0,속도위반,80,01,상행 후보\n"
+    "A2,37.002,127.0,속도위반,60,02,하행 후보\n"
+    "A3,37.003,127.0,속도위반,50,03,양방향 후보\n",
   )
 
   assert create_database_from_csv(csv_path, db_path) == 3
 
+  with sqlite3.connect(db_path) as conn:
+    directions = [row[0] for row in conn.execute("SELECT direction FROM speed_cameras ORDER BY id")]
+  assert directions == ["1", "2", "3"]
+
   cameras = find_lead_cameras(db_path, 37.0, 127.0, 0.0, limit=3)
   assert [camera.direction_kind for camera in cameras] == ["UP", "DOWN", "BOTH"]
+
+
+def test_db_code_columns_normalize_leading_zero_codes(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,도로노선방향,단속구간위치구분,보호구역구분,설치장소\n"
+    "B1,37.001,127.0,01+02,60,03,01,02,복합 코드 후보\n"
+    "B2,37.002,127.0,04,0,01,,01,초등학교 보호구역 후보\n",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 2
+
+  with sqlite3.connect(db_path) as conn:
+    rows = conn.execute("""
+      SELECT camera_type, direction, section_type, school_zone
+      FROM speed_cameras
+      ORDER BY id
+    """).fetchall()
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(speed_cameras)")}
+  assert rows == [
+    ("1+2", "3", "1", "2"),
+    ("4", "1", "", "1"),
+  ]
+  assert "camera_type_raw" not in columns
 
 
 def test_lateral_offset_filter_removes_side_road_camera(tmp_path: Path) -> None:
@@ -1037,6 +1112,18 @@ def test_direction_kind_and_route_hint_helpers() -> None:
   assert route_hint_from_text("포도마을사거리(부천시청역->순천향대학교부천병원)") == "부천시청역->순천향대학교부천병원"
 
 
+def test_normalize_direction_for_db() -> None:
+  assert normalize_code_for_db("01+02") == "1+2"
+  assert normalize_code_for_db("01/02") == "1/2"
+  assert normalize_direction_for_db("01") == "1"
+  assert normalize_direction_for_db("1") == "1"
+  assert normalize_direction_for_db("02") == "2"
+  assert normalize_direction_for_db("2") == "2"
+  assert normalize_direction_for_db("03") == "3"
+  assert normalize_direction_for_db("3") == "3"
+  assert normalize_direction_for_db("북") == "북"
+
+
 def test_relative_projection_m() -> None:
   forward_m, side_m = relative_projection_m(100.0, 0.0)
   assert forward_m == pytest.approx(100.0)
@@ -1061,7 +1148,10 @@ def test_public_data_portal_column_codes(tmp_path: Path) -> None:
   assert camera is not None
   assert camera.id.startswith("J0071-")
   assert camera.speed_limit == 40
-  assert camera.camera_type == "01"
+  assert camera.camera_type == "1"
+  with sqlite3.connect(db_path) as conn:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(speed_cameras)")}
+  assert "camera_type_raw" not in columns
   assert database_data_date(db_path) == "2026-01-29"
 
 
