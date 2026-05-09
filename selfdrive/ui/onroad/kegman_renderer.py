@@ -7,12 +7,9 @@ from cereal import log
 from openpilot.common.constants import CV
 from openpilot.selfdrive.ui import UI_BORDER_SIZE
 from openpilot.selfdrive.ui.onroad.custom_overlay_layout import (
-  BASE_ITEM_HEIGHT,
-  BASE_MARGIN,
-  overlay_cell_width,
-  overlay_column_gap,
-  overlay_padding,
-  overlay_scale_for_rect,
+  KEGMAN_MAX_ITEMS,
+  kegman_overlay_columns,
+  kegman_overlay_panel_layout,
 )
 from openpilot.selfdrive.ui.onroad.osm_road_overlay_renderer import minimap_rect
 from openpilot.selfdrive.ui.ui_state import ui_state
@@ -21,9 +18,8 @@ from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.widgets import Widget
 
 
-MAX_ITEMS = 6
-BASE_TOP = 250
-MINIMAP_CLEARANCE = 14
+MAX_ITEMS = KEGMAN_MAX_ITEMS
+MINIMAP_CLEARANCE = 3
 TPMS_FONT_SIZE = 38
 TPMS_DM_BTN_SIZE = 192
 TPMS_COL_GAP = 80
@@ -89,7 +85,7 @@ class KegmanRenderer(Widget):
       return
 
     minimap_rect = self._minimap_rect(rect)
-    columns = 2 if len(measures) >= 5 else 1
+    columns = kegman_overlay_columns(len(measures))
     layout = self._panel_layout(rect, len(measures), columns)
     panel_rect = layout["panel_rect"]
 
@@ -137,42 +133,7 @@ class KegmanRenderer(Widget):
     columns: int,
     minimap_rect: rl.Rectangle | None = None,
   ) -> dict:
-    columns = max(1, columns)
-    rows = (item_count + columns - 1) // columns
-    scale = self._scale_for_rect(rect, rows)
-    margin = max(4.0, BASE_MARGIN * scale)
-    cell_width = overlay_cell_width(rect, scale)
-    item_height = max(30.0, BASE_ITEM_HEIGHT * scale)
-    padding = overlay_padding(scale)
-    column_gap = overlay_column_gap(scale) if columns > 1 else 0.0
-    panel_width = padding * 2 + cell_width * columns + column_gap if columns > 1 else cell_width
-    panel_height = padding * 2 + item_height * rows
-
-    x = rect.x + rect.width - panel_width - margin
-    y = rect.y + BASE_TOP * scale
-    if rect.height < 500:
-      y = rect.y + margin
-
-    if minimap_rect is not None:
-      max_bottom = minimap_rect.y - max(MINIMAP_CLEARANCE, margin)
-      if y + panel_height > max_bottom:
-        y = max(rect.y + margin, max_bottom - panel_height)
-
-    if y + panel_height > rect.y + rect.height - margin:
-      y = max(rect.y + margin, rect.y + rect.height - panel_height - margin)
-
-    return {
-      "panel_rect": rl.Rectangle(x, y, panel_width, panel_height),
-      "rows": rows,
-      "scale": scale,
-      "padding": padding,
-      "cell_width": cell_width,
-      "item_height": item_height,
-      "column_gap": column_gap,
-    }
-
-  def _scale_for_rect(self, rect: rl.Rectangle, item_count: int) -> float:
-    return overlay_scale_for_rect(rect, item_count)
+    return kegman_overlay_panel_layout(rect, item_count, columns, minimap_rect, MINIMAP_CLEARANCE)
 
   def _minimap_rect(self, rect: rl.Rectangle) -> rl.Rectangle | None:
     mode = int(ui_state.custom_params.get("OsmRoadOverlayMode", 0))

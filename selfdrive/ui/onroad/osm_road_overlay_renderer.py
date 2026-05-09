@@ -5,7 +5,12 @@ import math
 import time
 
 import pyray as rl
-from openpilot.selfdrive.ui.onroad.custom_overlay_layout import overlay_two_column_width
+from openpilot.selfdrive.ui.onroad.custom_overlay_layout import (
+  kegman_overlay_columns,
+  kegman_overlay_item_count,
+  kegman_overlay_panel_layout,
+  overlay_two_column_width,
+)
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import FontWeight, gui_app
 from openpilot.system.ui.lib.text_measure import measure_text_cached
@@ -15,6 +20,8 @@ from openpilot.system.ui.widgets import Widget
 MINIMAP_MARGIN = 30.0
 MINIMAP_MAX_HEIGHT = 300.0
 MINIMAP_HEIGHT_FRACTION = 0.34
+MINIMAP_MIN_HEIGHT = 180.0
+MINIMAP_KEGMAN_GAP = 3.0
 MINIMAP_RADIUS_ANIMATION_TAU_SECONDS = 0.22
 MINIMAP_RADIUS_ANIMATION_EPSILON_M = 0.5
 ROAD_DEFAULT = rl.Color(255, 255, 255, 86)
@@ -168,10 +175,38 @@ class OsmRoadOverlayRenderer(Widget):
 
 def minimap_rect(rect: rl.Rectangle) -> rl.Rectangle:
   panel_w = overlay_two_column_width(rect)
+  panel_bottom = rect.y + rect.height - MINIMAP_MARGIN
+  kegman_bottom = _kegman_panel_bottom(rect)
+  if kegman_bottom is not None:
+    panel_y = kegman_bottom + MINIMAP_KEGMAN_GAP
+    panel_h = panel_bottom - panel_y
+    if panel_h >= MINIMAP_MIN_HEIGHT:
+      return rl.Rectangle(
+        rect.x + rect.width - panel_w - MINIMAP_MARGIN,
+        panel_y,
+        panel_w,
+        panel_h,
+      )
+
   panel_h = min(MINIMAP_MAX_HEIGHT, rect.height * MINIMAP_HEIGHT_FRACTION)
   return rl.Rectangle(
     rect.x + rect.width - panel_w - MINIMAP_MARGIN,
-    rect.y + rect.height - panel_h - MINIMAP_MARGIN,
+    panel_bottom - panel_h,
     panel_w,
     panel_h,
   )
+
+
+def _kegman_panel_bottom(rect: rl.Rectangle) -> float | None:
+  try:
+    ui_custom = ui_state.sm["uICustom"].userInterface
+  except Exception:
+    return None
+
+  item_count = kegman_overlay_item_count(ui_custom)
+  if item_count <= 0:
+    return None
+
+  columns = kegman_overlay_columns(item_count)
+  panel = kegman_overlay_panel_layout(rect, item_count, columns)["panel_rect"]
+  return panel.y + panel.height
