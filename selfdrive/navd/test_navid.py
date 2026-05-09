@@ -126,3 +126,25 @@ def test_forward_road_info_rejects_cross_traffic() -> None:
   info = navid._forward_road_info(segment, gps, 20.0, -5.0, 20.0, 80.0, "Current Road")
 
   assert info["f"] is False
+
+
+def test_osm_corridor_cache_refreshes_on_heading_change(tmp_path: Path) -> None:
+  navid = _load_navid_module()
+  cache = navid.OsmRoadCache(
+    center_lat=37.0,
+    center_lon=127.0,
+    heading_deg=0.0,
+    forward_start_m=-100.0,
+    forward_end_m=1500.0,
+    side_limit_m=70.0,
+    major_side_limit_m=140.0,
+    refresh_distance_m=900.0,
+    loaded_at=1.0,
+    db_mtime=0.0,
+    cache_kind="corridor",
+  )
+  gps = types.SimpleNamespace(latitude=37.0, longitude=127.0, bearingDeg=30.0)
+
+  assert navid._osm_corridor_cache_needs_refresh(
+    cache, tmp_path / "missing.sqlite3", gps, -100.0, 1500.0, 70.0, 140.0, 900.0, 3.0
+  )

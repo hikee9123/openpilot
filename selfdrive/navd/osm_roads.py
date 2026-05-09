@@ -20,6 +20,16 @@ DEFAULT_OSM_ROADS_DB_PATH = Path(os.getenv("OSM_ROADS_DB", str(DEFAULT_NAVD_DB_D
 METERS_PER_DEG_LAT = 111320.0
 DEFAULT_LOOKUP_RADIUS_M = 50.0
 MAX_HEADING_DIFF_DEG = 60.0
+MAJOR_HIGHWAYS = {
+  "motorway",
+  "motorway_link",
+  "trunk",
+  "trunk_link",
+  "primary",
+  "primary_link",
+  "secondary",
+  "secondary_link",
+}
 
 ROAD_NAME_SUFFIXES = (
   "EXPRESSWAY",
@@ -40,6 +50,7 @@ class OSMRoadMatch:
   ref: str
   highway: str
   road_class: str
+  oneway: int
   distance_m: float
   heading_diff_deg: float
   bearing_deg: float
@@ -58,6 +69,7 @@ class OSMRoadSegment:
   ref: str
   highway: str
   road_class: str
+  oneway: int
   lat1: float
   lon1: float
   lat2: float
@@ -113,6 +125,16 @@ def bidirectional_heading_diff_deg(segment_bearing_deg: float, heading_deg: floa
   return min(angle_diff_deg(segment_bearing_deg, heading_deg), angle_diff_deg((segment_bearing_deg + 180.0) % 360.0, heading_deg))
 
 
+def segment_allowed_bearings(segment) -> tuple[float, ...]:
+  bearing = float(getattr(segment, "bearing_deg", 0.0)) % 360.0
+  oneway = int(getattr(segment, "oneway", 0) or 0)
+  if oneway > 0:
+    return (bearing,)
+  if oneway < 0:
+    return ((bearing + 180.0) % 360.0,)
+  return (bearing, (bearing + 180.0) % 360.0)
+
+
 def _lon_scale(lat: float) -> float:
   return METERS_PER_DEG_LAT * max(0.1, math.cos(math.radians(lat)))
 
@@ -147,6 +169,72 @@ def latlon_to_car_space_m(origin_lat: float, origin_lon: float, heading_deg: flo
   forward_m = north_m * math.cos(heading_rad) + east_m * math.sin(heading_rad)
   right_m = east_m * math.cos(heading_rad) - north_m * math.sin(heading_rad)
   return forward_m, right_m
+
+
+def _car_space_to_latlon(origin_lat: float, origin_lon: float, heading_deg: float, forward_m: float, right_m: float) -> tuple[float, float]:
+  heading_rad = math.radians(heading_deg)
+  north_m = forward_m * math.cos(heading_rad) - right_m * math.sin(heading_rad)
+  east_m = forward_m * math.sin(heading_rad) + right_m * math.cos(heading_rad)
+  return origin_lat + north_m / METERS_PER_DEG_LAT, origin_lon + east_m / _lon_scale(origin_lat)
+
+
+def _corridor_bounding_box(
+  lat: float,
+  lon: float,
+  heading_deg: float,
+  forward_start_m: float,
+  forward_end_m: float,
+  side_limit_m: float,
+) -> tuple[float, float, float, float]:
+  points = [
+    _car_space_to_latlon(lat, lon, heading_deg, forward_start_m, -side_limit_m),
+    _car_space_to_latlon(lat, lon, heading_deg, forward_start_m, side_limit_m),
+    _car_space_to_latlon(lat, lon, heading_deg, forward_end_m, -side_limit_m),
+    _car_space_to_latlon(lat, lon, heading_deg, forward_end_m, side_limit_m),
+  ]
+  lats = [point[0] for point in points]
+  lons = [point[1] for point in points]
+  return min(lats), max(lats), min(lons), max(lons)
+
+
+def _point_to_segment_distance_xy(px: float, py: float, x1: float, y1: float, x2: float, y2: float) -> float:
+  dx = x2 - x1
+  dy = y2 - y1
+  length_sq = dx * dx + dy * dy
+  if length_sq <= 0.0:
+    return math.hypot(px - x1, py - y1)
+  t = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / length_sq))
+  return math.hypot(px - (x1 + t * dx), py - (y1 + t * dy))
+
+
+def _segment_intersects_rect(x1: float, y1: float, x2: float, y2: float,
+                             min_x: float, max_x: float, min_y: float, max_y: float) -> bool:
+  if min_x <= x1 <= max_x and min_y <= y1 <= max_y:
+    return True
+  if min_x <= x2 <= max_x and min_y <= y2 <= max_y:
+    return True
+
+  dx = x2 - x1
+  dy = y2 - y1
+  p = (-dx, dx, -dy, dy)
+  q = (x1 - min_x, max_x - x1, y1 - min_y, max_y - y1)
+  u1 = 0.0
+  u2 = 1.0
+  for pi, qi in zip(p, q, strict=False):
+    if pi == 0.0:
+      if qi < 0.0:
+        return False
+      continue
+    t = qi / pi
+    if pi < 0.0:
+      if t > u2:
+        return False
+      u1 = max(u1, t)
+    else:
+      if t < u1:
+        return False
+      u2 = min(u2, t)
+  return True
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
@@ -344,6 +432,7 @@ def find_current_road(
       ref=ref,
       highway=str(row["highway"] or ""),
       road_class=str(row["road_class"] or ""),
+      oneway=int(row["oneway"]),
       distance_m=distance_m,
       heading_diff_deg=heading_diff,
       bearing_deg=float(row["bearing_deg"]),
@@ -395,6 +484,7 @@ def nearby_road_segments(
       ref=str(row["ref"] or ""),
       highway=str(row["highway"] or ""),
       road_class=str(row["road_class"] or ""),
+      oneway=int(row["oneway"]),
       lat1=float(row["lat1"]),
       lon1=float(row["lon1"]),
       lat2=float(row["lat2"]),
@@ -404,4 +494,74 @@ def nearby_road_segments(
     ))
 
   segments.sort(key=lambda segment: segment.distance_m)
+  return segments[:max(0, limit)]
+
+
+def forward_road_segments(
+  db_path: Path = DEFAULT_OSM_ROADS_DB_PATH,
+  lat: float = 0.0,
+  lon: float = 0.0,
+  heading_deg: float = 0.0,
+  forward_start_m: float = -30.0,
+  forward_end_m: float = 1500.0,
+  side_limit_m: float = 70.0,
+  major_side_limit_m: float = 140.0,
+  limit: int = 1000,
+) -> list[OSMRoadSegment]:
+  if not db_path.exists() or forward_end_m <= forward_start_m:
+    return []
+
+  max_side_m = max(side_limit_m, major_side_limit_m)
+  lat_min, lat_max, lon_min, lon_max = _corridor_bounding_box(
+    lat, lon, heading_deg, forward_start_m, forward_end_m, max_side_m
+  )
+  try:
+    with closing(sqlite3.connect(db_path)) as conn:
+      conn.row_factory = sqlite3.Row
+      if not _table_exists(conn, "roads") or not _table_exists(conn, "roads_rtree"):
+        return []
+      rows = conn.execute("""
+        SELECT roads.*
+        FROM roads
+        JOIN roads_rtree ON roads.id = roads_rtree.id
+        WHERE roads_rtree.min_lat <= ?
+          AND roads_rtree.max_lat >= ?
+          AND roads_rtree.min_lon <= ?
+          AND roads_rtree.max_lon >= ?
+      """, (lat_max, lat_min, lon_max, lon_min)).fetchall()
+  except sqlite3.Error:
+    return []
+
+  segments: list[OSMRoadSegment] = []
+  for row in rows:
+    x1, y1 = latlon_to_car_space_m(lat, lon, heading_deg, row["lat1"], row["lon1"])
+    x2, y2 = latlon_to_car_space_m(lat, lon, heading_deg, row["lat2"], row["lon2"])
+    highway = str(row["highway"] or "")
+    row_side_limit_m = major_side_limit_m if highway in MAJOR_HIGHWAYS else side_limit_m
+    if not _segment_intersects_rect(x1, y1, x2, y2, forward_start_m, forward_end_m, -row_side_limit_m, row_side_limit_m):
+      continue
+
+    segments.append(OSMRoadSegment(
+      road_id=int(row["id"]),
+      osm_id=int(row["osm_id"]),
+      name=str(row["name"] or ""),
+      ref=str(row["ref"] or ""),
+      highway=highway,
+      road_class=str(row["road_class"] or ""),
+      oneway=int(row["oneway"]),
+      lat1=float(row["lat1"]),
+      lon1=float(row["lon1"]),
+      lat2=float(row["lat2"]),
+      lon2=float(row["lon2"]),
+      bearing_deg=float(row["bearing_deg"]),
+      distance_m=_point_to_segment_distance_xy(0.0, 0.0, x1, y1, x2, y2),
+    ))
+
+  segments.sort(key=lambda segment: (
+    max(0.0, min(
+      latlon_to_car_space_m(lat, lon, heading_deg, segment.lat1, segment.lon1)[0],
+      latlon_to_car_space_m(lat, lon, heading_deg, segment.lat2, segment.lon2)[0],
+    )),
+    segment.distance_m,
+  ))
   return segments[:max(0, limit)]

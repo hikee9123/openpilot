@@ -41,9 +41,9 @@ route_hint_from_text = speed_camera.route_hint_from_text
 same_corridor_likely = speed_camera.same_corridor_likely
 
 try:
-  from openpilot.selfdrive.navd.osm_roads import insert_road_segments
+  from openpilot.selfdrive.navd.osm_roads import forward_road_segments, insert_road_segments
 except ModuleNotFoundError:
-  from selfdrive.navd.osm_roads import insert_road_segments
+  from selfdrive.navd.osm_roads import forward_road_segments, insert_road_segments
 
 
 def _write_csv(path: Path, body: str) -> None:
@@ -78,6 +78,22 @@ def _build_test_osm_roads_db(db_path: Path) -> None:
         "lon2": 127.0010,
       },
     ])
+
+
+def _build_single_osm_road_db(db_path: Path, *, oneway: int, lat1: float = 37.0, lat2: float = 37.0100) -> None:
+  with sqlite3.connect(db_path) as conn:
+    insert_road_segments(conn, [{
+      "osm_id": 201,
+      "name": "Current Road",
+      "ref": "",
+      "highway": "residential",
+      "road_class": "CITY_ROAD",
+      "oneway": oneway,
+      "lat1": lat1,
+      "lon1": 127.0000,
+      "lat2": lat2,
+      "lon2": 127.0000,
+    }])
 
 
 def _fetch_row(db_path: Path, camera_id_prefix: str) -> sqlite3.Row:
@@ -1209,6 +1225,178 @@ def test_find_lead_camera_keeps_speed_category_ahead_of_local_road_signal(tmp_pa
   assert camera is not None
   assert camera.id.startswith("A2-")
   assert not camera.local_road_match
+
+
+def test_osm_context_does_not_extend_camera_lookahead_distance(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  osm_db_path = tmp_path / "osm_roads.sqlite3"
+  _build_test_osm_roads_db(osm_db_path)
+  csv_path.write_text(
+    "MNLSS_REGLT_CAMERA_MANAGE_NO,LATITUDE,LONGITUDE,REGLT_SE,LMTT_VE,ROAD_ROUTE_NM\n"
+    "A1,37.020,127.000,01,80,Current Road\n",
+    encoding="utf-8",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 1
+  osm_segments = forward_road_segments(osm_db_path, 37.0, 127.0, 0.0, -100.0, 3000.0, 70.0, 140.0, 100)
+
+  assert find_lead_camera(db_path, 37.0, 127.0, 0.0, max_distance_m=500.0, osm_road_segments=osm_segments) is None
+
+
+def test_osm_context_prioritizes_camera_on_cached_forward_road(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  osm_db_path = tmp_path / "osm_roads.sqlite3"
+  _build_test_osm_roads_db(osm_db_path)
+  csv_path.write_text(
+    "MNLSS_REGLT_CAMERA_MANAGE_NO,LATITUDE,LONGITUDE,REGLT_SE,LMTT_VE,ROAD_ROUTE_NM\n"
+    "A1,37.002,127.000,01,80,Current Road\n"
+    "A2,37.001,127.000,01,80,Side Road\n",
+    encoding="utf-8",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 2
+  osm_segments = forward_road_segments(osm_db_path, 37.0, 127.0, 0.0, -100.0, 3000.0, 70.0, 140.0, 100)
+
+  cameras = find_lead_cameras(db_path, 37.0, 127.0, 0.0, limit=2, osm_road_segments=osm_segments)
+
+  assert cameras[0].id.startswith("A1-")
+  assert cameras[0].local_road_match
+  assert cameras[0].osm_corridor_match
+
+
+def test_osm_context_beats_local_forward_match_within_speed_category(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  osm_db_path = tmp_path / "osm_roads.sqlite3"
+  with sqlite3.connect(osm_db_path) as conn:
+    insert_road_segments(conn, [{
+      "osm_id": 301,
+      "name": "Predicted Road",
+      "ref": "",
+      "highway": "primary",
+      "road_class": "NATIONAL_ROAD",
+      "oneway": 1,
+      "lat1": 37.0000,
+      "lon1": 127.0015,
+      "lat2": 37.0100,
+      "lon2": 127.0015,
+    }])
+  csv_path.write_text(
+    "MNLSS_REGLT_CAMERA_MANAGE_NO,LATITUDE,LONGITUDE,REGLT_SE,LMTT_VE,ROAD_ROUTE_NM\n"
+    "A1,37.001,126.9995,01,80,Current Road\n"
+    "A2,37.002,127.0015,01,80,Predicted Road\n",
+    encoding="utf-8",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 2
+  osm_segments = forward_road_segments(osm_db_path, 37.0, 127.0, 0.0, -100.0, 3000.0, 70.0, 140.0, 100)
+
+  cameras = find_lead_cameras(
+    db_path,
+    37.0,
+    127.0,
+    0.0,
+    current_road_name="Current Road",
+    osm_road_segments=osm_segments,
+    limit=2,
+  )
+
+  assert len(cameras) == 2
+  assert cameras[0].id.startswith("A2-")
+  assert cameras[0].osm_corridor_match
+  assert cameras[0].osm_direction_source == "OSM_ONEWAY"
+  assert cameras[1].id.startswith("A1-")
+  assert cameras[1].forward_road_match
+
+
+def test_osm_direction_prediction_uses_oneway_bearing(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  osm_db_path = tmp_path / "osm_roads.sqlite3"
+  _build_single_osm_road_db(osm_db_path, oneway=1)
+  csv_path.write_text(
+    "MNLSS_REGLT_CAMERA_MANAGE_NO,LATITUDE,LONGITUDE,REGLT_SE,LMTT_VE,ROAD_ROUTE_NM\n"
+    "A1,37.002,127.000,01,80,Current Road\n",
+    encoding="utf-8",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 1
+  osm_segments = forward_road_segments(osm_db_path, 37.0, 127.0, 0.0, -100.0, 3000.0, 70.0, 140.0, 100)
+
+  camera = find_lead_camera(db_path, 37.0, 127.0, 0.0, osm_road_segments=osm_segments)
+
+  assert camera is not None
+  assert camera.osm_direction_source == "OSM_ONEWAY"
+  assert camera.osm_predicted_bearing_deg == pytest.approx(0.0)
+  assert camera.osm_direction_confidence >= speed_camera.OSM_DIRECTION_ONEWAY_CONFIDENCE
+
+
+def test_osm_direction_prediction_uses_reverse_oneway_bearing(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  osm_db_path = tmp_path / "osm_roads.sqlite3"
+  _build_single_osm_road_db(osm_db_path, oneway=-1)
+  csv_path.write_text(
+    "MNLSS_REGLT_CAMERA_MANAGE_NO,LATITUDE,LONGITUDE,REGLT_SE,LMTT_VE,ROAD_ROUTE_NM\n"
+    "A1,37.002,127.000,01,80,Current Road\n",
+    encoding="utf-8",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 1
+  osm_segments = forward_road_segments(osm_db_path, 37.0, 127.0, 0.0, -100.0, 3000.0, 70.0, 140.0, 100)
+
+  camera = find_lead_camera(db_path, 37.0, 127.0, 0.0, osm_road_segments=osm_segments)
+
+  assert camera is not None
+  assert camera.osm_direction_source == "OSM_ONEWAY"
+  assert camera.osm_predicted_bearing_deg == pytest.approx(180.0)
+  assert camera.osm_direction_heading_diff_deg == pytest.approx(180.0)
+
+
+def test_osm_bidirectional_prediction_chooses_heading_with_lower_confidence(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  osm_db_path = tmp_path / "osm_roads.sqlite3"
+  _build_single_osm_road_db(osm_db_path, oneway=0, lat1=36.9900, lat2=37.0000)
+  csv_path.write_text(
+    "MNLSS_REGLT_CAMERA_MANAGE_NO,LATITUDE,LONGITUDE,REGLT_SE,LMTT_VE,ROAD_ROUTE_NM\n"
+    "A1,36.998,127.000,01,80,Current Road\n",
+    encoding="utf-8",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 1
+  osm_segments = forward_road_segments(osm_db_path, 37.0, 127.0, 180.0, -100.0, 3000.0, 70.0, 140.0, 100)
+
+  camera = find_lead_camera(db_path, 37.0, 127.0, 180.0, osm_road_segments=osm_segments)
+
+  assert camera is not None
+  assert camera.osm_direction_source == "OSM_BIDIRECTIONAL_HEADING"
+  assert camera.osm_predicted_bearing_deg == pytest.approx(180.0)
+  assert camera.osm_direction_confidence < speed_camera.OSM_DIRECTION_ONEWAY_CONFIDENCE
+
+
+def test_db_direction_prediction_takes_precedence_over_osm(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  osm_db_path = tmp_path / "osm_roads.sqlite3"
+  _build_single_osm_road_db(osm_db_path, oneway=-1)
+  csv_path.write_text(
+    "MNLSS_REGLT_CAMERA_MANAGE_NO,LATITUDE,LONGITUDE,REGLT_SE,LMTT_VE,ROAD_ROUTE_NM,ROAD_ROUTE_DRC\n"
+    "A1,37.002,127.000,01,80,Current Road,북\n",
+    encoding="utf-8",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 1
+  osm_segments = forward_road_segments(osm_db_path, 37.0, 127.0, 0.0, -100.0, 3000.0, 70.0, 140.0, 100)
+
+  camera = find_lead_camera(db_path, 37.0, 127.0, 0.0, osm_road_segments=osm_segments)
+
+  assert camera is not None
+  assert camera.osm_direction_source == "DB_DIRECTION"
+  assert camera.osm_predicted_bearing_deg == pytest.approx(0.0)
+  assert camera.osm_direction_confidence == pytest.approx(1.0)
 
 
 def test_region_counts_from_address(tmp_path: Path) -> None:
