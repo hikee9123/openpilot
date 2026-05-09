@@ -33,6 +33,7 @@ DEFAULT_CUSTOM_PARAMS: dict[str, int | float | bool] = {
   "ShowSpeedCameraDebugText": False,
   "UseLocalOsmRoads": False,
   "OsmRoadOverlayMode": 0,
+  "OsmRoadBuildMode": 0,
   "LocalOsmRoadRadius": 50,
   "ParamAutoScreenOff": 8,
   "ParamScreenOffAfterFade": True,

@@ -71,6 +71,14 @@ OSM_ROAD_OVERLAY_MODE_OPTIONS = [
   (0, tr_noop("Off")),
   (1, tr_noop("Mini Map")),
 ]
+OSM_ROADS_BUILD_MODE_SKIP_GRAPH = 0
+OSM_ROADS_BUILD_MODE_BUILD_GRAPH = 1
+OSM_ROADS_BUILD_MODE_GIT_PULL = 2
+OSM_ROADS_BUILD_MODE_OPTIONS = [
+  (OSM_ROADS_BUILD_MODE_SKIP_GRAPH, tr_noop("Skip Graph")),
+  (OSM_ROADS_BUILD_MODE_BUILD_GRAPH, tr_noop("Build Graph")),
+  (OSM_ROADS_BUILD_MODE_GIT_PULL, tr_noop("Install OSM DB from Git")),
+]
 CAR_TRACKING_DESCRIPTION = tr_noop(
   "Shows a separate CAR TRACKING panel on the onroad screen.<br>"
   "EGO / LEFT / RIGHT: Fuses liveTracks radar points with modelV2 leadsV3 camera candidates, then selects the nearest lead in each lane.<br>"
@@ -994,8 +1002,9 @@ class CustomSettingsLayout(Widget):
       "Navigation": [
         SectionHeader(tr_noop("OSM roads DB")),
         self._osm_roads_download_item(),
+        self._cycle_choice_item("OsmRoadBuildMode", tr_noop("OSM DB build mode"), OSM_ROADS_BUILD_MODE_OPTIONS,
+                                tr_noop("Skip Graph builds on device without road graph tables. Build Graph creates road_nodes, road_edges, and road_adjacency. Install OSM DB from Git installs the prebuilt full DB.")),
         self._osm_roads_build_item(),
-        self._osm_roads_git_db_item(),
         CompactStatusProgressInfoGroup(
           self._osm_roads_status_text,
           self._osm_roads_progress_text,
@@ -1334,18 +1343,11 @@ class CustomSettingsLayout(Widget):
     return button_item(
       lambda: tr("Build OSM DB"),
       self._osm_roads_build_button_text,
-      description=lambda: tr("Builds the offline road-name DB from the downloaded South Korea OSM PBF."),
+      description=self._osm_roads_build_description,
       callback=self._handle_osm_roads_build,
-      enabled=lambda: self._osm_roads_update_status() != STATUS_RUNNING and OSM_ROADS_PBF_PATH.exists(),
-    )
-
-  def _osm_roads_git_db_item(self):
-    return button_item(
-      lambda: tr("Install OSM DB from Git"),
-      self._osm_roads_git_db_button_text,
-      description=lambda: tr("Downloads the prebuilt OSM roads DB from GitHub LFS and installs it."),
-      callback=self._handle_osm_roads_git_db,
-      enabled=lambda: self._osm_roads_update_status() != STATUS_RUNNING,
+      enabled=lambda: self._osm_roads_update_status() != STATUS_RUNNING and (
+        self._osm_roads_build_mode() == OSM_ROADS_BUILD_MODE_GIT_PULL or OSM_ROADS_PBF_PATH.exists()
+      ),
     )
 
   def _handle_speed_camera_update(self) -> None:
@@ -1478,20 +1480,44 @@ class CustomSettingsLayout(Widget):
       mark_db_updated=False,
     )
 
-  def _handle_osm_roads_build(self) -> None:
-    self._handle_osm_roads_command(
-      [sys.executable, "tools/scripts/update_osm_roads.py", "--skip-download", "--keep-pbf", "--skip-road-graph"],
-      tr("Build the local OSM roads DB from the downloaded OSM data? This can take several minutes."),
-      "BUILD",
-      reset_segment_count=True,
-      mark_db_updated=True,
-    )
+  def _osm_roads_build_mode(self) -> int:
+    try:
+      mode = int(self._values()["OsmRoadBuildMode"])
+    except (KeyError, TypeError, ValueError):
+      return OSM_ROADS_BUILD_MODE_SKIP_GRAPH
+    if mode not in (OSM_ROADS_BUILD_MODE_SKIP_GRAPH, OSM_ROADS_BUILD_MODE_BUILD_GRAPH, OSM_ROADS_BUILD_MODE_GIT_PULL):
+      return OSM_ROADS_BUILD_MODE_SKIP_GRAPH
+    return mode
 
-  def _handle_osm_roads_git_db(self) -> None:
+  def _osm_roads_build_description(self) -> str:
+    mode = self._osm_roads_build_mode()
+    if mode == OSM_ROADS_BUILD_MODE_GIT_PULL:
+      return tr("Installs the prebuilt full OSM DB from GitHub LFS, including road_nodes, road_edges, and road_adjacency.")
+    if mode == OSM_ROADS_BUILD_MODE_BUILD_GRAPH:
+      return tr("Builds the full OSM DB including road_nodes, road_edges, and road_adjacency. This can fail on device if memory is low.")
+    return tr("Builds a device-safe OSM DB and skips road_nodes, road_edges, and road_adjacency.")
+
+  def _osm_roads_build_command(self) -> list[str]:
+    mode = self._osm_roads_build_mode()
+    if mode == OSM_ROADS_BUILD_MODE_GIT_PULL:
+      return [sys.executable, "tools/scripts/install_osm_roads_db_from_git.py", "--require-road-graph"]
+    command = [sys.executable, "tools/scripts/update_osm_roads.py", "--skip-download", "--keep-pbf"]
+    if mode == OSM_ROADS_BUILD_MODE_SKIP_GRAPH:
+      command.append("--skip-road-graph")
+    return command
+
+  def _handle_osm_roads_build(self) -> None:
+    mode = self._osm_roads_build_mode()
+    if mode == OSM_ROADS_BUILD_MODE_GIT_PULL:
+      content = tr("Download the prebuilt full OSM roads DB from GitHub and replace the local DB?")
+    elif mode == OSM_ROADS_BUILD_MODE_BUILD_GRAPH:
+      content = tr("Build the local OSM roads DB with road_nodes, road_edges, and road_adjacency? This can take a long time and may fail on device.")
+    else:
+      content = tr("Build the local OSM roads DB without road_nodes, road_edges, and road_adjacency? This is recommended on device.")
     self._handle_osm_roads_command(
-      [sys.executable, "tools/scripts/install_osm_roads_db_from_git.py", "--require-road-graph"],
-      tr("Download the prebuilt OSM roads DB from GitHub and replace the local DB? This can take several minutes."),
-      "INSTALL",
+      self._osm_roads_build_command(),
+      content,
+      "BUILD",
       reset_segment_count=True,
       mark_db_updated=True,
     )
@@ -1587,14 +1613,6 @@ class CustomSettingsLayout(Widget):
     if status == STATUS_FAILED:
       return tr("RETRY")
     return tr("BUILD")
-
-  def _osm_roads_git_db_button_text(self) -> str:
-    status = self._osm_roads_update_status()
-    if status == STATUS_RUNNING:
-      return tr("WAIT")
-    if status == STATUS_FAILED:
-      return tr("RETRY")
-    return tr("INSTALL")
 
   def _speed_camera_db_count_from_log(self, log_path: str = SPEED_CAMERA_LOG_PATH) -> int:
     try:
