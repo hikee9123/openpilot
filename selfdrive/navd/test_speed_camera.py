@@ -151,12 +151,22 @@ def test_export_speed_camera_leaflet_html(tmp_path: Path) -> None:
   assert "dataset-load-status" in html
   assert "camera-type-filter" in html
   assert "direction-filter" in html
+  assert "quality-filter" in html
   assert "전체 단속 구분" in html
   assert "전체 도로방향" in html
+  assert "전체 데이터 상태" in html
+  assert "좌표 오기 의심 수" in html
   assert "function cameraEnforcementType(camera)" in html
   assert "function cameraDirectionType(camera)" in html
+  assert "function cameraQualityCategory(camera)" in html
+  assert "function defaultQualityFilter()" in html
+  assert 'activeDatasetKey === "db" ? "NORMAL" : ""' in html
   assert "directionKindLabel(camera.directionKind)" in html
+  assert "qualityLabel(cameraQualityCategory(camera))" in html
   assert '"방향 추정데이터": camera.directionKind ? directionKindLabel(camera.directionKind) : ""' in html
+  assert '"데이터 상태": qualityLabel(cameraQualityCategory(camera))' in html
+  assert '"qualityCategory":"NORMAL"' in html
+  assert '"quality_reason":"NORMAL"' not in html
   assert '"cameraType":"속도위반"' in html
   assert '"direction":"1"' in html
   assert '"directionKind":"UP"' in html
@@ -189,7 +199,13 @@ def test_export_speed_camera_leaflet_html_can_show_raw_csv_rows(tmp_path: Path) 
   )
   assert create_database_from_csv(csv_path, db_path) == 1
 
-  assert export_speed_camera_leaflet_html(db_path, html_path, csv_sources=[CsvSource(csv_path, "public")], data_mode="inline") == 2
+  assert export_speed_camera_leaflet_html(
+    db_path,
+    html_path,
+    csv_sources=[CsvSource(csv_path, "public")],
+    active_source="csv",
+    data_mode="inline",
+  ) == 2
   html = html_path.read_text(encoding="utf-8")
 
   assert '"count":2' in html
@@ -243,7 +259,12 @@ def test_export_speed_camera_leaflet_html_can_write_external_datasets(tmp_path: 
   )
   assert create_database_from_csv(csv_path, db_path) == 1
 
-  assert export_speed_camera_leaflet_html(db_path, html_path, csv_sources=[CsvSource(csv_path, "public")]) == 2
+  assert export_speed_camera_leaflet_html(
+    db_path,
+    html_path,
+    csv_sources=[CsvSource(csv_path, "public")],
+    active_source="csv",
+  ) == 2
   data_dir = tmp_path / "speed_cameras_data"
   csv_json_path = data_dir / "csv.json"
   db_json_path = data_dir / "db.json"
@@ -432,6 +453,8 @@ def test_import_stores_camera_category_and_road_class_columns(tmp_path: Path) ->
   assert a1["camera_category"] == "SPEED"
   assert a1["camera_type_code"] == 1
   assert a1["is_speed_camera"] == 1
+  assert a1["quality_category"] == "NORMAL"
+  assert a1["quality_reason"] == ""
   assert a1["road_class"] == "EXPRESSWAY"
   assert a1["road_class_code"] == 1
   assert a1["is_expressway"] == 1
@@ -473,7 +496,35 @@ def test_import_stores_camera_category_and_road_class_columns(tmp_path: Path) ->
 
   with sqlite3.connect(db_path) as conn:
     version = conn.execute("SELECT value FROM metadata WHERE key = 'version'").fetchone()[0]
+    suspect_count = conn.execute("SELECT value FROM metadata WHERE key = 'coordinate_suspect_count'").fetchone()[0]
   assert version == str(speed_camera.DB_VERSION)
+  assert suspect_count == "0"
+
+
+def test_coordinate_suspect_rows_are_categorized_not_removed(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,도로노선명,설치장소\n"
+    "J4262,37.4447525,125.1673663,2,30,금광로,금빛그랑메종 508동 앞\n"
+    "A1,37.001,127.0,속도위반,80,정상로,정상 카메라\n",
+  )
+
+  assert create_database_from_csv(csv_path, db_path) == 2
+
+  suspect = _fetch_row(db_path, "J4262")
+  normal = _fetch_row(db_path, "A1")
+  assert suspect["camera_category"] == "SPEED_SIGNAL"
+  assert suspect["quality_category"] == "COORDINATE_SUSPECT"
+  assert suspect["quality_reason"] == "known_longitude_typo"
+  assert normal["quality_category"] == "NORMAL"
+
+  with sqlite3.connect(db_path) as conn:
+    suspect_count = conn.execute("SELECT value FROM metadata WHERE key = 'coordinate_suspect_count'").fetchone()[0]
+  assert suspect_count == "1"
+
+  assert find_lead_camera(db_path, 37.4447525, 125.1673663, 90.0, max_distance_m=500.0) is None
 
 
 def test_find_lead_camera_prioritizes_speed_camera_over_nearest_signal(tmp_path: Path) -> None:

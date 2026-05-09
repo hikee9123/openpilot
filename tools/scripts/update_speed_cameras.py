@@ -115,8 +115,8 @@ def main() -> None:
   parser.add_argument(
     "--map-html-source",
     choices=("csv", "db"),
-    default="csv",
-    help="Initial input source for Leaflet HTML map: csv shows raw rows before DB dedup, db shows stored SQLite rows (default: csv)",
+    default="db",
+    help="Initial input source for Leaflet HTML map: csv shows raw rows before DB dedup, db shows stored SQLite rows (default: db)",
   )
   parser.add_argument(
     "--map-html-data-mode",

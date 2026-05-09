@@ -33,7 +33,7 @@ except ModuleNotFoundError:
   from selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH, find_current_road, road_name_matches
 
 
-DB_VERSION = 9
+DB_VERSION = 10
 PUBLIC_DATA_PK = "15028200"
 PUBLIC_DATA_BASE_URL = "https://www.data.go.kr"
 DEFAULT_DATA_DIR = REPO_NAVD_DATA_DIR
@@ -191,6 +191,19 @@ SOURCE_TYPE_PRIORITY = {
   "custom": 3,
 }
 
+QUALITY_NORMAL = "NORMAL"
+QUALITY_RAW_ORIGINAL = "RAW_ORIGINAL"
+QUALITY_COORDINATE_SUSPECT = "COORDINATE_SUSPECT"
+
+KNOWN_COORDINATE_SUSPECTS = {
+  ("J0559", 37.3910649, 126.2951388): "known_coordinate_out_of_region",
+  ("J4262", 37.4447525, 125.1673663): "known_longitude_typo",
+  ("J6049", 37.2625045, 125.7021377): "known_longitude_typo",
+  ("J8072", 36.2543607, 128.4760208): "known_coordinate_copied_from_other_region",
+  ("J2593", 37.5184728, 127.7850995): "known_duplicate_has_valid_coordinate",
+  ("J2594", 37.5184728, 127.7850995): "known_duplicate_has_valid_coordinate",
+}
+
 SPEED_CAMERA_COLUMNS = (
   "id",
   "lat",
@@ -220,6 +233,8 @@ SPEED_CAMERA_COLUMNS = (
   "source_type",
   "source_file",
   "dedup_key",
+  "quality_category",
+  "quality_reason",
   "osm_road_name",
   "osm_road_ref",
   "osm_road_match_dist_m",
@@ -623,6 +638,14 @@ def build_dedup_key(
   return f"ROW|{fallback_id}"
 
 
+def _quality_for_camera_row(manage_no: str, lat: float, lon: float) -> tuple[str, str]:
+  rounded_key = (manage_no, round(lat, 7), round(lon, 7))
+  reason = KNOWN_COORDINATE_SUSPECTS.get(rounded_key)
+  if reason:
+    return QUALITY_COORDINATE_SUSPECT, reason
+  return QUALITY_NORMAL, ""
+
+
 def init_db(conn: sqlite3.Connection, backfill: bool = True) -> None:
   conn.executescript("""
     CREATE TABLE IF NOT EXISTS metadata (
@@ -659,6 +682,8 @@ def init_db(conn: sqlite3.Connection, backfill: bool = True) -> None:
       source_type TEXT NOT NULL,
       source_file TEXT NOT NULL,
       dedup_key TEXT NOT NULL,
+      quality_category TEXT NOT NULL,
+      quality_reason TEXT NOT NULL,
       osm_road_name TEXT NOT NULL,
       osm_road_ref TEXT NOT NULL,
       osm_road_match_dist_m REAL NOT NULL,
@@ -688,6 +713,8 @@ def init_db(conn: sqlite3.Connection, backfill: bool = True) -> None:
     "source_type": "TEXT NOT NULL DEFAULT 'public'",
     "source_file": "TEXT NOT NULL DEFAULT ''",
     "dedup_key": "TEXT NOT NULL DEFAULT ''",
+    "quality_category": "TEXT NOT NULL DEFAULT 'NORMAL'",
+    "quality_reason": "TEXT NOT NULL DEFAULT ''",
     "osm_road_name": "TEXT NOT NULL DEFAULT ''",
     "osm_road_ref": "TEXT NOT NULL DEFAULT ''",
     "osm_road_match_dist_m": "REAL NOT NULL DEFAULT 0.0",
@@ -731,6 +758,9 @@ def init_db(conn: sqlite3.Connection, backfill: bool = True) -> None:
 
     CREATE INDEX IF NOT EXISTS idx_speed_cameras_osm_road_name
     ON speed_cameras(osm_road_name);
+
+    CREATE INDEX IF NOT EXISTS idx_speed_cameras_quality
+    ON speed_cameras(quality_category);
   """)
   if backfill:
     _backfill_derived_columns(conn)
@@ -785,6 +815,8 @@ def _backfill_derived_columns(conn: sqlite3.Connection) -> None:
 
     normalized_source_type = _source_type(source_type or "public")
     normalized_dedup_key = dedup_key or f"GPS|{float(lat):.6f}|{float(lon):.6f}|{int(speed_limit or 0)}"
+    manage_no = str(camera_id).split("-")[0]
+    quality_category, quality_reason = _quality_for_camera_row(manage_no, float(lat), float(lon))
 
     conn.execute("""
       UPDATE speed_cameras
@@ -804,7 +836,9 @@ def _backfill_derived_columns(conn: sqlite3.Connection) -> None:
         is_national_road = ?,
         source_type = ?,
         source_file = ?,
-        dedup_key = ?
+        dedup_key = ?,
+        quality_category = ?,
+        quality_reason = ?
       WHERE id = ?
     """, (
       raw_camera_type,
@@ -823,6 +857,8 @@ def _backfill_derived_columns(conn: sqlite3.Connection) -> None:
       normalized_source_type,
       source_file or "",
       normalized_dedup_key,
+      quality_category,
+      quality_reason,
       camera_id,
     ))
 
@@ -949,6 +985,7 @@ def _standardize_csv_row(row: dict[str, str], csv_source: CsvSource, idx: int) -
   region = _extract_region(row)
   fallback_id = f"{source_type}-{source_file}-{idx}"
   dedup_key = build_dedup_key(row, lat, lon, speed_limit, category, road_class, region, place, fallback_id)
+  quality_category, quality_reason = _quality_for_camera_row(manage_no, lat, lon)
 
   return {
     "id": camera_id,
@@ -979,6 +1016,8 @@ def _standardize_csv_row(row: dict[str, str], csv_source: CsvSource, idx: int) -
     "source_type": source_type,
     "source_file": source_file,
     "dedup_key": dedup_key,
+    "quality_category": quality_category,
+    "quality_reason": quality_reason,
     "osm_road_name": "",
     "osm_road_ref": "",
     "osm_road_match_dist_m": 0.0,
@@ -1039,7 +1078,13 @@ def create_database_from_csvs(
     source_updated_at = ""
     if records:
       source_updated_at = str(max(records, key=lambda record: _date_priority(str(record["updated_at"])))["updated_at"])
+    coordinate_suspect_count = sum(
+      1 for record in records
+      if str(record.get("quality_category", QUALITY_NORMAL)) == QUALITY_COORDINATE_SUSPECT
+    )
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("source_updated_at", source_updated_at))
+    conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("coordinate_suspect_count", str(coordinate_suspect_count)))
+    conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("coordinate_quality_filter_version", "1"))
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_enriched_count", "0"))
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_primary_match_count", "0"))
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", ("osm_road_extended_match_count", "0"))
@@ -1482,6 +1527,8 @@ def _leaflet_camera_rows(conn: sqlite3.Connection) -> list[dict[str, object]]:
       "place": place,
       "direction": str(_row_get(row, "direction", "")),
       "directionKind": direction_kind(str(_row_get(row, "direction", ""))),
+      "qualityCategory": str(_row_get(row, "quality_category", QUALITY_NORMAL)),
+      "qualityReason": str(_row_get(row, "quality_reason", "")),
       "source": str(_row_get(row, "source_type", "")),
       "updatedAt": str(_row_get(row, "updated_at", "")),
       "debug": {
@@ -1495,6 +1542,8 @@ def _leaflet_camera_rows(conn: sqlite3.Connection) -> list[dict[str, object]]:
         "is_expressway": int(_row_get(row, "is_expressway", 0)),
         "is_national_road": int(_row_get(row, "is_national_road", 0)),
         "dedup_key": str(_row_get(row, "dedup_key", "")),
+        "quality_category": str(_row_get(row, "quality_category", QUALITY_NORMAL)),
+        "quality_reason": str(_row_get(row, "quality_reason", "")),
         "source_type": str(_row_get(row, "source_type", "")),
         "source_file": str(_row_get(row, "source_file", "")),
       },
@@ -1522,6 +1571,8 @@ def _camera_payload_from_record(record: dict[str, object], row_index: int, row: 
     "place": str(record["place"]),
     "direction": str(record["direction"]),
     "directionKind": direction_kind(str(record["direction"])),
+    "qualityCategory": QUALITY_RAW_ORIGINAL,
+    "qualityReason": "",
     "source": str(record["source_type"]),
     "sourceFile": str(record["source_file"]),
     "updatedAt": str(record["updated_at"]),
@@ -1538,6 +1589,8 @@ def _camera_payload_from_record(record: dict[str, object], row_index: int, row: 
       "is_expressway": int(record["is_expressway"]),
       "is_national_road": int(record["is_national_road"]),
       "dedup_key": str(record["dedup_key"]),
+      "quality_category": QUALITY_RAW_ORIGINAL,
+      "quality_reason": "",
       "source_type": str(record["source_type"]),
       "source_file": str(record["source_file"]),
       "row_index": row_index,
@@ -1627,7 +1680,7 @@ def export_speed_camera_leaflet_html(
     if db_cameras is None:
       return 0
 
-  default_source = "csv" if csv_sources is not None else "db"
+  default_source = "db" if "db" in datasets else "csv"
   active_dataset = (active_source or default_source).lower()
   if active_dataset not in datasets:
     active_dataset = default_source if default_source in datasets else next(iter(datasets), "")
@@ -2064,6 +2117,7 @@ def _leaflet_html_template() -> str:
           <div class="metric"><span>과속 관련 카메라 수</span><strong id="metric-speed">0</strong></div>
           <div class="metric"><span>카테고리 수</span><strong id="metric-category">0</strong></div>
           <div class="metric"><span>지역 수</span><strong id="metric-region">0</strong></div>
+          <div class="metric"><span>좌표 오기 의심 수</span><strong id="metric-coordinate-suspect">0</strong></div>
         </div>
       </section>
       <section>
@@ -2107,6 +2161,10 @@ def _leaflet_html_template() -> str:
               <label for="direction-filter">도로방향</label>
               <select id="direction-filter"></select>
             </div>
+          </div>
+          <div>
+            <label for="quality-filter">데이터 상태</label>
+            <select id="quality-filter"></select>
           </div>
           <div class="filter-row">
             <button id="fit-all" class="primary" type="button">지도 전체 보기</button>
@@ -2204,6 +2262,19 @@ def _leaflet_html_template() -> str:
       return camera.roadType || camera.roadClass || "UNKNOWN";
     }
 
+    function cameraQualityCategory(camera) {
+      return camera.qualityCategory || "NORMAL";
+    }
+
+    function qualityLabel(value) {
+      const labels = {
+        NORMAL: "정상",
+        RAW_ORIGINAL: "CSV 원본",
+        COORDINATE_SUSPECT: "좌표 오기 의심",
+      };
+      return labels[value] || value || "UNKNOWN";
+    }
+
     function cameraEnforcementType(camera) {
       return camera.cameraType || "UNKNOWN";
     }
@@ -2237,7 +2308,7 @@ def _leaflet_html_template() -> str:
 
 	    function datasetName(key, dataset) {
 	      if (key === "csv") return "CSV 원본";
-	      if (key === "db") return "DB 저장 결과";
+	      if (key === "db") return "DB 저장 결과(좌표 품질 관리)";
 	      return dataset.inputSource || key.toUpperCase();
 	    }
 
@@ -2336,6 +2407,16 @@ def _leaflet_html_template() -> str:
 	        .join("");
 	    }
 
+	    function fillQualitySelect(id, values, allLabel) {
+	      const select = document.getElementById(id);
+	      select.innerHTML = [`<option value="">${escapeHtml(allLabel)}</option>`]
+	        .concat(values.map((value) => {
+	          const quality = optionValue(value);
+	          return `<option value="${escapeHtml(quality)}">${escapeHtml(qualityLabel(quality))}</option>`;
+	        }))
+	        .join("");
+	    }
+
 	    function categoryColor(category) {
 	      return colors[optionValue(category)] || colors.UNKNOWN;
 	    }
@@ -2373,6 +2454,16 @@ def _leaflet_html_template() -> str:
 	      };
 	    }
 
+	    function markerStyleForCamera(camera) {
+	      const style = markerStyle(camera.category || "UNKNOWN");
+	      if (cameraQualityCategory(camera) === "COORDINATE_SUSPECT") {
+	        style.color = "#111827";
+	        style.fillOpacity = 0.38;
+	        style.weight = 3;
+	      }
+	      return style;
+	    }
+
 	    function speedLimitLabel(camera) {
 	      const speed = Number(camera.speed || 0);
 	      return speed > 0 ? String(speed) : "";
@@ -2406,6 +2497,8 @@ def _leaflet_html_template() -> str:
 	      const originalRows = objectRows({
 	        ...(camera.original || {}),
 	        "방향 추정데이터": camera.directionKind ? directionKindLabel(camera.directionKind) : "",
+	        "데이터 상태": qualityLabel(cameraQualityCategory(camera)),
+	        "데이터 상태 사유": camera.qualityReason || "",
 	      });
 	      const debugRows = objectRows(camera.debug);
 	      return `
@@ -2440,7 +2533,7 @@ def _leaflet_html_template() -> str:
 	      const layers = [];
 	      for (const camera of items) {
 	        const category = camera.category || "UNKNOWN";
-	        const marker = L.circleMarker([camera.lat, camera.lon], markerStyle(category));
+	        const marker = L.circleMarker([camera.lat, camera.lon], markerStyleForCamera(camera));
 	        const speedLabel = speedLimitLabel(camera);
 	        if (speedLabel) {
 	          marker.bindTooltip(speedLabel, {
@@ -2465,6 +2558,7 @@ def _leaflet_html_template() -> str:
       const speed = document.getElementById("speed-filter").value;
       const cameraType = document.getElementById("camera-type-filter").value;
       const direction = document.getElementById("direction-filter").value;
+      const quality = document.getElementById("quality-filter").value;
       return cameras.filter((camera) => {
         if (category && camera.category !== category) return false;
         if (roadType && cameraRoadType(camera) !== roadType) return false;
@@ -2472,6 +2566,7 @@ def _leaflet_html_template() -> str:
         if (speed && String(camera.speed || 0) !== speed) return false;
         if (cameraType && cameraEnforcementType(camera) !== cameraType) return false;
         if (direction && cameraDirectionType(camera) !== direction) return false;
+        if (quality && cameraQualityCategory(camera) !== quality) return false;
         if (!search) return true;
         const haystack = [
           camera.region,
@@ -2483,6 +2578,9 @@ def _leaflet_html_template() -> str:
           camera.direction,
           camera.directionKind,
           cameraDirectionType(camera),
+          cameraQualityCategory(camera),
+          qualityLabel(cameraQualityCategory(camera)),
+          camera.qualityReason,
           camera.id,
         ].join(" ").toLowerCase();
         return haystack.includes(search);
@@ -2541,6 +2639,9 @@ def _leaflet_html_template() -> str:
         dbCategoryCounts.length || new Set(items.map((camera) => optionValue(camera.category))).size
       );
       document.getElementById("metric-region").textContent = formatNumber(new Set(items.map((camera) => optionValue(camera.region))).size);
+      document.getElementById("metric-coordinate-suspect").textContent = formatNumber(
+        cameras.filter((camera) => cameraQualityCategory(camera) === "COORDINATE_SUSPECT").length
+      );
     }
 
     function fitMarkers(items) {
@@ -2586,6 +2687,11 @@ def _leaflet_html_template() -> str:
       fillSelect("speed-filter", uniqueValues(cameras, (camera) => String(camera.speed || 0)), "전체 제한속도");
       fillSelect("camera-type-filter", uniqueValues(cameras, cameraEnforcementType), "전체 단속 구분");
       fillSelect("direction-filter", uniqueValues(cameras, cameraDirectionType), "전체 도로방향");
+      fillQualitySelect("quality-filter", uniqueValues(cameras, cameraQualityCategory), "전체 데이터 상태");
+    }
+
+    function defaultQualityFilter() {
+      return activeDatasetKey === "db" ? "NORMAL" : "";
     }
 
     function clearFilters() {
@@ -2596,6 +2702,7 @@ def _leaflet_html_template() -> str:
       document.getElementById("speed-filter").value = "";
       document.getElementById("camera-type-filter").value = "";
       document.getElementById("direction-filter").value = "";
+      document.getElementById("quality-filter").value = defaultQualityFilter();
     }
 
     async function setActiveDataset(key, fit = true) {
@@ -2607,6 +2714,7 @@ def _leaflet_html_template() -> str:
       clearFilters();
       updateHeader();
       refreshFilterOptions();
+      document.getElementById("quality-filter").value = defaultQualityFilter();
       showLoadStatus(`${datasetName(activeDatasetKey, datasets[activeDatasetKey] || {})} 데이터 로딩 중...`);
       try {
         activeDataset = await loadDataset(activeDatasetKey);
@@ -2614,6 +2722,7 @@ def _leaflet_html_template() -> str:
         dbCategoryCounts = normalizeCategoryCounts(activeDataset.categoryCounts || payload.categoryCounts || []);
         updateHeader();
         refreshFilterOptions();
+        document.getElementById("quality-filter").value = defaultQualityFilter();
         render(fit);
         showLoadStatus(`${datasetName(activeDatasetKey, activeDataset)} 데이터 로드 완료 (${formatNumber(cameras.length)}건)`, false, false);
       } catch (error) {
@@ -2632,7 +2741,7 @@ def _leaflet_html_template() -> str:
       setActiveDataset(event.target.value, false);
     });
 
-    for (const id of ["search", "category-filter", "road-filter", "region-filter", "speed-filter", "camera-type-filter", "direction-filter"]) {
+    for (const id of ["search", "category-filter", "road-filter", "region-filter", "speed-filter", "camera-type-filter", "direction-filter", "quality-filter"]) {
       document.getElementById(id).addEventListener("input", scheduleRender);
       document.getElementById(id).addEventListener("change", scheduleRender);
     }
@@ -2934,11 +3043,15 @@ def _candidate_rows(
 ) -> list[sqlite3.Row]:
   columns = _table_columns(conn, "speed_cameras")
   version = _database_version(conn)
+  quality_filter = ""
+  if "quality_category" in columns:
+    quality_filter = f" AND COALESCE(quality_category, '{QUALITY_NORMAL}') != '{QUALITY_COORDINATE_SUSPECT}'"
   if {"is_speed_camera", "is_signal_camera", "camera_category"}.issubset(columns):
-    rows = conn.execute("""
+    rows = conn.execute(f"""
       SELECT * FROM speed_cameras
       WHERE lat BETWEEN ? AND ?
         AND lon BETWEEN ? AND ?
+        {quality_filter}
         AND (
           is_speed_camera = 1 OR
           is_signal_camera = 1 OR
@@ -2949,18 +3062,20 @@ def _candidate_rows(
       return rows
 
   if "is_speed_camera" in columns:
-    rows = conn.execute("""
+    rows = conn.execute(f"""
       SELECT * FROM speed_cameras
       WHERE lat BETWEEN ? AND ?
         AND lon BETWEEN ? AND ?
+        {quality_filter}
         AND is_speed_camera = 1
     """, (lat_min, lat_max, lon_min, lon_max)).fetchall()
     if rows or version >= DB_VERSION:
       return rows
 
-  return conn.execute("""
+  return conn.execute(f"""
     SELECT * FROM speed_cameras
     WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
+      {quality_filter}
   """, (lat_min, lat_max, lon_min, lon_max)).fetchall()
 
 
