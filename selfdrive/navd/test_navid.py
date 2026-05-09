@@ -241,6 +241,42 @@ def test_current_road_match_from_cache_uses_successor_transitions(monkeypatch) -
   assert match.name == "Next Road"
 
 
+def test_predict_forward_roads_prefers_straight_successor(monkeypatch) -> None:
+  navid = _load_navid_module()
+  current = navid.CurrentRoadMatch(1, "Main Road", 0.0, 1.0)
+  straight = types.SimpleNamespace(road=types.SimpleNamespace(road_id=2, highway="residential"), turn_angle_deg=0.0)
+  turn = types.SimpleNamespace(road=types.SimpleNamespace(road_id=3, highway="residential"), turn_angle_deg=90.0)
+
+  def fake_successors(_db_path, road_id, _limit):
+    if road_id == 1:
+      return [turn, straight]
+    return []
+
+  monkeypatch.setattr(navid, "road_successors", fake_successors)
+
+  predictions = navid._predict_forward_roads(object(), current)
+
+  assert predictions[2].rank < predictions[3].rank
+  assert predictions[2].probability > predictions[3].probability
+
+
+def test_minimap_roads_marks_predicted_roads(monkeypatch) -> None:
+  navid = _load_navid_module()
+  cache = types.SimpleNamespace(segments=["predicted", "normal"])
+  payloads = {
+    "predicted": {"id": 2, "x1": 40.0, "y1": 0.0, "x2": 100.0, "y2": 0.0, "d": 40.0, "n": "predicted", "h": "residential", "c": False},
+    "normal": {"id": 3, "x1": 50.0, "y1": 5.0, "x2": 110.0, "y2": 5.0, "d": 50.0, "n": "normal", "h": "residential", "c": False},
+  }
+
+  monkeypatch.setattr(navid, "_road_payload", lambda segment, gps, current_road_name, include_distance=False: payloads[segment])
+
+  roads = navid._minimap_roads(cache, types.SimpleNamespace(), "", 300.0, {2: navid.PredictedRoad(0, 0.7, 0.0)})
+
+  assert roads[0]["n"] == "predicted"
+  assert roads[0]["pr"] == 0
+  assert roads[0]["pp"] == 0.7
+
+
 def test_minimap_roads_include_full_visible_view(monkeypatch) -> None:
   navid = _load_navid_module()
   cache = types.SimpleNamespace(segments=["visible_top", "outside_side"])

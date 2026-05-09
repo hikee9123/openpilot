@@ -61,6 +61,13 @@ OSM_CURRENT_ROAD_STICKY_BONUS = 18.0
 OSM_CURRENT_ROAD_SUCCESSOR_BONUS = 12.0
 OSM_CURRENT_ROAD_SAME_NAME_BONUS = 6.0
 OSM_CURRENT_ROAD_SWITCH_PENALTY = 8.0
+OSM_PATH_PREDICTION_DEPTH = 4
+OSM_PATH_PREDICTION_BEAM_SIZE = 4
+OSM_PATH_PREDICTION_SUCCESSOR_LIMIT = 12
+OSM_PATH_PREDICTION_TURN_WEIGHT = 0.06
+OSM_PATH_PREDICTION_SHARP_TURN_DEG = 110.0
+OSM_PATH_PREDICTION_SHARP_TURN_PENALTY = 6.0
+OSM_PATH_PREDICTION_TEMPERATURE = 8.0
 OSM_FORWARD_ROAD_MAX_HEADING_DIFF_DEG = 50.0
 OSM_FORWARD_ROAD_BACK_MARGIN_M = 20.0
 OSM_FORWARD_ROAD_DEFAULT_SIDE_M = 45.0
@@ -119,6 +126,13 @@ class CurrentRoadMatch:
   name: str
   score: float
   updated_at: float
+
+
+@dataclass(frozen=True)
+class PredictedRoad:
+  rank: int
+  probability: float
+  score: float
 
 
 def _clip(value: float, min_value: float, max_value: float) -> float:
@@ -566,6 +580,7 @@ def _road_payload(segment, gps, current_road_name: str, include_distance: bool =
   x2, y2 = latlon_to_car_space_m(gps.latitude, gps.longitude, gps.bearingDeg, segment.lat2, segment.lon2)
   forward_info = _forward_road_info(segment, gps, x1, y1, x2, y2, current_road_name)
   payload = {
+    "id": int(getattr(segment, "road_id", 0)),
     "x1": round(x1, 1),
     "y1": round(y1, 1),
     "x2": round(x2, 1),
@@ -718,20 +733,95 @@ def _current_road_name_from_cache(cache: OsmRoadCache, gps, radius_m: float, pre
   return candidates[0].name if candidates else ""
 
 
+def _prediction_road_class_cost(highway: str) -> float:
+  if highway in ("motorway", "trunk", "primary"):
+    return -1.0
+  if highway in ("motorway_link", "trunk_link", "primary_link", "secondary", "secondary_link"):
+    return -0.5
+  if highway in ("service", "living_street"):
+    return 1.5
+  return 0.0
+
+
+def _prediction_transition_cost(transition) -> float:
+  turn_angle = float(getattr(transition, "turn_angle_deg", 0.0))
+  highway = str(getattr(getattr(transition, "road", None), "highway", "") or "")
+  cost = turn_angle * OSM_PATH_PREDICTION_TURN_WEIGHT + _prediction_road_class_cost(highway)
+  if turn_angle >= OSM_PATH_PREDICTION_SHARP_TURN_DEG:
+    cost += OSM_PATH_PREDICTION_SHARP_TURN_PENALTY
+  return max(0.0, cost)
+
+
+def _predict_forward_roads(db_path: Path, current_match: CurrentRoadMatch | None) -> dict[int, PredictedRoad]:
+  if current_match is None or current_match.road_id <= 0:
+    return {}
+
+  beam: list[tuple[float, tuple[int, ...]]] = [(0.0, (current_match.road_id,))]
+  completed: list[tuple[float, tuple[int, ...]]] = []
+  for _ in range(OSM_PATH_PREDICTION_DEPTH):
+    next_beam: list[tuple[float, tuple[int, ...]]] = []
+    for score, path in beam:
+      successors = road_successors(db_path, path[-1], OSM_PATH_PREDICTION_SUCCESSOR_LIMIT)
+      expanded = False
+      for transition in successors:
+        road_id = int(getattr(transition.road, "road_id", 0))
+        if road_id <= 0 or road_id in path:
+          continue
+        expanded = True
+        next_beam.append((score + _prediction_transition_cost(transition), path + (road_id,)))
+      if not expanded:
+        completed.append((score, path))
+    if not next_beam:
+      break
+    beam = sorted(next_beam, key=lambda item: item[0])[:OSM_PATH_PREDICTION_BEAM_SIZE]
+    completed.extend(beam)
+
+  ranked_paths = sorted(completed or beam, key=lambda item: item[0])[:OSM_PATH_PREDICTION_BEAM_SIZE]
+  if not ranked_paths:
+    return {}
+
+  best_score = ranked_paths[0][0]
+  weights = [math.exp(-(score - best_score) / OSM_PATH_PREDICTION_TEMPERATURE) for score, _path in ranked_paths]
+  weight_sum = sum(weights) or 1.0
+  road_accumulator: dict[int, tuple[int, float, float]] = {}
+  for rank, ((score, path), weight) in enumerate(zip(ranked_paths, weights, strict=False)):
+    probability = weight / weight_sum
+    for road_id in path[1:]:
+      previous = road_accumulator.get(road_id)
+      if previous is None:
+        road_accumulator[road_id] = (rank, probability, score)
+      else:
+        road_accumulator[road_id] = (min(previous[0], rank), previous[1] + probability, min(previous[2], score))
+
+  return {
+    road_id: PredictedRoad(rank, min(1.0, probability), score)
+    for road_id, (rank, probability, score) in road_accumulator.items()
+  }
+
+
 def _minimap_road_priority(road: dict) -> tuple[int, float]:
   highway = str(road.get("h", ""))
   if road.get("c"):
     return 0, float(road.get("d", 0.0))
+  if "pr" in road:
+    return 1, float(road.get("pr", 99)) * 1000.0 - float(road.get("pp", 0.0)) * 100.0 + float(road.get("d", 0.0))
   if road.get("f"):
-    return 1, float(road.get("fm", 0.0)) + abs(float(road.get("sm", 0.0))) * 0.8
+    return 2, float(road.get("fm", 0.0)) + abs(float(road.get("sm", 0.0))) * 0.8
   if highway in ("motorway", "trunk", "primary", "secondary"):
-    return 2, float(road.get("d", 0.0))
-  if highway in ("tertiary", "residential"):
     return 3, float(road.get("d", 0.0))
-  return 4, float(road.get("d", 0.0))
+  if highway in ("tertiary", "residential"):
+    return 4, float(road.get("d", 0.0))
+  return 5, float(road.get("d", 0.0))
 
 
-def _minimap_roads(cache: OsmRoadCache, gps, current_road_name: str, display_radius_m: float) -> list[dict]:
+def _minimap_roads(
+  cache: OsmRoadCache,
+  gps,
+  current_road_name: str,
+  display_radius_m: float,
+  predicted_roads: dict[int, PredictedRoad] | None = None,
+) -> list[dict]:
+  predicted_roads = predicted_roads or {}
   current_roads = []
   other_roads = []
   for segment in cache.segments:
@@ -739,6 +829,10 @@ def _minimap_roads(cache: OsmRoadCache, gps, current_road_name: str, display_rad
     is_current = bool(road.get("c"))
     if not _segment_intersects_minimap_view(road, display_radius_m):
       continue
+    prediction = predicted_roads.get(int(road.get("id", 0)))
+    if prediction is not None:
+      road["pr"] = prediction.rank
+      road["pp"] = round(prediction.probability, 2)
     if is_current:
       current_roads.append(road)
     else:
@@ -772,6 +866,7 @@ def _build_osm_road_overlay_text(
   mode: int = 0,
   tuning: dict[str, float | bool] | None = None,
   osm_cache: OsmRoadCache | None = None,
+  current_road_match: CurrentRoadMatch | None = None,
   now: float | None = None,
 ) -> str:
   try:
@@ -787,7 +882,7 @@ def _build_osm_road_overlay_text(
       display_radius_m = map_radius_m
 
       _ensure_osm_corridor_cache(osm_cache, db_path, gps, display_radius_m, now)
-      map_roads = _minimap_roads(osm_cache, gps, current_road_name, map_radius_m)
+      map_roads = _minimap_roads(osm_cache, gps, current_road_name, map_radius_m, _predict_forward_roads(db_path, current_road_match))
 
     cameras = _osm_overlay_cameras(gps, candidates)
     if not map_roads and not cameras:
@@ -946,7 +1041,8 @@ def main() -> None:
                 int(tuning["osm_road_overlay_mode"]),
                 tuning,
                 osm_corridor_cache,
-                now,
+                current_road_match=None,
+                now=now,
               ),
               last_good_osm_overlay_text,
               last_good_osm_overlay_t,
@@ -1023,7 +1119,8 @@ def main() -> None:
               int(tuning["osm_road_overlay_mode"]),
               tuning,
               osm_corridor_cache,
-              now,
+              current_road_match=current_road_match,
+              now=now,
             ),
             last_good_osm_overlay_text,
             last_good_osm_overlay_t,
