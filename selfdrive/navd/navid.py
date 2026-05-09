@@ -32,6 +32,10 @@ except ModuleNotFoundError:
     road_name_matches,
     segment_allowed_bearings,
   )
+try:
+  from openpilot.selfdrive.navd.camera_road_context import build_osm_road_context
+except ModuleNotFoundError:
+  from selfdrive.navd.camera_road_context import build_osm_road_context
 from openpilot.selfdrive.navd.speed_camera import (
   DEFAULT_CSV_PATH,
   DEFAULT_DB_PATH,
@@ -68,13 +72,15 @@ OSM_PATH_PREDICTION_TURN_WEIGHT = 0.06
 OSM_PATH_PREDICTION_SHARP_TURN_DEG = 110.0
 OSM_PATH_PREDICTION_SHARP_TURN_PENALTY = 6.0
 OSM_PATH_PREDICTION_TEMPERATURE = 8.0
+OSM_SUCCESSOR_CACHE_MAX_SIZE = 512
+OSM_PREDICTION_CACHE_MAX_SIZE = 128
 OSM_FORWARD_ROAD_MAX_HEADING_DIFF_DEG = 50.0
 OSM_FORWARD_ROAD_BACK_MARGIN_M = 20.0
 OSM_FORWARD_ROAD_DEFAULT_SIDE_M = 45.0
 OSM_FORWARD_ROAD_MAJOR_SIDE_M = 80.0
 OSM_MINIMAP_CACHE_MAX_AGE_SECONDS = 120.0
 OSM_MINIMAP_CACHE_MAX_SEGMENTS = 1000
-OSM_MINIMAP_RENDER_MAX_SEGMENTS = 500
+OSM_MINIMAP_RENDER_MAX_SEGMENTS = 300
 OSM_MINIMAP_CURRENT_ROAD_MAX_SEGMENTS = 150
 OSM_MINIMAP_MIN_RADIUS_M = 300.0
 OSM_MINIMAP_REFRESH_MARGIN_FRACTION = 0.9
@@ -717,13 +723,14 @@ def _current_road_match_from_cache(
   radius_m: float,
   previous_match: CurrentRoadMatch | None = None,
   now: float | None = None,
+  successor_cache: dict | None = None,
 ) -> CurrentRoadMatch | None:
   now = time.monotonic() if now is None else now
   previous_name = previous_match.name if previous_match is not None else ""
   candidates = _current_road_candidates_from_cache(cache, gps, radius_m, previous_name)
   successor_turns = {
     transition.road.road_id: transition.turn_angle_deg
-    for transition in road_successors(db_path, previous_match.road_id, OSM_CURRENT_ROAD_CANDIDATE_LIMIT * 3)
+    for transition in _cached_road_successors(db_path, previous_match.road_id, OSM_CURRENT_ROAD_CANDIDATE_LIMIT * 3, successor_cache)
   } if previous_match is not None else {}
   return _select_current_road_match(candidates, previous_match, successor_turns, now)
 
@@ -752,16 +759,42 @@ def _prediction_transition_cost(transition) -> float:
   return max(0.0, cost)
 
 
-def _predict_forward_roads(db_path: Path, current_match: CurrentRoadMatch | None) -> dict[int, PredictedRoad]:
+def _remember_limited(cache: dict, key, value, max_size: int):
+  if len(cache) >= max_size:
+    cache.pop(next(iter(cache)))
+  cache[key] = value
+  return value
+
+
+def _cached_road_successors(db_path: Path, road_id: int, limit: int, successor_cache: dict | None = None):
+  if successor_cache is None:
+    return road_successors(db_path, road_id, limit)
+
+  key = (str(db_path), int(road_id), int(limit))
+  if key in successor_cache:
+    return successor_cache[key]
+  return _remember_limited(successor_cache, key, road_successors(db_path, road_id, limit), OSM_SUCCESSOR_CACHE_MAX_SIZE)
+
+
+def _predict_forward_roads(
+  db_path: Path,
+  current_match: CurrentRoadMatch | None,
+  successor_cache: dict | None = None,
+  prediction_cache: dict | None = None,
+) -> dict[int, PredictedRoad]:
   if current_match is None or current_match.road_id <= 0:
     return {}
+
+  prediction_key = (str(db_path), current_match.road_id)
+  if prediction_cache is not None and prediction_key in prediction_cache:
+    return prediction_cache[prediction_key]
 
   beam: list[tuple[float, tuple[int, ...]]] = [(0.0, (current_match.road_id,))]
   completed: list[tuple[float, tuple[int, ...]]] = []
   for _ in range(OSM_PATH_PREDICTION_DEPTH):
     next_beam: list[tuple[float, tuple[int, ...]]] = []
     for score, path in beam:
-      successors = road_successors(db_path, path[-1], OSM_PATH_PREDICTION_SUCCESSOR_LIMIT)
+      successors = _cached_road_successors(db_path, path[-1], OSM_PATH_PREDICTION_SUCCESSOR_LIMIT, successor_cache)
       expanded = False
       for transition in successors:
         road_id = int(getattr(transition.road, "road_id", 0))
@@ -793,10 +826,13 @@ def _predict_forward_roads(db_path: Path, current_match: CurrentRoadMatch | None
       else:
         road_accumulator[road_id] = (min(previous[0], rank), previous[1] + probability, min(previous[2], score))
 
-  return {
+  predictions = {
     road_id: PredictedRoad(rank, min(1.0, probability), score)
     for road_id, (rank, probability, score) in road_accumulator.items()
   }
+  if prediction_cache is not None:
+    _remember_limited(prediction_cache, prediction_key, predictions, OSM_PREDICTION_CACHE_MAX_SIZE)
+  return predictions
 
 
 def _minimap_road_priority(road: dict) -> tuple[int, float]:
@@ -867,6 +903,8 @@ def _build_osm_road_overlay_text(
   tuning: dict[str, float | bool] | None = None,
   osm_cache: OsmRoadCache | None = None,
   current_road_match: CurrentRoadMatch | None = None,
+  successor_cache: dict | None = None,
+  prediction_cache: dict | None = None,
   now: float | None = None,
 ) -> str:
   try:
@@ -882,7 +920,8 @@ def _build_osm_road_overlay_text(
       display_radius_m = map_radius_m
 
       _ensure_osm_corridor_cache(osm_cache, db_path, gps, display_radius_m, now)
-      map_roads = _minimap_roads(osm_cache, gps, current_road_name, map_radius_m, _predict_forward_roads(db_path, current_road_match))
+      predicted_roads = _predict_forward_roads(db_path, current_road_match, successor_cache, prediction_cache)
+      map_roads = _minimap_roads(osm_cache, gps, current_road_name, map_radius_m, predicted_roads)
 
     cameras = _osm_overlay_cameras(gps, candidates)
     if not map_roads and not cameras:
@@ -985,12 +1024,17 @@ def main() -> None:
   active_camera = None
   active_candidates = []
   tuning = _speed_camera_tuning()
+  osm_roads_db_path = _osm_roads_db_path()
+  osm_roads_db_mtime = 0.0
+  road_successor_cache = {}
+  road_prediction_cache = {}
   last_lookup_t = 0.0
   last_osm_lookup_t = 0.0
   last_osm_overlay_t = 0.0
   current_road_name = ""
   current_road_match: CurrentRoadMatch | None = None
   osm_road_overlay_text = ""
+  osm_road_overlay_pending = False
   last_good_osm_overlay_text = ""
   last_good_osm_overlay_t = 0.0
   local_osm_cache = OsmRoadCache()
@@ -1016,6 +1060,7 @@ def main() -> None:
       current_road_name = ""
       current_road_match = None
       osm_road_overlay_text = ""
+      osm_road_overlay_pending = False
       last_good_osm_overlay_text = ""
       last_good_osm_overlay_t = 0.0
       _send_inactive(pm)
@@ -1034,7 +1079,7 @@ def main() -> None:
             last_osm_overlay_t = now
             osm_road_overlay_text, last_good_osm_overlay_text, last_good_osm_overlay_t = _stable_osm_overlay_text(
               _build_osm_road_overlay_text(
-                _osm_roads_db_path(),
+                osm_roads_db_path,
                 gps,
                 [],
                 current_road_name,
@@ -1042,17 +1087,22 @@ def main() -> None:
                 tuning,
                 osm_corridor_cache,
                 current_road_match=None,
+                successor_cache=road_successor_cache,
+                prediction_cache=road_prediction_cache,
                 now=now,
               ),
               last_good_osm_overlay_text,
               last_good_osm_overlay_t,
               now,
             )
+            osm_road_overlay_pending = bool(osm_road_overlay_text)
         else:
           osm_road_overlay_text = ""
+          osm_road_overlay_pending = False
           last_good_osm_overlay_text = ""
           last_good_osm_overlay_t = 0.0
-      _send_inactive(pm, osm_road_overlay_text)
+      _send_inactive(pm, osm_road_overlay_text if osm_road_overlay_pending else "")
+      osm_road_overlay_pending = False
       rk.keep_time()
       continue
 
@@ -1061,13 +1111,18 @@ def main() -> None:
       tuning = _speed_camera_tuning()
       ignored_ids = {camera_id for camera_id, until in ignored_until.items() if until > now}
       ignored_until = {camera_id: until for camera_id, until in ignored_until.items() if until > now}
+      current_osm_mtime = _osm_db_mtime(osm_roads_db_path)
+      if current_osm_mtime != osm_roads_db_mtime:
+        road_successor_cache.clear()
+        road_prediction_cache.clear()
+        osm_roads_db_mtime = current_osm_mtime
 
       if bool(tuning["use_local_osm_roads"]) and now - last_osm_lookup_t >= OSM_ROAD_LOOKUP_INTERVAL_SECONDS:
         last_osm_lookup_t = now
         local_radius_m = float(tuning["local_osm_road_radius_m"])
         _ensure_osm_cache(
           local_osm_cache,
-          _osm_roads_db_path(),
+          osm_roads_db_path,
           gps,
           local_radius_m,
           max(OSM_CACHE_MIN_QUERY_RADIUS_M, local_radius_m * 2.0),
@@ -1075,11 +1130,12 @@ def main() -> None:
         )
         current_road_match = _current_road_match_from_cache(
           local_osm_cache,
-          _osm_roads_db_path(),
+          osm_roads_db_path,
           gps,
           local_radius_m,
           current_road_match,
           now,
+          road_successor_cache,
         )
         current_road_name = current_road_match.name if current_road_match is not None else ""
       elif not bool(tuning["use_local_osm_roads"]):
@@ -1089,8 +1145,8 @@ def main() -> None:
       osm_context_segments = []
       if bool(tuning["use_local_osm_roads"]) or int(tuning["osm_road_overlay_mode"]) > 0:
         map_radius_m = _minimap_display_radius_m(gps, tuning)
-        _ensure_osm_corridor_cache(osm_corridor_cache, _osm_roads_db_path(), gps, map_radius_m, now)
-        osm_context_segments = osm_corridor_cache.segments
+        _ensure_osm_corridor_cache(osm_corridor_cache, osm_roads_db_path, gps, map_radius_m, now)
+        osm_context_segments = build_osm_road_context(osm_corridor_cache.segments, gps.latitude, gps.longitude, gps.bearingDeg)
 
       active_candidates = find_lead_cameras(
         db_path,
@@ -1112,7 +1168,7 @@ def main() -> None:
           last_osm_overlay_t = now
           osm_road_overlay_text, last_good_osm_overlay_text, last_good_osm_overlay_t = _stable_osm_overlay_text(
             _build_osm_road_overlay_text(
-              _osm_roads_db_path(),
+              osm_roads_db_path,
               gps,
               active_candidates,
               current_road_name,
@@ -1120,20 +1176,25 @@ def main() -> None:
               tuning,
               osm_corridor_cache,
               current_road_match=current_road_match,
+              successor_cache=road_successor_cache,
+              prediction_cache=road_prediction_cache,
               now=now,
             ),
             last_good_osm_overlay_text,
             last_good_osm_overlay_t,
             now,
           )
+          osm_road_overlay_pending = bool(osm_road_overlay_text)
       else:
         osm_road_overlay_text = ""
+        osm_road_overlay_pending = False
         last_good_osm_overlay_text = ""
         last_good_osm_overlay_t = 0.0
 
     if active_camera is None:
       active_camera_id = None
-      _send_inactive(pm, osm_road_overlay_text)
+      _send_inactive(pm, osm_road_overlay_text if osm_road_overlay_pending else "")
+      osm_road_overlay_pending = False
       rk.keep_time()
       continue
 
@@ -1144,7 +1205,8 @@ def main() -> None:
       active_camera = None
       active_camera_id = None
       active_candidates = []
-      _send_inactive(pm, osm_road_overlay_text)
+      _send_inactive(pm, osm_road_overlay_text if osm_road_overlay_pending else "")
+      osm_road_overlay_pending = False
       rk.keep_time()
       continue
 
@@ -1155,7 +1217,8 @@ def main() -> None:
         f"{active_camera.camera_type} limit={active_camera.speed_limit}"
       )
 
-    _send_camera(pm, active_camera, active_candidates, current_road_name, osm_road_overlay_text)
+    _send_camera(pm, active_camera, active_candidates, current_road_name, osm_road_overlay_text if osm_road_overlay_pending else "")
+    osm_road_overlay_pending = False
     rk.keep_time()
 
 

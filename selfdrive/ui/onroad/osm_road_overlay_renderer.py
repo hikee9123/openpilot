@@ -38,6 +38,7 @@ PANEL_GRID = rl.Color(255, 255, 255, 28)
 TEXT_COLOR = rl.Color(230, 230, 230, 215)
 OSM_OVERLAY_MODE_OFF = 0
 OSM_OVERLAY_MODE_MINIMAP = 1
+OSM_OVERLAY_HOLD_SECONDS = 3.0
 
 
 class OsmRoadOverlayRenderer(Widget):
@@ -48,6 +49,7 @@ class OsmRoadOverlayRenderer(Widget):
     self._font_medium = gui_app.font(FontWeight.MEDIUM)
     self._animated_radius_m = 0.0
     self._last_animation_t = 0.0
+    self._last_overlay_t = 0.0
 
   def _render(self, rect: rl.Rectangle) -> None:
     mode = int(ui_state.custom_params.get("OsmRoadOverlayMode", OSM_OVERLAY_MODE_OFF))
@@ -58,10 +60,15 @@ class OsmRoadOverlayRenderer(Widget):
 
     nav = ui_state.sm["naviCustom"].naviData
     overlay_text = str(getattr(nav, "osmRoadOverlayText", ""))
-    if not overlay_text:
+    now = time.monotonic()
+    if overlay_text:
+      data = self._parse_overlay(overlay_text)
+      self._last_overlay_t = now
+    elif now - self._last_overlay_t <= OSM_OVERLAY_HOLD_SECONDS:
+      data = self._data
+    else:
       return
 
-    data = self._parse_overlay(overlay_text)
     map_roads = data.get("mapRoads", [])
     cameras = data.get("cameras", [])
     if not map_roads and not cameras:

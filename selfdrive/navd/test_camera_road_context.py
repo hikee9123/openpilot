@@ -7,6 +7,7 @@ try:
     OSM_DIRECTION_ONEWAY_CONFIDENCE,
     apply_db_direction_context,
     apply_osm_road_context,
+    build_osm_road_context,
     osm_direction_priority,
   )
   from openpilot.selfdrive.navd.osm_roads import OSMRoadSegment
@@ -15,6 +16,7 @@ except ModuleNotFoundError:
     OSM_DIRECTION_ONEWAY_CONFIDENCE,
     apply_db_direction_context,
     apply_osm_road_context,
+    build_osm_road_context,
     osm_direction_priority,
   )
   from selfdrive.navd.osm_roads import OSMRoadSegment
@@ -82,6 +84,25 @@ def test_apply_osm_road_context_matches_segment_and_predicts_oneway() -> None:
   assert camera.osm_direction_source == "OSM_ONEWAY"
   assert camera.osm_predicted_bearing_deg == pytest.approx(0.0)
   assert camera.osm_direction_confidence >= OSM_DIRECTION_ONEWAY_CONFIDENCE
+
+
+def test_apply_osm_road_context_accepts_precomputed_context() -> None:
+  camera = CameraContextSample(road_name="Context Road", forward_m=220.0, side_m=0.0)
+  context = build_osm_road_context([_segment(oneway=1)], 37.0, 127.0, 0.0)
+
+  camera = apply_osm_road_context(
+    camera,
+    context,
+    37.0,
+    127.0,
+    0.0,
+    "Context Road",
+    50.0,
+  )
+
+  assert camera.local_road_match
+  assert camera.osm_corridor_match
+  assert camera.osm_direction_source == "OSM_ONEWAY"
 
 
 def test_osm_direction_priority_prefers_aligned_high_confidence_context() -> None:

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import math
+from dataclasses import dataclass
 from dataclasses import replace
 
 try:
@@ -27,6 +28,30 @@ OSM_DIRECTION_BIDIRECTIONAL_CONFIDENCE = 0.45
 OSM_DIRECTION_NAME_MATCH_BONUS = 0.1
 OSM_DIRECTION_HEADING_MATCH_BONUS = 0.05
 OSM_DIRECTION_MAX_CONFIDENCE = 0.95
+
+
+@dataclass(frozen=True)
+class OSMRoadContextSegment:
+  segment: object
+  x1: float
+  y1: float
+  x2: float
+  y2: float
+  heading_diff_deg: float
+
+
+def build_osm_road_context(osm_road_segments, origin_lat: float, origin_lon: float, heading_deg: float) -> list[OSMRoadContextSegment]:
+  context_segments = []
+  for segment in osm_road_segments or []:
+    x1, y1 = latlon_to_car_space_m(origin_lat, origin_lon, heading_deg, segment.lat1, segment.lon1)
+    x2, y2 = latlon_to_car_space_m(origin_lat, origin_lon, heading_deg, segment.lat2, segment.lon2)
+    segment_bearing = float(getattr(segment, "bearing_deg", 0.0))
+    heading_diff = min(
+      angle_diff_deg(segment_bearing, heading_deg),
+      angle_diff_deg((segment_bearing + 180.0) % 360.0, heading_deg),
+    )
+    context_segments.append(OSMRoadContextSegment(segment, x1, y1, x2, y2, heading_diff))
+  return context_segments
 
 
 def osm_direction_priority(camera, max_heading_diff_deg: float) -> tuple[int, float]:
@@ -92,14 +117,14 @@ def _osm_direction_prediction(segment, heading_deg: float, name_match: bool, max
 
 def apply_osm_road_context(
   camera,
-  osm_road_segments,
+  osm_road_context,
   origin_lat: float,
   origin_lon: float,
   heading_deg: float,
   current_road_name: str,
   max_heading_diff_deg: float,
 ):
-  if not osm_road_segments:
+  if not osm_road_context:
     return camera
 
   best_distance: float | None = None
@@ -112,18 +137,25 @@ def apply_osm_road_context(
     camera.road_name,
     camera.place,
   )
-  for segment in osm_road_segments:
-    x1, y1 = latlon_to_car_space_m(origin_lat, origin_lon, heading_deg, segment.lat1, segment.lon1)
-    x2, y2 = latlon_to_car_space_m(origin_lat, origin_lon, heading_deg, segment.lat2, segment.lon2)
+  for road_context in osm_road_context:
+    if isinstance(road_context, OSMRoadContextSegment):
+      segment = road_context.segment
+      x1, y1, x2, y2 = road_context.x1, road_context.y1, road_context.x2, road_context.y2
+      heading_diff = road_context.heading_diff_deg
+    else:
+      segment = road_context
+      x1, y1 = latlon_to_car_space_m(origin_lat, origin_lon, heading_deg, segment.lat1, segment.lon1)
+      x2, y2 = latlon_to_car_space_m(origin_lat, origin_lon, heading_deg, segment.lat2, segment.lon2)
+      segment_bearing = float(getattr(segment, "bearing_deg", 0.0))
+      heading_diff = min(
+        angle_diff_deg(segment_bearing, heading_deg),
+        angle_diff_deg((segment_bearing + 180.0) % 360.0, heading_deg),
+      )
+
     distance_m = _point_to_segment_distance_m(camera.forward_m, camera.side_m, x1, y1, x2, y2)
     if distance_m > _osm_context_side_limit_m(segment):
       continue
 
-    segment_bearing = float(getattr(segment, "bearing_deg", 0.0))
-    heading_diff = min(
-      angle_diff_deg(segment_bearing, heading_deg),
-      angle_diff_deg((segment_bearing + 180.0) % 360.0, heading_deg),
-    )
     current_match = road_name_matches(current_road_name, segment.name, segment.ref)
     camera_match = road_name_matches(segment.display_name, *camera_road_names) or any(
       road_name_matches(name, segment.name, segment.ref) for name in camera_road_names if name

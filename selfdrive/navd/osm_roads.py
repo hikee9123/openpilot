@@ -714,7 +714,7 @@ def forward_road_segments(
   except sqlite3.Error:
     return []
 
-  segments: list[OSMRoadSegment] = []
+  segments_with_sort_key: list[tuple[float, float, OSMRoadSegment]] = []
   for row in rows:
     x1, y1 = latlon_to_car_space_m(lat, lon, heading_deg, row["lat1"], row["lon1"])
     x2, y2 = latlon_to_car_space_m(lat, lon, heading_deg, row["lat2"], row["lon2"])
@@ -723,7 +723,9 @@ def forward_road_segments(
     if not _segment_intersects_rect(x1, y1, x2, y2, forward_start_m, forward_end_m, -row_side_limit_m, row_side_limit_m):
       continue
 
-    segments.append(OSMRoadSegment(
+    distance_m = _point_to_segment_distance_xy(0.0, 0.0, x1, y1, x2, y2)
+    sort_forward_m = max(0.0, min(x1, x2))
+    segments_with_sort_key.append((sort_forward_m, distance_m, OSMRoadSegment(
       road_id=int(row["id"]),
       osm_id=int(row["osm_id"]),
       name=str(row["name"] or ""),
@@ -736,14 +738,8 @@ def forward_road_segments(
       lat2=float(row["lat2"]),
       lon2=float(row["lon2"]),
       bearing_deg=float(row["bearing_deg"]),
-      distance_m=_point_to_segment_distance_xy(0.0, 0.0, x1, y1, x2, y2),
-    ))
+      distance_m=distance_m,
+    )))
 
-  segments.sort(key=lambda segment: (
-    max(0.0, min(
-      latlon_to_car_space_m(lat, lon, heading_deg, segment.lat1, segment.lon1)[0],
-      latlon_to_car_space_m(lat, lon, heading_deg, segment.lat2, segment.lon2)[0],
-    )),
-    segment.distance_m,
-  ))
-  return segments[:max(0, limit)]
+  segments_with_sort_key.sort(key=lambda item: (item[0], item[1]))
+  return [segment for _, _, segment in segments_with_sort_key[:max(0, limit)]]
