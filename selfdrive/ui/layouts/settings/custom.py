@@ -1470,7 +1470,7 @@ class CustomSettingsLayout(Widget):
 
   def _handle_osm_roads_build(self) -> None:
     self._handle_osm_roads_command(
-      [sys.executable, "tools/scripts/update_osm_roads.py", "--skip-download", "--keep-pbf"],
+      [sys.executable, "tools/scripts/update_osm_roads.py", "--skip-download", "--keep-pbf", "--skip-road-graph"],
       tr("Build the local OSM roads DB from the downloaded OSM data? This can take several minutes."),
       "BUILD",
       reset_segment_count=True,

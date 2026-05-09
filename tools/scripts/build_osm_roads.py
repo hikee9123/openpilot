@@ -121,6 +121,11 @@ def main() -> None:
   parser.add_argument("pbf", type=Path, help="Input OSM PBF file, for example south-korea-latest.osm.pbf")
   parser.add_argument("--db", type=Path, default=DEFAULT_OSM_ROADS_DB_PATH, help=f"Output SQLite DB (default: {DEFAULT_OSM_ROADS_DB_PATH})")
   parser.add_argument("--batch-size", type=int, default=20000, help="SQLite insert batch size")
+  parser.add_argument(
+    "--skip-road-graph",
+    action="store_true",
+    help="Skip the memory-heavy road successor graph build; current-road lookup still works",
+  )
   args = parser.parse_args()
 
   if osmium is None:
@@ -134,17 +139,31 @@ def main() -> None:
     init_db(conn)
     conn.execute("DELETE FROM roads")
     conn.execute("DELETE FROM roads_rtree")
+    conn.execute("DELETE FROM road_adjacency")
+    conn.execute("DELETE FROM road_edges")
+    conn.execute("DELETE FROM road_nodes")
     handler = RoadSegmentHandler(conn, max(1000, args.batch_size))
     handler.apply_file(str(args.pbf), locations=True)
     handler.flush()
-    graph_stats = build_road_graph(conn)
+    if args.skip_road_graph:
+      graph_stats = None
+      conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("road_graph_node_count", "0"))
+      conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("road_graph_edge_count", "0"))
+      conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("road_graph_adjacency_count", "0"))
+      conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("road_graph_skipped", "1"))
+    else:
+      graph_stats = build_road_graph(conn)
+      conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("road_graph_skipped", "0"))
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("segment_count", str(handler.segment_count)))
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("source_pbf", str(args.pbf)))
     conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("built_at", str(int(time.time()))))
 
   elapsed = time.monotonic() - started
   print(f"built {handler.segment_count} road segments from {handler.way_count} ways into {args.db}")
-  print(f"graph {graph_stats.node_count} nodes, {graph_stats.edge_count} edges, {graph_stats.adjacency_count} transitions")
+  if graph_stats is None:
+    print("graph skipped")
+  else:
+    print(f"graph {graph_stats.node_count} nodes, {graph_stats.edge_count} edges, {graph_stats.adjacency_count} transitions")
   if handler.skipped_ways:
     print(f"skipped {handler.skipped_ways} ways with invalid geometry")
   print(f"elapsed {elapsed:.1f}s")

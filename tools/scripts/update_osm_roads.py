@@ -198,8 +198,10 @@ def _replace_db_atomically(build_path: Path, final_path: Path) -> None:
     raise
 
 
-def _build_osm_roads_db(pbf_path: Path, build_db: Path, params: Params) -> int:
+def _build_osm_roads_db(pbf_path: Path, build_db: Path, params: Params, skip_road_graph: bool) -> int:
   command = [sys.executable, "tools/scripts/build_osm_roads.py", str(pbf_path), "--db", str(build_db)]
+  if skip_road_graph:
+    command.append("--skip-road-graph")
   segment_pattern = re.compile(r"^segments\s+([0-9]+)")
   with subprocess.Popen(
     command,
@@ -230,6 +232,11 @@ def main() -> None:
   parser.add_argument("--skip-download", action="store_true", help="Use the existing PBF file instead of downloading it")
   parser.add_argument("--download-only", action="store_true", help="Download the PBF and exit without building the DB")
   parser.add_argument("--keep-pbf", action="store_true", help="Keep the downloaded PBF after building the DB")
+  parser.add_argument(
+    "--skip-road-graph",
+    action="store_true",
+    help="Skip the memory-heavy road successor graph build; current-road lookup still works",
+  )
   parser.add_argument("--no-auto-install-osmium", action="store_true", help="Fail instead of trying to install osmium when it is missing")
   args = parser.parse_args()
 
@@ -268,9 +275,9 @@ def main() -> None:
   build_db = args.tmp_dir / f"{args.db.name}.building"
   _unlink_if_exists(build_db)
   print(f"building temporary OSM roads DB {build_db}", flush=True)
-  build_returncode = _build_osm_roads_db(args.pbf, build_db, params)
+  build_returncode = _build_osm_roads_db(args.pbf, build_db, params, args.skip_road_graph)
   if build_returncode != 0:
-    print(f"build failed; keeping existing DB {args.db}", flush=True)
+    print(f"build failed with exit code {build_returncode}; keeping existing DB {args.db}", flush=True)
     _unlink_if_exists(build_db)
     return build_returncode
 
