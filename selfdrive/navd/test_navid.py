@@ -200,6 +200,47 @@ def test_osm_corridor_cache_keeps_existing_segments_on_sparse_refresh(tmp_path: 
   assert cache.loaded_at == 3.0
 
 
+def test_current_road_match_prefers_stable_previous_road() -> None:
+  navid = _load_navid_module()
+  previous = navid.CurrentRoadMatch(1, "Main Road", 0.0, 1.0)
+  same = navid.CurrentRoadCandidate(types.SimpleNamespace(road_id=1, name="Main Road", ref=""), "Main Road", 5.0, 1.0, 20.0)
+  jump = navid.CurrentRoadCandidate(types.SimpleNamespace(road_id=2, name="Side Road", ref=""), "Side Road", 3.0, 1.0, 10.0)
+
+  match = navid._select_current_road_match([jump, same], previous, {}, 2.0)
+
+  assert match.road_id == 1
+  assert match.name == "Main Road"
+
+
+def test_current_road_match_prefers_graph_successor() -> None:
+  navid = _load_navid_module()
+  previous = navid.CurrentRoadMatch(1, "Main Road", 0.0, 1.0)
+  successor = navid.CurrentRoadCandidate(types.SimpleNamespace(road_id=2, name="Next Road", ref=""), "Next Road", 8.0, 2.0, 15.0)
+  unrelated = navid.CurrentRoadCandidate(types.SimpleNamespace(road_id=3, name="Parallel Road", ref=""), "Parallel Road", 4.0, 1.0, 8.0)
+
+  match = navid._select_current_road_match([unrelated, successor], previous, {2: 0.0}, 2.0)
+
+  assert match.road_id == 2
+  assert match.name == "Next Road"
+
+
+def test_current_road_match_from_cache_uses_successor_transitions(monkeypatch) -> None:
+  navid = _load_navid_module()
+  cache = types.SimpleNamespace(segments=[])
+  previous = navid.CurrentRoadMatch(1, "Main Road", 0.0, 1.0)
+  successor = navid.CurrentRoadCandidate(types.SimpleNamespace(road_id=2, name="Next Road", ref=""), "Next Road", 8.0, 2.0, 15.0)
+  unrelated = navid.CurrentRoadCandidate(types.SimpleNamespace(road_id=3, name="Parallel Road", ref=""), "Parallel Road", 4.0, 1.0, 8.0)
+  transition = types.SimpleNamespace(road=types.SimpleNamespace(road_id=2), turn_angle_deg=0.0)
+
+  monkeypatch.setattr(navid, "_current_road_candidates_from_cache", lambda *args, **kwargs: [unrelated, successor])
+  monkeypatch.setattr(navid, "road_successors", lambda *args, **kwargs: [transition])
+
+  match = navid._current_road_match_from_cache(cache, object(), types.SimpleNamespace(), 50.0, previous, 2.0)
+
+  assert match.road_id == 2
+  assert match.name == "Next Road"
+
+
 def test_minimap_roads_include_full_visible_view(monkeypatch) -> None:
   navid = _load_navid_module()
   cache = types.SimpleNamespace(segments=["visible_top", "outside_side"])

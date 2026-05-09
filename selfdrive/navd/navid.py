@@ -17,7 +17,9 @@ try:
     forward_road_segments,
     latlon_to_car_space_m,
     nearby_road_segments,
+    road_successors,
     road_name_matches,
+    segment_allowed_bearings,
   )
 except ModuleNotFoundError:
   from selfdrive.navd.osm_roads import (
@@ -26,7 +28,9 @@ except ModuleNotFoundError:
     forward_road_segments,
     latlon_to_car_space_m,
     nearby_road_segments,
+    road_successors,
     road_name_matches,
+    segment_allowed_bearings,
   )
 from openpilot.selfdrive.navd.speed_camera import (
   DEFAULT_CSV_PATH,
@@ -52,6 +56,11 @@ OSM_ROAD_OVERLAY_RADIUS_M = 140.0
 OSM_CACHE_MIN_QUERY_RADIUS_M = OSM_ROAD_OVERLAY_RADIUS_M * 2.0
 OSM_CACHE_MIN_REFRESH_INTERVAL_SECONDS = 1.0
 OSM_CURRENT_ROAD_MAX_HEADING_DIFF_DEG = 60.0
+OSM_CURRENT_ROAD_CANDIDATE_LIMIT = 12
+OSM_CURRENT_ROAD_STICKY_BONUS = 18.0
+OSM_CURRENT_ROAD_SUCCESSOR_BONUS = 12.0
+OSM_CURRENT_ROAD_SAME_NAME_BONUS = 6.0
+OSM_CURRENT_ROAD_SWITCH_PENALTY = 8.0
 OSM_FORWARD_ROAD_MAX_HEADING_DIFF_DEG = 50.0
 OSM_FORWARD_ROAD_BACK_MARGIN_M = 20.0
 OSM_FORWARD_ROAD_DEFAULT_SIDE_M = 45.0
@@ -93,6 +102,23 @@ class OsmRoadCache:
   db_mtime: float = 0.0
   cache_kind: str = ""
   segments: list = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class CurrentRoadCandidate:
+  segment: object
+  name: str
+  distance_m: float
+  heading_diff_deg: float
+  score: float
+
+
+@dataclass(frozen=True)
+class CurrentRoadMatch:
+  road_id: int
+  name: str
+  score: float
+  updated_at: float
 
 
 def _clip(value: float, min_value: float, max_value: float) -> float:
@@ -610,9 +636,8 @@ def _forward_road_info(segment, gps, x1: float, y1: float, x2: float, y2: float,
   }
 
 
-def _current_road_name_from_cache(cache: OsmRoadCache, gps, radius_m: float, previous_name: str = "") -> str:
-  best_name = ""
-  best_score: float | None = None
+def _current_road_candidates_from_cache(cache: OsmRoadCache, gps, radius_m: float, previous_name: str = "") -> list[CurrentRoadCandidate]:
+  candidates: list[CurrentRoadCandidate] = []
   for segment in cache.segments:
     x1, y1 = latlon_to_car_space_m(gps.latitude, gps.longitude, gps.bearingDeg, segment.lat1, segment.lon1)
     x2, y2 = latlon_to_car_space_m(gps.latitude, gps.longitude, gps.bearingDeg, segment.lat2, segment.lon2)
@@ -620,17 +645,77 @@ def _current_road_name_from_cache(cache: OsmRoadCache, gps, radius_m: float, pre
     if distance_m > radius_m:
       continue
 
-    heading_diff = _bidirectional_heading_diff_deg(float(segment.bearing_deg), float(gps.bearingDeg))
+    heading_diff = min(_angle_diff_deg(bearing, float(gps.bearingDeg)) for bearing in segment_allowed_bearings(segment))
     if heading_diff > OSM_CURRENT_ROAD_MAX_HEADING_DIFF_DEG:
       continue
 
     name_bonus = -8.0 if road_name_matches(previous_name, segment.name, segment.ref) else 0.0
     highway_bonus = -4.0 if segment.highway in ("motorway", "trunk", "primary") else 0.0
     score = distance_m + heading_diff * 0.8 + name_bonus + highway_bonus
-    if best_score is None or score < best_score:
-      best_score = score
-      best_name = segment.display_name
-  return best_name
+    candidates.append(CurrentRoadCandidate(segment, segment.display_name, distance_m, heading_diff, score))
+  return sorted(candidates, key=lambda candidate: candidate.score)[:OSM_CURRENT_ROAD_CANDIDATE_LIMIT]
+
+
+def _transition_adjusted_current_road_score(
+  candidate: CurrentRoadCandidate,
+  previous_match: CurrentRoadMatch | None,
+  successor_turns: dict[int, float],
+) -> float:
+  if previous_match is None:
+    return candidate.score
+
+  road_id = int(getattr(candidate.segment, "road_id", 0))
+  if road_id == previous_match.road_id:
+    return candidate.score - OSM_CURRENT_ROAD_STICKY_BONUS
+  if road_id in successor_turns:
+    return candidate.score - max(0.0, OSM_CURRENT_ROAD_SUCCESSOR_BONUS - successor_turns[road_id] * 0.04)
+  if road_name_matches(previous_match.name, getattr(candidate.segment, "name", ""), getattr(candidate.segment, "ref", "")):
+    return candidate.score - OSM_CURRENT_ROAD_SAME_NAME_BONUS
+  return candidate.score + OSM_CURRENT_ROAD_SWITCH_PENALTY
+
+
+def _select_current_road_match(
+  candidates: list[CurrentRoadCandidate],
+  previous_match: CurrentRoadMatch | None,
+  successor_turns: dict[int, float],
+  now: float,
+) -> CurrentRoadMatch | None:
+  if not candidates:
+    return None
+
+  best_candidate = min(
+    candidates,
+    key=lambda candidate: _transition_adjusted_current_road_score(candidate, previous_match, successor_turns),
+  )
+  return CurrentRoadMatch(
+    int(getattr(best_candidate.segment, "road_id", 0)),
+    best_candidate.name,
+    _transition_adjusted_current_road_score(best_candidate, previous_match, successor_turns),
+    now,
+  )
+
+
+def _current_road_match_from_cache(
+  cache: OsmRoadCache,
+  db_path: Path,
+  gps,
+  radius_m: float,
+  previous_match: CurrentRoadMatch | None = None,
+  now: float | None = None,
+) -> CurrentRoadMatch | None:
+  now = time.monotonic() if now is None else now
+  previous_name = previous_match.name if previous_match is not None else ""
+  candidates = _current_road_candidates_from_cache(cache, gps, radius_m, previous_name)
+  successor_turns = {
+    transition.road.road_id: transition.turn_angle_deg
+    for transition in road_successors(db_path, previous_match.road_id, OSM_CURRENT_ROAD_CANDIDATE_LIMIT * 3)
+  } if previous_match is not None else {}
+  return _select_current_road_match(candidates, previous_match, successor_turns, now)
+
+
+def _current_road_name_from_cache(cache: OsmRoadCache, gps, radius_m: float, previous_name: str = "") -> str:
+  candidates = _current_road_candidates_from_cache(cache, gps, radius_m, previous_name)
+  return candidates[0].name if candidates else ""
 
 
 def _minimap_road_priority(road: dict) -> tuple[int, float]:
@@ -809,6 +894,7 @@ def main() -> None:
   last_osm_lookup_t = 0.0
   last_osm_overlay_t = 0.0
   current_road_name = ""
+  current_road_match: CurrentRoadMatch | None = None
   osm_road_overlay_text = ""
   last_good_osm_overlay_text = ""
   last_good_osm_overlay_t = 0.0
@@ -833,6 +919,7 @@ def main() -> None:
       active_camera = None
       active_candidates = []
       current_road_name = ""
+      current_road_match = None
       osm_road_overlay_text = ""
       last_good_osm_overlay_text = ""
       last_good_osm_overlay_t = 0.0
@@ -890,9 +977,18 @@ def main() -> None:
           max(OSM_CACHE_MIN_QUERY_RADIUS_M, local_radius_m * 2.0),
           now,
         )
-        current_road_name = _current_road_name_from_cache(local_osm_cache, gps, local_radius_m, current_road_name)
+        current_road_match = _current_road_match_from_cache(
+          local_osm_cache,
+          _osm_roads_db_path(),
+          gps,
+          local_radius_m,
+          current_road_match,
+          now,
+        )
+        current_road_name = current_road_match.name if current_road_match is not None else ""
       elif not bool(tuning["use_local_osm_roads"]):
         current_road_name = ""
+        current_road_match = None
 
       osm_context_segments = []
       if bool(tuning["use_local_osm_roads"]) or int(tuning["osm_road_overlay_mode"]) > 0:
