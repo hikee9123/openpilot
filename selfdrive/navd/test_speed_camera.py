@@ -7,8 +7,10 @@ import pytest
 
 
 try:
+  import openpilot.selfdrive.navd.camera_road_context as camera_road_context
   import openpilot.selfdrive.navd.speed_camera as speed_camera
 except ModuleNotFoundError:
+  import selfdrive.navd.camera_road_context as camera_road_context
   spec = importlib.util.spec_from_file_location(
     "speed_camera", Path(__file__).resolve().parents[2] / "selfdrive" / "navd" / "speed_camera.py"
   )
@@ -1330,7 +1332,7 @@ def test_osm_direction_prediction_uses_oneway_bearing(tmp_path: Path) -> None:
   assert camera is not None
   assert camera.osm_direction_source == "OSM_ONEWAY"
   assert camera.osm_predicted_bearing_deg == pytest.approx(0.0)
-  assert camera.osm_direction_confidence >= speed_camera.OSM_DIRECTION_ONEWAY_CONFIDENCE
+  assert camera.osm_direction_confidence >= camera_road_context.OSM_DIRECTION_ONEWAY_CONFIDENCE
 
 
 def test_osm_direction_prediction_uses_reverse_oneway_bearing(tmp_path: Path) -> None:
@@ -1374,7 +1376,7 @@ def test_osm_bidirectional_prediction_chooses_heading_with_lower_confidence(tmp_
   assert camera is not None
   assert camera.osm_direction_source == "OSM_BIDIRECTIONAL_HEADING"
   assert camera.osm_predicted_bearing_deg == pytest.approx(180.0)
-  assert camera.osm_direction_confidence < speed_camera.OSM_DIRECTION_ONEWAY_CONFIDENCE
+  assert camera.osm_direction_confidence < camera_road_context.OSM_DIRECTION_ONEWAY_CONFIDENCE
 
 
 def test_db_direction_prediction_takes_precedence_over_osm(tmp_path: Path) -> None:
