@@ -81,7 +81,20 @@ Extra custom CSVs can be provided repeatedly:
 imports it together with optional `--region-dir` and `--extra-csv` sources.
 By default, both import scripts also write a Leaflet/OpenStreetMap inspection page
 to `speed_cameras.html`; pass `--no-map-html` to skip it or `--map-html` to choose
-a different output path.
+a different output path. The default `--map-html-data-mode external` writes the
+viewer HTML plus separate data files under `<html stem>_data/`, such as
+`speed_cameras_data/csv.json` and `speed_cameras_data/db.json`. Use
+`--map-html-data-dir` to choose another data directory, or
+`--map-html-data-mode inline` to embed data directly in one HTML file. When CSV
+sources are available, the viewer exposes an input data selector for CSV-source
+rows and stored SQLite rows. Use `--map-html-source csv` to start the viewer on
+input CSV sources before deduplication, so duplicate or same-coordinate rows
+remain visible for review. Use `--map-html-source db` to start it on stored
+SQLite rows after DB normalization and deduplication. The default is `csv`. When
+using external data mode, serve the output directory with a local HTTP server so
+the browser can fetch the JSON files. The HTML category filter and category
+summary use the DB's normalized `camera_category` counts so the viewer exposes
+the full classified category set.
 
 ## 3. Stored Classification
 

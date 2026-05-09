@@ -120,14 +120,166 @@ def test_export_speed_camera_leaflet_html(tmp_path: Path) -> None:
   )
   create_database_from_csv(csv_path, db_path)
 
-  assert export_speed_camera_leaflet_html(db_path, html_path) == 1
+  assert export_speed_camera_leaflet_html(db_path, html_path, data_mode="inline") == 1
   html = html_path.read_text(encoding="utf-8")
 
   assert "leaflet@1.9.4" in html
   assert "tile.openstreetmap.org" in html
+  assert "L.circleMarker" in html
+  assert "speed-limit-label" in html
+  assert "bindTooltip(speedLabel" in html
+  assert "category-chip" in html
+  assert "categoryDot(label)" in html
+  assert "#d73027" in html
+  assert "popup-grid" in html
+  assert "--popup-width: 2520px" in html
+  assert "--popup-viewport-width: 98vw" in html
+  assert "width: min(var(--popup-width), var(--popup-viewport-width))" in html
+  assert "max-height: 520px" in html
+  assert "overflow-wrap: anywhere" in html
+  assert "Speed camera debug" in html
+  assert "dataset-source" in html
+  assert "setActiveDataset" in html
+  assert "setActiveDataset(activeDatasetKey, true)" in html
+  assert "setActiveDataset(event.target.value, false)" in html
+  assert "Array.isArray(dataset.cameras) || dataset.url || dataset.scriptUrl" in html
+  assert "activeDataset.count ?? cameras.length" in html
+  assert '"activeDataset":"db"' in html
+  assert '"inputSource":"DB"' in html
+  assert '"sourceFile":"speed_cameras.sqlite3"' in html
+  assert '"datasets":{"db"' in html
+  assert '"categoryCounts":[{"category":"SPEED","count":1}]' in html
   assert '"id":"A1-' in html
   assert '"lat":37.001' in html
   assert '"category":"SPEED"' in html
+
+
+def test_export_speed_camera_leaflet_html_can_show_raw_csv_rows(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  html_path = tmp_path / "speed_cameras.html"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,설치장소\n"
+    "A1,37.001,127.0,속도위반,80,전방도로\n"
+    "A1,37.001,127.0,속도위반,80,중복 전방도로\n",
+  )
+  assert create_database_from_csv(csv_path, db_path) == 1
+
+  assert export_speed_camera_leaflet_html(db_path, html_path, csv_sources=[CsvSource(csv_path, "public")], data_mode="inline") == 2
+  html = html_path.read_text(encoding="utf-8")
+
+  assert '"count":2' in html
+  assert '"activeDataset":"csv"' in html
+  assert '"inputSource":"CSV"' in html
+  assert '"sourceFile":"speed_cameras.csv"' in html
+  assert '"datasets":{"db"' in html
+  assert '"csv":{"inputSource":"CSV"' in html
+  assert "무인교통단속카메라관리번호" in html
+  assert "중복 전방도로" in html
+  assert '"categoryCounts":[{"category":"SPEED","count":1}]' in html
+  assert '"dedup_key"' in html
+  assert "speed_cameras.csv" in html
+
+
+def test_export_speed_camera_leaflet_html_can_start_from_db_dataset(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  html_path = tmp_path / "speed_cameras.html"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,설치장소\n"
+    "A1,37.001,127.0,속도위반,80,전방도로\n"
+    "A1,37.001,127.0,속도위반,80,중복 전방도로\n",
+  )
+  assert create_database_from_csv(csv_path, db_path) == 1
+
+  assert export_speed_camera_leaflet_html(
+    db_path,
+    html_path,
+    csv_sources=[CsvSource(csv_path, "public")],
+    active_source="db",
+    data_mode="inline",
+  ) == 1
+  html = html_path.read_text(encoding="utf-8")
+
+  assert '"activeDataset":"db"' in html
+  assert '"count":1' in html
+  assert '"csv":{"inputSource":"CSV","sourceFile":"speed_cameras.csv","count":2' in html
+
+
+def test_export_speed_camera_leaflet_html_can_write_external_datasets(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  html_path = tmp_path / "speed_cameras.html"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,설치장소\n"
+    "A1,37.001,127.0,속도위반,80,전방도로\n"
+    "A1,37.001,127.0,속도위반,80,중복 전방도로\n",
+  )
+  assert create_database_from_csv(csv_path, db_path) == 1
+
+  assert export_speed_camera_leaflet_html(db_path, html_path, csv_sources=[CsvSource(csv_path, "public")]) == 2
+  data_dir = tmp_path / "speed_cameras_data"
+  csv_json_path = data_dir / "csv.json"
+  db_json_path = data_dir / "db.json"
+  csv_js_path = data_dir / "csv.js"
+  db_js_path = data_dir / "db.js"
+  html = html_path.read_text(encoding="utf-8")
+  csv_json = csv_json_path.read_text(encoding="utf-8")
+  db_json = db_json_path.read_text(encoding="utf-8")
+  csv_js = csv_js_path.read_text(encoding="utf-8")
+  db_js = db_js_path.read_text(encoding="utf-8")
+
+  assert csv_json_path.exists()
+  assert db_json_path.exists()
+  assert csv_js_path.exists()
+  assert db_js_path.exists()
+  assert '"dataMode":"external"' in html
+  assert "Array.isArray(dataset.cameras) || dataset.url || dataset.scriptUrl" in html
+  assert "activeDataset.count ?? cameras.length" in html
+  assert "loadDatasetScript" in html
+  assert '"url":"speed_cameras_data/db.json"' in html
+  assert '"url":"speed_cameras_data/csv.json"' in html
+  assert '"scriptUrl":"speed_cameras_data/db.js"' in html
+  assert '"scriptUrl":"speed_cameras_data/csv.js"' in html
+  assert '"cameras":[' not in html
+  assert "중복 전방도로" not in html
+  assert '"inputSource":"CSV"' in csv_json
+  assert '"count":2' in csv_json
+  assert "중복 전방도로" in csv_json
+  assert "window.__NAVD_CAMERA_DATASETS__" in csv_js
+  assert "중복 전방도로" in csv_js
+  assert '"inputSource":"DB"' in db_json
+  assert '"count":1' in db_json
+  assert "window.__NAVD_CAMERA_DATASETS__" in db_js
+
+
+def test_export_speed_camera_leaflet_html_can_write_external_datasets_to_custom_dir(tmp_path: Path) -> None:
+  csv_path = tmp_path / "speed_cameras.csv"
+  db_path = tmp_path / "speed_cameras.sqlite3"
+  html_path = tmp_path / "viewer" / "speed_cameras.html"
+  data_dir = tmp_path / "assets" / "camera_data"
+  _write_csv(
+    csv_path,
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,설치장소\n"
+    "A1,37.001,127.0,속도위반,80,전방도로\n",
+  )
+  assert create_database_from_csv(csv_path, db_path) == 1
+
+  assert export_speed_camera_leaflet_html(
+    db_path,
+    html_path,
+    csv_sources=[CsvSource(csv_path, "public")],
+    data_dir=data_dir,
+  ) == 1
+  html = html_path.read_text(encoding="utf-8")
+
+  assert (data_dir / "csv.json").exists()
+  assert (data_dir / "db.json").exists()
+  assert '"url":"../assets/camera_data/csv.json"' in html
+  assert '"scriptUrl":"../assets/camera_data/csv.js"' in html
 
 
 @pytest.mark.parametrize(

@@ -112,6 +112,23 @@ def main() -> None:
   parser.add_argument("--max-pages", type=int, help="Limit downloaded pages for testing")
   parser.add_argument("--download-only", action="store_true", help="Download CSV without importing the DB")
   parser.add_argument("--map-html", type=Path, default=DEFAULT_MAP_HTML_PATH, help=f"Leaflet HTML map path (default: {DEFAULT_MAP_HTML_PATH})")
+  parser.add_argument(
+    "--map-html-source",
+    choices=("csv", "db"),
+    default="csv",
+    help="Initial input source for Leaflet HTML map: csv shows raw rows before DB dedup, db shows stored SQLite rows (default: csv)",
+  )
+  parser.add_argument(
+    "--map-html-data-mode",
+    choices=("external", "inline"),
+    default="external",
+    help="Leaflet HTML data mode: external writes separate JSON files, inline embeds data in the HTML (default: external)",
+  )
+  parser.add_argument(
+    "--map-html-data-dir",
+    type=Path,
+    help="Directory for external Leaflet HTML data files (default: <map html stem>_data next to the HTML)",
+  )
   parser.add_argument("--no-map-html", action="store_true", help="Skip Leaflet HTML map generation")
   args = parser.parse_args()
 
@@ -158,11 +175,19 @@ def main() -> None:
     params.put(SPEED_CAMERA_DATA_DATE_KEY, data_date)
   map_count = 0
   if not args.no_map_html:
-    map_count = export_speed_camera_leaflet_html(args.db, args.map_html)
+    map_count = export_speed_camera_leaflet_html(
+      args.db,
+      args.map_html,
+      source_path=args.db,
+      csv_sources=csv_sources,
+      active_source=args.map_html_source,
+      data_mode=args.map_html_data_mode,
+      data_dir=args.map_html_data_dir,
+    )
   _put_progress(params, 100)
   print(f"imported {imported} speed cameras into {args.db}")
   if not args.no_map_html:
-    print(f"wrote Leaflet map with {map_count} cameras to {args.map_html}")
+    print(f"wrote Leaflet map from {args.map_html_source} with {map_count} cameras to {args.map_html} ({args.map_html_data_mode})")
   print("sources:")
   print(f"  public: {source_counts.get('public', 0)}")
   print(f"  region: {source_counts.get('region', 0)}")

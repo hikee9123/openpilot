@@ -1463,53 +1463,224 @@ def _leaflet_camera_rows(conn: sqlite3.Connection) -> list[dict[str, object]]:
       category = normalize_camera_category(camera_type, section_type, f"{road_name} {place}", speed_limit)
 
     road_class = str(_row_get(row, "road_class", ""))
+    road_type_raw = str(_row_get(row, "road_type_raw", ""))
     if not road_class or road_class == "UNKNOWN":
-      road_class = normalize_road_class(str(_row_get(row, "road_type_raw", "")), road_name, place)
+      road_class = normalize_road_class(road_type_raw, road_name, place)
 
     cameras.append({
+      "uid": str(_row_get(row, "id", "")),
       "id": str(_row_get(row, "id", "")),
       "lat": float(_row_get(row, "lat", 0.0)),
       "lon": float(_row_get(row, "lon", 0.0)),
       "speed": speed_limit,
       "category": category,
       "roadClass": road_class,
+      "roadType": road_type_raw,
       "region": str(_row_get(row, "region", "")),
       "road": road_name,
       "place": place,
       "source": str(_row_get(row, "source_type", "")),
       "updatedAt": str(_row_get(row, "updated_at", "")),
+      "debug": {
+        "camera_category": category,
+        "camera_type_code": int(_row_get(row, "camera_type_code", 0)),
+        "is_speed_camera": int(_row_get(row, "is_speed_camera", 0)),
+        "is_signal_camera": int(_row_get(row, "is_signal_camera", 0)),
+        "is_section_camera": int(_row_get(row, "is_section_camera", 0)),
+        "road_class": road_class,
+        "road_class_code": int(_row_get(row, "road_class_code", 0)),
+        "is_expressway": int(_row_get(row, "is_expressway", 0)),
+        "is_national_road": int(_row_get(row, "is_national_road", 0)),
+        "dedup_key": str(_row_get(row, "dedup_key", "")),
+        "source_type": str(_row_get(row, "source_type", "")),
+        "source_file": str(_row_get(row, "source_file", "")),
+      },
     })
   return cameras
+
+
+def _raw_popup_fields(row: dict[str, str]) -> dict[str, str]:
+  return {str(key): str(value) for key, value in row.items() if str(value or "").strip()}
+
+
+def _camera_payload_from_record(record: dict[str, object], row_index: int, row: dict[str, str]) -> dict[str, object]:
+  return {
+    "uid": f"{record['source_file']}:{row_index}:{record['id']}",
+    "id": str(record["id"]),
+    "lat": float(record["lat"]),
+    "lon": float(record["lon"]),
+    "speed": int(record["speed_limit"]),
+    "category": str(record["camera_category"]),
+    "roadClass": str(record["road_class"]),
+    "roadType": str(record["road_type_raw"]),
+    "region": str(record["region"]),
+    "road": str(record["road_name"]),
+    "place": str(record["place"]),
+    "source": str(record["source_type"]),
+    "sourceFile": str(record["source_file"]),
+    "updatedAt": str(record["updated_at"]),
+    "rowIndex": row_index,
+    "original": _raw_popup_fields(row),
+    "debug": {
+      "camera_category": str(record["camera_category"]),
+      "camera_type_code": int(record["camera_type_code"]),
+      "is_speed_camera": int(record["is_speed_camera"]),
+      "is_signal_camera": int(record["is_signal_camera"]),
+      "is_section_camera": int(record["is_section_camera"]),
+      "road_class": str(record["road_class"]),
+      "road_class_code": int(record["road_class_code"]),
+      "is_expressway": int(record["is_expressway"]),
+      "is_national_road": int(record["is_national_road"]),
+      "dedup_key": str(record["dedup_key"]),
+      "source_type": str(record["source_type"]),
+      "source_file": str(record["source_file"]),
+      "row_index": row_index,
+    },
+  }
+
+
+def _leaflet_camera_rows_from_csvs(csv_sources: list[CsvSource]) -> list[dict[str, object]]:
+  cameras = []
+  for csv_source in csv_sources:
+    rows = _read_csv_rows(csv_source.path)
+    for idx, row in enumerate(rows):
+      record = _standardize_csv_row(row, csv_source, idx)
+      if record is None:
+        continue
+      cameras.append(_camera_payload_from_record(record, idx, row))
+  return cameras
+
+
+def _leaflet_camera_rows_from_db(db_path: Path) -> list[dict[str, object]] | None:
+  if not db_path.exists():
+    return None
+
+  try:
+    conn = sqlite3.connect(db_path)
+  except sqlite3.Error:
+    return None
+
+  with closing(conn):
+    try:
+      return _leaflet_camera_rows(conn)
+    except sqlite3.Error:
+      return None
+
+
+def _leaflet_dataset(input_source: str, source_file: str, cameras: list[dict[str, object]]) -> dict[str, object]:
+  return {
+    "inputSource": input_source,
+    "sourceFile": source_file,
+    "count": len(cameras),
+    "cameras": cameras,
+  }
+
+
+def _leaflet_data_json(payload: dict[str, object]) -> str:
+  return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+
+
+def _leaflet_dataset_dir(html_path: Path, data_dir: Path | None) -> Path:
+  if data_dir is not None:
+    return data_dir
+  return html_path.with_name(f"{html_path.stem}_data")
+
+
+def _leaflet_dataset_file_path(html_path: Path, data_dir: Path, dataset_key: str, suffix: str) -> Path:
+  return data_dir / f"{dataset_key}{suffix}"
+
+
+def _leaflet_html_data_url(html_path: Path, data_path: Path) -> str:
+  return Path(os.path.relpath(data_path, html_path.parent)).as_posix()
 
 
 def export_speed_camera_leaflet_html(
   db_path: Path = DEFAULT_DB_PATH,
   html_path: Path = DEFAULT_MAP_HTML_PATH,
+  source_path: Path | None = None,
+  csv_sources: list[CsvSource] | None = None,
+  active_source: str | None = None,
+  data_mode: str = "external",
+  data_dir: Path | None = None,
 ) -> int:
-  if not db_path.exists():
-    return 0
+  if data_mode not in ("inline", "external"):
+    raise ValueError("data_mode must be 'inline' or 'external'")
 
-  try:
-    conn = sqlite3.connect(db_path)
-  except sqlite3.Error:
-    return 0
+  datasets: dict[str, dict[str, object]] = {}
 
-  with closing(conn):
-    try:
-      cameras = _leaflet_camera_rows(conn)
-    except sqlite3.Error:
+  db_cameras = _leaflet_camera_rows_from_db(db_path)
+  if db_cameras is not None:
+    db_source_file = Path(source_path).name if source_path is not None else db_path.name
+    datasets["db"] = _leaflet_dataset("DB", db_source_file, db_cameras)
+
+  if csv_sources is not None:
+    csv_cameras = _leaflet_camera_rows_from_csvs(csv_sources)
+    csv_source_file = ", ".join(csv_source.path.name for csv_source in csv_sources)
+    datasets["csv"] = _leaflet_dataset("CSV", csv_source_file, csv_cameras)
+  else:
+    if db_cameras is None:
       return 0
+
+  default_source = "csv" if csv_sources is not None else "db"
+  active_dataset = (active_source or default_source).lower()
+  if active_dataset not in datasets:
+    active_dataset = default_source if default_source in datasets else next(iter(datasets), "")
+  if not active_dataset:
+    return 0
+
+  active = datasets[active_dataset]
+  cameras = active["cameras"]
+  category_counts = [
+    {"category": category, "count": count}
+    for category, count in database_category_counts(db_path)
+  ]
+
+  html_path.parent.mkdir(parents=True, exist_ok=True)
+  if data_mode == "external":
+    html_datasets = {}
+    dataset_dir = _leaflet_dataset_dir(html_path, data_dir)
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    for key, dataset in datasets.items():
+      dataset_payload = {
+        "inputSource": dataset["inputSource"],
+        "sourceFile": dataset["sourceFile"],
+        "count": dataset["count"],
+        "categoryCounts": category_counts,
+        "cameras": dataset["cameras"],
+      }
+      json_path = _leaflet_dataset_file_path(html_path, dataset_dir, key, ".json")
+      json_path.write_text(_leaflet_data_json(dataset_payload), encoding="utf-8")
+      script_path = _leaflet_dataset_file_path(html_path, dataset_dir, key, ".js")
+      script_path.write_text(
+        "window.__NAVD_CAMERA_DATASETS__=window.__NAVD_CAMERA_DATASETS__||{};"
+        f"window.__NAVD_CAMERA_DATASETS__[{json.dumps(key)}]={_leaflet_data_json(dataset_payload)};\n",
+        encoding="utf-8",
+      )
+      html_datasets[key] = {
+        "inputSource": dataset["inputSource"],
+        "sourceFile": dataset["sourceFile"],
+        "count": dataset["count"],
+        "url": _leaflet_html_data_url(html_path, json_path),
+        "scriptUrl": _leaflet_html_data_url(html_path, script_path),
+      }
+  else:
+    html_datasets = datasets
 
   payload = {
     "generatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
     "dbPath": str(db_path),
+    "dataMode": data_mode,
+    "activeDataset": active_dataset,
+    "datasets": html_datasets,
+    "inputSource": active["inputSource"],
+    "sourceFile": active["sourceFile"],
     "count": len(cameras),
-    "cameras": cameras,
+    "categoryCounts": category_counts,
   }
-  data_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+  if data_mode == "inline":
+    payload["cameras"] = cameras
 
-  html_path.parent.mkdir(parents=True, exist_ok=True)
-  html_path.write_text(_leaflet_html_template().replace("__NAVD_CAMERA_DATA__", data_json), encoding="utf-8")
+  html_path.write_text(_leaflet_html_template().replace("__NAVD_CAMERA_DATA__", _leaflet_data_json(payload)), encoding="utf-8")
   return len(cameras)
 
 
@@ -1519,49 +1690,436 @@ def _leaflet_html_template() -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>navd speed cameras</title>
+  <title>공공 단속카메라 Leaflet/OpenStreetMap 뷰어</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
   <style>
-    html, body, #map { height: 100%; margin: 0; }
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    #panel {
-      position: absolute;
-      z-index: 1000;
-      top: 12px;
-      right: 12px;
-      width: min(360px, calc(100vw - 24px));
-      max-height: calc(100vh - 24px);
-      overflow: auto;
-      box-sizing: border-box;
-      padding: 14px 16px;
-      border-radius: 8px;
-      background: rgba(18, 22, 28, 0.9);
-      color: #f4f4f5;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.32);
+    :root {
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --line: #d8dee7;
+      --text: #17202a;
+      --muted: #5d6978;
+      --strong: #0f172a;
+      --accent: #2563eb;
+      --popup-width: 2520px;
+      --popup-viewport-width: 98vw;
     }
-    #panel h1 { margin: 0 0 8px; font-size: 17px; font-weight: 700; }
-    #panel p { margin: 4px 0; color: #c9cbd1; font-size: 13px; }
-    #counts { display: grid; gap: 6px; margin-top: 12px; }
-    .count { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
-    .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
-    .leaflet-popup-content { min-width: 220px; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      align-items: center;
+      min-height: 74px;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #101820;
+      color: #f8fafc;
+    }
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.25;
+      font-weight: 760;
+    }
+    .header-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      margin-top: 6px;
+      color: #c8d1dc;
+      font-size: 13px;
+    }
+    .header-stat {
+      min-width: 120px;
+      text-align: right;
+      font-size: 13px;
+      color: #c8d1dc;
+    }
+    .header-stat strong {
+      display: block;
+      color: #ffffff;
+      font-size: 22px;
+      line-height: 1.1;
+    }
+    .app {
+      display: grid;
+      grid-template-columns: minmax(340px, 420px) 1fr;
+      min-height: 0;
+    }
+    aside {
+      min-height: 0;
+      overflow: auto;
+      padding: 14px;
+      border-right: 1px solid var(--line);
+      background: #eef2f6;
+    }
+    #map {
+      min-height: 0;
+      height: 100%;
+      width: 100%;
+    }
+    section {
+      padding: 14px;
+      margin-bottom: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+    section h2 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      line-height: 1.2;
+      color: var(--strong);
+    }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .metric {
+      min-height: 66px;
+      padding: 10px;
+      border: 1px solid #e1e7ef;
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .metric strong {
+      display: block;
+      margin-top: 4px;
+      color: var(--strong);
+      font-size: 22px;
+      line-height: 1.1;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      color: #334155;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    input, select, button {
+      width: 100%;
+      min-height: 34px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      background: #ffffff;
+      color: var(--text);
+      font: inherit;
+      font-size: 13px;
+    }
+    input, select { padding: 6px 8px; }
+    button {
+      cursor: pointer;
+      background: #f8fafc;
+      font-weight: 680;
+    }
+    button.primary {
+      border-color: #1d4ed8;
+      background: var(--accent);
+      color: #ffffff;
+    }
+    .filters {
+      display: grid;
+      gap: 10px;
+    }
+    .filter-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .bars {
+      display: grid;
+      gap: 7px;
+    }
+    .bar-row {
+      display: grid;
+      grid-template-columns: minmax(96px, 1fr) 48px;
+      gap: 8px;
+      align-items: center;
+      font-size: 12px;
+    }
+    .bar-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #334155;
+    }
+    .category-dot {
+      flex: 0 0 auto;
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: var(--category-color, #525252);
+      box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.18);
+    }
+    .bar-track {
+      grid-column: 1 / -1;
+      height: 7px;
+      border-radius: 999px;
+      background: #e5e7eb;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      min-width: 2px;
+      border-radius: inherit;
+      background: var(--bar-color, var(--accent));
+    }
+    .category-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      max-width: 100%;
+      color: #0f172a;
+      font-weight: 680;
+    }
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    th, td {
+      padding: 8px 7px;
+      border-bottom: 1px solid #e5e7eb;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #f8fafc;
+      color: #475569;
+      font-size: 11px;
+    }
+    tbody tr {
+      cursor: pointer;
+    }
+    tbody tr:hover {
+      background: #eff6ff;
+    }
+	    .table-note {
+	      margin: 8px 0 0;
+	      color: var(--muted);
+	      font-size: 12px;
+	    }
+	    .leaflet-popup-content {
+	      width: min(var(--popup-width), var(--popup-viewport-width));
+	      max-width: var(--popup-width);
+	    }
+	    .popup-grid {
+	      display: grid;
+	      grid-template-columns: repeat(2, minmax(0, 1fr));
+	      gap: 12px;
+	      margin-top: 8px;
+	    }
+	    .popup-section {
+	      min-width: 0;
+	      max-height: 520px;
+	      overflow: auto;
+	      padding: 10px;
+	      border: 1px solid #e5e7eb;
+	      border-radius: 8px;
+	      background: #f8fafc;
+	    }
+	    .popup-title {
+	      position: sticky;
+	      top: 0;
+	      z-index: 1;
+	      margin: -10px -10px 8px;
+	      padding: 8px 10px;
+	      border-bottom: 1px solid #e5e7eb;
+	      background: #f8fafc;
+	      color: #0f172a;
+	      font-weight: 760;
+	    }
+	    .popup-row {
+	      display: block;
+	      padding: 6px 0;
+	      border-bottom: 1px solid #e5e7eb;
+	      font-size: 12px;
+	    }
+	    .popup-row:last-child {
+	      border-bottom: 0;
+	    }
+	    .popup-key {
+	      display: block;
+	      margin-bottom: 2px;
+	      color: #64748b;
+	      font-size: 11px;
+	      font-weight: 720;
+	    }
+	    .popup-value {
+	      display: block;
+	      color: #0f172a;
+	      line-height: 1.35;
+	      word-break: break-word;
+	      overflow-wrap: anywhere;
+	    }
+	    .speed-limit-label {
+	      border: 0;
+	      background: transparent;
+	      box-shadow: none;
+	      color: #ffffff;
+	      font-size: 10px;
+	      font-weight: 800;
+	      line-height: 1;
+	      text-align: center;
+	      text-shadow: 0 1px 2px rgba(15, 23, 42, 0.9);
+	      pointer-events: none;
+	    }
+	    .speed-limit-label::before {
+	      display: none;
+	    }
+	    @media (max-width: 900px) {
+	      .leaflet-popup-content { width: min(520px, 88vw); }
+	      .popup-grid { grid-template-columns: 1fr; }
+	    }
+    @media (max-width: 900px) {
+      body { grid-template-rows: auto auto 60vh; }
+      header { grid-template-columns: 1fr; }
+      .header-stat { text-align: left; }
+      .app { grid-template-columns: 1fr; grid-template-rows: auto 60vh; }
+      aside { max-height: 48vh; border-right: 0; border-bottom: 1px solid var(--line); }
+    }
   </style>
 </head>
 <body>
-  <div id="map"></div>
-  <section id="panel">
-    <h1>navd speed cameras</h1>
-    <p id="summary"></p>
-    <p id="source"></p>
-    <div id="counts"></div>
-  </section>
+  <header>
+    <div>
+      <h1>공공 단속카메라 Leaflet/OpenStreetMap 뷰어</h1>
+      <div class="header-meta">
+        <span>입력 데이터: <strong id="input-source">-</strong> <strong id="source-file">-</strong></span>
+        <span>Google API Key 불필요</span>
+        <span id="db-path"></span>
+      </div>
+    </div>
+    <div class="header-stat">
+      전체 카메라 건수
+      <strong id="header-count">0</strong>
+    </div>
+  </header>
+  <main class="app">
+    <aside>
+      <section>
+        <h2>요약</h2>
+        <div class="summary-grid">
+          <div class="metric"><span>전체 카메라 수</span><strong id="metric-total">0</strong></div>
+          <div class="metric"><span>과속 관련 카메라 수</span><strong id="metric-speed">0</strong></div>
+          <div class="metric"><span>카테고리 수</span><strong id="metric-category">0</strong></div>
+          <div class="metric"><span>지역 수</span><strong id="metric-region">0</strong></div>
+        </div>
+      </section>
+      <section>
+        <h2>필터</h2>
+        <div class="filters">
+          <div>
+            <label for="dataset-source">입력 데이터</label>
+            <select id="dataset-source"></select>
+          </div>
+          <div>
+            <label for="search">검색어</label>
+            <input id="search" type="search" placeholder="지역 / 설치장소 / 도로명 / 주소 / 관리번호">
+          </div>
+          <div class="filter-row">
+            <div>
+              <label for="category-filter">카메라 카테고리</label>
+              <select id="category-filter"></select>
+            </div>
+            <div>
+              <label for="road-filter">도로종류</label>
+              <select id="road-filter"></select>
+            </div>
+          </div>
+          <div class="filter-row">
+            <div>
+              <label for="region-filter">시도</label>
+              <select id="region-filter"></select>
+            </div>
+            <div>
+              <label for="speed-filter">제한속도</label>
+              <select id="speed-filter"></select>
+            </div>
+          </div>
+          <div class="filter-row">
+            <button id="fit-all" class="primary" type="button">지도 전체 보기</button>
+            <button id="reset-filters" type="button">필터 초기화</button>
+          </div>
+        </div>
+      </section>
+      <section>
+        <h2>카테고리 요약</h2>
+        <div id="category-bars" class="bars"></div>
+      </section>
+      <section>
+        <h2>도로종류 요약</h2>
+        <div id="road-bars" class="bars"></div>
+      </section>
+      <section>
+        <h2>카메라 목록</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>카테고리</th>
+                <th>제한속도</th>
+                <th>지역 / 설치장소</th>
+              </tr>
+            </thead>
+            <tbody id="camera-table"></tbody>
+          </table>
+        </div>
+        <p id="table-note" class="table-note"></p>
+      </section>
+    </aside>
+    <div id="map"></div>
+  </main>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script>
     const payload = __NAVD_CAMERA_DATA__;
-    const cameras = payload.cameras || [];
+    const datasets = payload.datasets || {
+      [(payload.inputSource || "DB").toLowerCase()]: {
+        inputSource: payload.inputSource || "DB",
+        sourceFile: payload.sourceFile || "",
+        count: payload.count || 0,
+        cameras: payload.cameras || [],
+      },
+    };
+    let activeDatasetKey = payload.activeDataset || (payload.inputSource || "db").toLowerCase();
+    let activeDataset = datasets[activeDatasetKey] || Object.values(datasets)[0] || {};
+    let cameras = Array.isArray(activeDataset.cameras) ? activeDataset.cameras : [];
+    let dbCategoryCounts = normalizeCategoryCounts(payload.categoryCounts || []);
+    const datasetCache = new Map();
     const colors = {
-      SPEED: "#d33f49",
-      SPEED_SIGNAL: "#f59f00",
+      SPEED: "#d73027",
+      SPEED_SIGNAL: "#f59e0b",
       SECTION_SPEED: "#7c3aed",
       SIGNAL: "#2563eb",
       SECURITY: "#0891b2",
@@ -1570,14 +2128,22 @@ def _leaflet_html_template() -> str:
       BUS_LANE: "#0f766e",
       TRAFFIC: "#ea580c",
       ETC: "#737373",
-      UNKNOWN: "#525252",
+      UNKNOWN: "#404040",
     };
+    const speedCategories = new Set(["SPEED", "SPEED_SIGNAL", "SECTION_SPEED"]);
+    const maxListRows = 500;
 
     const map = L.map("map", { preferCanvas: true });
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       attribution: "&copy; OpenStreetMap contributors",
     }).addTo(map);
+    const cluster = L.markerClusterGroup({
+      chunkedLoading: true,
+      maxClusterRadius: 48,
+      disableClusteringAtZoom: 18,
+    }).addTo(map);
+    const markerById = new Map();
 
     function escapeHtml(value) {
       return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
@@ -1589,44 +2155,386 @@ def _leaflet_html_template() -> str:
       }[ch]));
     }
 
-    const group = L.featureGroup().addTo(map);
-    const counts = new Map();
-    for (const camera of cameras) {
-      const category = camera.category || "UNKNOWN";
-      counts.set(category, (counts.get(category) || 0) + 1);
-      const color = colors[category] || colors.UNKNOWN;
-      const marker = L.circleMarker([camera.lat, camera.lon], {
-        radius: category === "SECTION_SPEED" ? 5 : 4,
-        color,
-        fillColor: color,
-        fillOpacity: 0.72,
-        opacity: 0.9,
-        weight: 1,
+    function formatNumber(value) {
+      return Number(value || 0).toLocaleString();
+    }
+
+    function cameraRoadType(camera) {
+      return camera.roadType || camera.roadClass || "UNKNOWN";
+    }
+
+    function optionValue(value) {
+      return String(value || "UNKNOWN");
+    }
+
+    function uniqueValues(items, getter) {
+      return Array.from(new Set(items.map(getter).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b)));
+    }
+
+	    function normalizeCategoryCounts(rows) {
+	      return (rows || [])
+	        .map((row) => [String(row.category || "UNKNOWN"), Number(row.count || 0)])
+	        .filter(([, count]) => count > 0);
+	    }
+
+	    function datasetName(key, dataset) {
+	      if (key === "csv") return "CSV 원본";
+	      if (key === "db") return "DB 저장 결과";
+	      return dataset.inputSource || key.toUpperCase();
+	    }
+
+	    function datasetEntries() {
+	      return Object.entries(datasets).filter(([, dataset]) => Array.isArray(dataset.cameras) || dataset.url || dataset.scriptUrl);
+	    }
+
+	    function fillDatasetSelect() {
+	      const select = document.getElementById("dataset-source");
+	      select.innerHTML = datasetEntries().map(([key, dataset]) => {
+	        const count = dataset.count ?? (dataset.cameras || []).length;
+	        return `<option value="${escapeHtml(key)}">${escapeHtml(datasetName(key, dataset))} (${formatNumber(count)}건)</option>`;
+	      }).join("");
+	      select.value = datasets[activeDatasetKey] ? activeDatasetKey : (datasetEntries()[0]?.[0] || "");
+	    }
+
+	    function showLoadStatus(message, isError = false) {
+	      const note = document.getElementById("table-note");
+	      if (!note) return;
+	      note.textContent = message || "";
+	      note.style.color = isError ? "#b91c1c" : "";
+	    }
+
+	    async function loadDataset(key) {
+	      const meta = datasets[key];
+	      if (!meta) throw new Error(`unknown dataset: ${key}`);
+	      if (Array.isArray(meta.cameras)) return meta;
+	      if (datasetCache.has(key)) return datasetCache.get(key);
+	      if (!meta.url && !meta.scriptUrl) throw new Error(`missing dataset url: ${key}`);
+
+	      if (meta.url) {
+	        try {
+	          const response = await fetch(meta.url);
+	          if (!response.ok) {
+	            throw new Error(`failed to load ${meta.url}: ${response.status}`);
+	          }
+	          const data = await response.json();
+	          const dataset = { ...meta, ...data };
+	          datasetCache.set(key, dataset);
+	          return dataset;
+	        } catch (error) {
+	          if (!meta.scriptUrl) throw error;
+	        }
+	      }
+
+	      const data = await loadDatasetScript(key, meta.scriptUrl);
+	      const dataset = { ...meta, ...data };
+	      datasetCache.set(key, dataset);
+	      return dataset;
+	    }
+
+	    function loadDatasetScript(key, scriptUrl) {
+	      return new Promise((resolve, reject) => {
+	        window.__NAVD_CAMERA_DATASETS__ = window.__NAVD_CAMERA_DATASETS__ || {};
+	        if (window.__NAVD_CAMERA_DATASETS__[key]) {
+	          resolve(window.__NAVD_CAMERA_DATASETS__[key]);
+	          return;
+	        }
+	        const script = document.createElement("script");
+	        script.src = scriptUrl;
+	        script.async = true;
+	        script.onload = () => {
+	          const data = window.__NAVD_CAMERA_DATASETS__ && window.__NAVD_CAMERA_DATASETS__[key];
+	          if (data) {
+	            resolve(data);
+	          } else {
+	            reject(new Error(`loaded ${scriptUrl} but dataset ${key} was not registered`));
+	          }
+	        };
+	        script.onerror = () => reject(new Error(`failed to load ${scriptUrl}`));
+	        document.head.appendChild(script);
+	      });
+	    }
+
+	    function fillSelect(id, values, allLabel) {
+	      const select = document.getElementById(id);
+	      select.innerHTML = [`<option value="">${escapeHtml(allLabel)}</option>`]
+	        .concat(values.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`))
+	        .join("");
+	    }
+
+	    function fillCategorySelect(id, values, allLabel) {
+	      const select = document.getElementById(id);
+	      select.innerHTML = [`<option value="">${escapeHtml(allLabel)}</option>`]
+	        .concat(values.map((value) => {
+	          const category = optionValue(value);
+	          return `<option value="${escapeHtml(category)}" style="color:${categoryColor(category)}">${escapeHtml(category)}</option>`;
+	        }))
+	        .join("");
+	    }
+
+	    function categoryColor(category) {
+	      return colors[optionValue(category)] || colors.UNKNOWN;
+	    }
+
+	    function categoryDot(category) {
+	      return `<span class="category-dot" style="--category-color:${categoryColor(category)}"></span>`;
+	    }
+
+	    function categoryChip(category) {
+	      const label = optionValue(category);
+	      return `<span class="category-chip">${categoryDot(label)}<span>${escapeHtml(label)}</span></span>`;
+	    }
+	
+	    function objectRows(obj) {
+	      return Object.entries(obj || {})
+	        .filter(([, value]) => value !== undefined && value !== null && String(value) !== "")
+	        .map(([key, value]) => `
+	          <div class="popup-row">
+	            <span class="popup-key">${escapeHtml(key)}</span>
+	            <span class="popup-value">${escapeHtml(value)}</span>
+	          </div>
+	        `)
+	        .join("");
+	    }
+	
+	    function markerStyle(category) {
+	      const color = categoryColor(category);
+	      return {
+	        radius: category === "SECTION_SPEED" ? 13 : 12,
+	        color,
+	        fillColor: color,
+	        fillOpacity: 0.82,
+	        opacity: 0.95,
+	        weight: 1.5,
+	      };
+	    }
+
+	    function speedLimitLabel(camera) {
+	      const speed = Number(camera.speed || 0);
+	      return speed > 0 ? String(speed) : "";
+	    }
+	
+	    function makePopup(camera) {
+	      const title = [camera.category, camera.speed ? `${camera.speed} km/h` : "", camera.road || camera.place].filter(Boolean).join(" · ");
+	      const originalRows = objectRows(camera.original);
+	      const debugRows = objectRows(camera.debug);
+	      return `
+	        <strong>${escapeHtml(title || camera.id)}</strong><br>
+	        <div class="popup-grid">
+	          <div class="popup-section">
+	            <div class="popup-title">원본 데이터</div>
+	            ${originalRows || objectRows({
+	              관리번호: camera.id,
+	              위도: camera.lat,
+	              경도: camera.lon,
+	              제한속도: camera.speed,
+	              도로종류: cameraRoadType(camera),
+	              시도: camera.region,
+	              도로노선명: camera.road,
+	              설치장소: camera.place,
+	            })}
+	          </div>
+	          <div class="popup-section">
+	            <div class="popup-title">Speed camera debug</div>
+	            ${debugRows}
+	          </div>
+	        </div>
+	      `;
+	    }
+
+    function buildMarkers(items) {
+      cluster.clearLayers();
+      markerById.clear();
+	      const layers = [];
+	      for (const camera of items) {
+	        const category = camera.category || "UNKNOWN";
+	        const marker = L.circleMarker([camera.lat, camera.lon], markerStyle(category));
+	        const speedLabel = speedLimitLabel(camera);
+	        if (speedLabel) {
+	          marker.bindTooltip(speedLabel, {
+	            permanent: true,
+	            direction: "center",
+	            className: "speed-limit-label",
+	            opacity: 1,
+	          });
+	        }
+	        marker.bindPopup(makePopup(camera));
+	        markerById.set(camera.uid || camera.id, marker);
+        layers.push(marker);
+      }
+      cluster.addLayers(layers);
+    }
+
+    function filteredCameras() {
+      const search = document.getElementById("search").value.trim().toLowerCase();
+      const category = document.getElementById("category-filter").value;
+      const roadType = document.getElementById("road-filter").value;
+      const region = document.getElementById("region-filter").value;
+      const speed = document.getElementById("speed-filter").value;
+      return cameras.filter((camera) => {
+        if (category && camera.category !== category) return false;
+        if (roadType && cameraRoadType(camera) !== roadType) return false;
+        if (region && optionValue(camera.region) !== region) return false;
+        if (speed && String(camera.speed || 0) !== speed) return false;
+        if (!search) return true;
+        const haystack = [
+          camera.region,
+          camera.place,
+          camera.road,
+          camera.roadType,
+          camera.roadClass,
+          camera.id,
+        ].join(" ").toLowerCase();
+        return haystack.includes(search);
       });
-      const title = [category, camera.speed ? `${camera.speed} km/h` : "", camera.road || camera.place].filter(Boolean).join(" · ");
-      marker.bindPopup(`
-        <strong>${escapeHtml(title || camera.id)}</strong><br>
-        id: ${escapeHtml(camera.id)}<br>
-        road class: ${escapeHtml(camera.roadClass)}<br>
-        region: ${escapeHtml(camera.region)}<br>
-        place: ${escapeHtml(camera.place)}<br>
-        source: ${escapeHtml(camera.source)} ${escapeHtml(camera.updatedAt)}
-      `);
-      marker.addTo(group);
     }
 
-    document.getElementById("summary").textContent = `${cameras.length.toLocaleString()} cameras · generated ${payload.generatedAt}`;
-    document.getElementById("source").textContent = payload.dbPath || "";
-    document.getElementById("counts").innerHTML = Array.from(counts.entries())
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .map(([category, count]) => `<div class="count"><span><i class="swatch" style="background:${colors[category] || colors.UNKNOWN}"></i>${escapeHtml(category)}</span><strong>${count.toLocaleString()}</strong></div>`)
-      .join("");
-
-    if (cameras.length > 0) {
-      map.fitBounds(group.getBounds().pad(0.08));
-    } else {
-      map.setView([36.5, 127.8], 7);
+    function countBy(items, getter) {
+      const counts = new Map();
+      for (const item of items) {
+        const key = optionValue(getter(item));
+        counts.set(key, (counts.get(key) || 0) + 1);
+      }
+      return Array.from(counts.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
     }
+
+    function renderBars(id, counts, colorGetter = null) {
+      const max = Math.max(1, ...counts.map(([, count]) => count));
+      document.getElementById(id).innerHTML = counts.map(([label, count]) => `
+        <div class="bar-row">
+          <div class="bar-label" title="${escapeHtml(label)}">
+            ${colorGetter ? categoryDot(label) : ""}
+            <span>${escapeHtml(label)}</span>
+          </div>
+          <strong>${formatNumber(count)}</strong>
+          <div class="bar-track"><div class="bar-fill" style="width:${Math.max(2, (count / max) * 100)}%;--bar-color:${colorGetter ? colorGetter(label) : "var(--accent)"}"></div></div>
+        </div>
+      `).join("");
+    }
+
+    function renderTable(items) {
+      const rows = items.slice(0, maxListRows);
+      document.getElementById("camera-table").innerHTML = rows.map((camera) => `
+        <tr data-uid="${escapeHtml(camera.uid || camera.id)}">
+          <td>${categoryChip(camera.category)}</td>
+          <td>${escapeHtml(camera.speed || "-")}</td>
+          <td><strong>${escapeHtml(camera.region || "-")}</strong><br>${escapeHtml(camera.place || camera.road || "-")}</td>
+        </tr>
+      `).join("");
+      document.getElementById("table-note").textContent = `${formatNumber(items.length)}건 중 최대 ${formatNumber(Math.min(items.length, maxListRows))}건 표시`;
+      for (const row of document.querySelectorAll("#camera-table tr")) {
+        row.addEventListener("click", () => {
+          const marker = markerById.get(row.dataset.uid);
+          if (!marker) return;
+          cluster.zoomToShowLayer(marker, () => {
+            map.setView(marker.getLatLng(), Math.max(map.getZoom(), 16));
+            marker.openPopup();
+          });
+        });
+      }
+    }
+
+    function updateSummary(items) {
+      document.getElementById("metric-total").textContent = formatNumber(items.length);
+      document.getElementById("metric-speed").textContent = formatNumber(items.filter((camera) => speedCategories.has(camera.category)).length);
+      document.getElementById("metric-category").textContent = formatNumber(
+        dbCategoryCounts.length || new Set(items.map((camera) => optionValue(camera.category))).size
+      );
+      document.getElementById("metric-region").textContent = formatNumber(new Set(items.map((camera) => optionValue(camera.region))).size);
+    }
+
+    function fitMarkers(items) {
+      if (items.length > 0) {
+        const bounds = L.latLngBounds(items.map((camera) => [camera.lat, camera.lon]));
+        map.fitBounds(bounds.pad(0.08));
+      } else {
+        map.setView([36.5, 127.8], 7);
+      }
+    }
+
+    let updateTimer = 0;
+    function render(fit = false) {
+      const items = filteredCameras();
+      updateSummary(items);
+      renderBars("category-bars", dbCategoryCounts.length ? dbCategoryCounts : countBy(items, (camera) => camera.category), categoryColor);
+      renderBars("road-bars", countBy(items, cameraRoadType));
+      buildMarkers(items);
+      renderTable(items);
+      if (fit) fitMarkers(items);
+    }
+
+    function scheduleRender() {
+      clearTimeout(updateTimer);
+      updateTimer = setTimeout(() => render(true), 180);
+    }
+
+    function updateHeader() {
+      document.getElementById("input-source").textContent = activeDataset.inputSource || activeDatasetKey.toUpperCase() || "-";
+      document.getElementById("source-file").textContent = activeDataset.sourceFile || "-";
+      document.getElementById("header-count").textContent = formatNumber(activeDataset.count ?? cameras.length);
+      document.getElementById("db-path").textContent = payload.dbPath || "";
+    }
+
+    function refreshFilterOptions() {
+      fillCategorySelect(
+        "category-filter",
+        dbCategoryCounts.length ? dbCategoryCounts.map(([category]) => category) : uniqueValues(cameras, (camera) => camera.category || "UNKNOWN"),
+        "전체 카테고리"
+      );
+      fillSelect("road-filter", uniqueValues(cameras, cameraRoadType), "전체 도로종류");
+      fillSelect("region-filter", uniqueValues(cameras, (camera) => optionValue(camera.region)), "전체 시도");
+      fillSelect("speed-filter", uniqueValues(cameras, (camera) => String(camera.speed || 0)), "전체 제한속도");
+    }
+
+    function clearFilters() {
+      document.getElementById("search").value = "";
+      document.getElementById("category-filter").value = "";
+      document.getElementById("road-filter").value = "";
+      document.getElementById("region-filter").value = "";
+      document.getElementById("speed-filter").value = "";
+    }
+
+    async function setActiveDataset(key, fit = true) {
+      activeDatasetKey = datasets[key] ? key : (datasetEntries()[0]?.[0] || "db");
+      activeDataset = datasets[activeDatasetKey] || {};
+      cameras = Array.isArray(activeDataset.cameras) ? activeDataset.cameras : [];
+      dbCategoryCounts = normalizeCategoryCounts(activeDataset.categoryCounts || payload.categoryCounts || []);
+      document.getElementById("dataset-source").value = activeDatasetKey;
+      clearFilters();
+      updateHeader();
+      refreshFilterOptions();
+      showLoadStatus(`${datasetName(activeDatasetKey, datasets[activeDatasetKey] || {})} 데이터 로딩 중...`);
+      try {
+        activeDataset = await loadDataset(activeDatasetKey);
+        cameras = activeDataset.cameras || [];
+        dbCategoryCounts = normalizeCategoryCounts(activeDataset.categoryCounts || payload.categoryCounts || []);
+        updateHeader();
+        refreshFilterOptions();
+        render(fit);
+      } catch (error) {
+        cameras = [];
+        cluster.clearLayers();
+        markerById.clear();
+        updateHeader();
+        showLoadStatus(`데이터 파일을 불러오지 못했습니다: ${error.message}. 로컬 서버로 HTML을 열어주세요.`, true);
+      }
+    }
+
+    fillDatasetSelect();
+    setActiveDataset(activeDatasetKey, true);
+
+    document.getElementById("dataset-source").addEventListener("change", (event) => {
+      setActiveDataset(event.target.value, false);
+    });
+
+    for (const id of ["search", "category-filter", "road-filter", "region-filter", "speed-filter"]) {
+      document.getElementById(id).addEventListener("input", scheduleRender);
+      document.getElementById(id).addEventListener("change", scheduleRender);
+    }
+    document.getElementById("fit-all").addEventListener("click", () => fitMarkers(filteredCameras()));
+    document.getElementById("reset-filters").addEventListener("click", () => {
+      clearFilters();
+      render(true);
+    });
   </script>
 </body>
 </html>

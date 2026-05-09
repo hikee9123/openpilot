@@ -83,6 +83,23 @@ def main() -> None:
   )
   parser.add_argument("--osm-radius", type=float, default=60.0, help="OSM road-name enrichment radius in meters")
   parser.add_argument("--map-html", type=Path, default=DEFAULT_MAP_HTML_PATH, help=f"Leaflet HTML map path (default: {DEFAULT_MAP_HTML_PATH})")
+  parser.add_argument(
+    "--map-html-source",
+    choices=("csv", "db"),
+    default="csv",
+    help="Initial input source for Leaflet HTML map: csv shows raw rows before DB dedup, db shows stored SQLite rows (default: csv)",
+  )
+  parser.add_argument(
+    "--map-html-data-mode",
+    choices=("external", "inline"),
+    default="external",
+    help="Leaflet HTML data mode: external writes separate JSON files, inline embeds data in the HTML (default: external)",
+  )
+  parser.add_argument(
+    "--map-html-data-dir",
+    type=Path,
+    help="Directory for external Leaflet HTML data files (default: <map html stem>_data next to the HTML)",
+  )
   parser.add_argument("--no-map-html", action="store_true", help="Skip Leaflet HTML map generation")
   parser.add_argument("--check", action="store_true", help="Run a lookup after import")
   parser.add_argument("--lat", type=float, help="Latitude for --check")
@@ -115,8 +132,16 @@ def main() -> None:
   if osm_roads_db is not None:
     print(f"osm roads: {osm_roads_db}")
   if not args.no_map_html:
-    map_count = export_speed_camera_leaflet_html(args.db, args.map_html)
-    print(f"wrote Leaflet map with {map_count} cameras to {args.map_html}")
+    map_count = export_speed_camera_leaflet_html(
+      args.db,
+      args.map_html,
+      source_path=args.db,
+      csv_sources=csv_sources,
+      active_source=args.map_html_source,
+      data_mode=args.map_html_data_mode,
+      data_dir=args.map_html_data_dir,
+    )
+    print(f"wrote Leaflet map from {args.map_html_source} with {map_count} cameras to {args.map_html} ({args.map_html_data_mode})")
   print(f"osm road names primary matched {osm_stats.primary_match_count}")
   print(f"osm road names extended matched {osm_stats.extended_match_count} radius {osm_stats.extended_radius_m:.1f}m")
   print(f"osm road names matched {osm_stats.matched_count}")
