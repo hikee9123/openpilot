@@ -115,8 +115,8 @@ def test_export_speed_camera_leaflet_html(tmp_path: Path) -> None:
   html_path = tmp_path / "speed_cameras.html"
   _write_csv(
     csv_path,
-    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,설치장소\n"
-    "A1,37.001,127.0,속도위반,80,전방도로\n",
+    "무인교통단속카메라관리번호,위도,경도,단속구분,제한속도,도로노선방향,설치장소\n"
+    "A1,37.001,127.0,속도위반,80,1,전방도로\n",
   )
   create_database_from_csv(csv_path, db_path)
 
@@ -149,6 +149,17 @@ def test_export_speed_camera_leaflet_html(tmp_path: Path) -> None:
   assert "Speed camera debug" in html
   assert "dataset-source" in html
   assert "dataset-load-status" in html
+  assert "camera-type-filter" in html
+  assert "direction-filter" in html
+  assert "전체 단속 구분" in html
+  assert "전체 도로방향" in html
+  assert "function cameraEnforcementType(camera)" in html
+  assert "function cameraDirectionType(camera)" in html
+  assert "directionKindLabel(camera.directionKind)" in html
+  assert '"방향 추정데이터": camera.directionKind ? directionKindLabel(camera.directionKind) : ""' in html
+  assert '"cameraType":"속도위반"' in html
+  assert '"direction":"1"' in html
+  assert '"directionKind":"UP"' in html
   assert "데이터 로딩 중" in html
   assert "데이터 로드 완료" in html
   assert "setActiveDataset" in html

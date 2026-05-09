@@ -1474,11 +1474,14 @@ def _leaflet_camera_rows(conn: sqlite3.Connection) -> list[dict[str, object]]:
       "lon": float(_row_get(row, "lon", 0.0)),
       "speed": speed_limit,
       "category": category,
+      "cameraType": camera_type,
       "roadClass": road_class,
       "roadType": road_type_raw,
       "region": str(_row_get(row, "region", "")),
       "road": road_name,
       "place": place,
+      "direction": str(_row_get(row, "direction", "")),
+      "directionKind": direction_kind(str(_row_get(row, "direction", ""))),
       "source": str(_row_get(row, "source_type", "")),
       "updatedAt": str(_row_get(row, "updated_at", "")),
       "debug": {
@@ -1511,11 +1514,14 @@ def _camera_payload_from_record(record: dict[str, object], row_index: int, row: 
     "lon": float(record["lon"]),
     "speed": int(record["speed_limit"]),
     "category": str(record["camera_category"]),
+    "cameraType": str(record["camera_type"]),
     "roadClass": str(record["road_class"]),
     "roadType": str(record["road_type_raw"]),
     "region": str(record["region"]),
     "road": str(record["road_name"]),
     "place": str(record["place"]),
+    "direction": str(record["direction"]),
+    "directionKind": direction_kind(str(record["direction"])),
     "source": str(record["source_type"]),
     "sourceFile": str(record["source_file"]),
     "updatedAt": str(record["updated_at"]),
@@ -2093,6 +2099,16 @@ def _leaflet_html_template() -> str:
             </div>
           </div>
           <div class="filter-row">
+            <div>
+              <label for="camera-type-filter">단속 구분</label>
+              <select id="camera-type-filter"></select>
+            </div>
+            <div>
+              <label for="direction-filter">도로방향</label>
+              <select id="direction-filter"></select>
+            </div>
+          </div>
+          <div class="filter-row">
             <button id="fit-all" class="primary" type="button">지도 전체 보기</button>
             <button id="reset-filters" type="button">필터 초기화</button>
           </div>
@@ -2186,6 +2202,23 @@ def _leaflet_html_template() -> str:
 
     function cameraRoadType(camera) {
       return camera.roadType || camera.roadClass || "UNKNOWN";
+    }
+
+    function cameraEnforcementType(camera) {
+      return camera.cameraType || "UNKNOWN";
+    }
+
+    function directionKindLabel(value) {
+      const labels = {
+        UP: "상행(UP)",
+        DOWN: "하행(DOWN)",
+        BOTH: "양방향(BOTH)",
+      };
+      return labels[value] || value || "UNKNOWN";
+    }
+
+    function cameraDirectionType(camera) {
+      return directionKindLabel(camera.directionKind || camera.direction || "UNKNOWN");
     }
 
     function optionValue(value) {
@@ -2370,7 +2403,10 @@ def _leaflet_html_template() -> str:
 	
 	    function makePopup(camera) {
 	      const title = [camera.category, camera.speed ? `${camera.speed} km/h` : "", camera.road || camera.place].filter(Boolean).join(" · ");
-	      const originalRows = objectRows(camera.original);
+	      const originalRows = objectRows({
+	        ...(camera.original || {}),
+	        "방향 추정데이터": camera.directionKind ? directionKindLabel(camera.directionKind) : "",
+	      });
 	      const debugRows = objectRows(camera.debug);
 	      return `
 	        <strong>${escapeHtml(title || camera.id)}</strong><br>
@@ -2385,6 +2421,8 @@ def _leaflet_html_template() -> str:
 	              도로종류: cameraRoadType(camera),
 	              시도: camera.region,
 	              도로노선명: camera.road,
+	              도로노선방향: camera.direction,
+	              "방향 추정데이터": camera.directionKind ? directionKindLabel(camera.directionKind) : "",
 	              설치장소: camera.place,
 	            })}
 	          </div>
@@ -2425,11 +2463,15 @@ def _leaflet_html_template() -> str:
       const roadType = document.getElementById("road-filter").value;
       const region = document.getElementById("region-filter").value;
       const speed = document.getElementById("speed-filter").value;
+      const cameraType = document.getElementById("camera-type-filter").value;
+      const direction = document.getElementById("direction-filter").value;
       return cameras.filter((camera) => {
         if (category && camera.category !== category) return false;
         if (roadType && cameraRoadType(camera) !== roadType) return false;
         if (region && optionValue(camera.region) !== region) return false;
         if (speed && String(camera.speed || 0) !== speed) return false;
+        if (cameraType && cameraEnforcementType(camera) !== cameraType) return false;
+        if (direction && cameraDirectionType(camera) !== direction) return false;
         if (!search) return true;
         const haystack = [
           camera.region,
@@ -2437,6 +2479,10 @@ def _leaflet_html_template() -> str:
           camera.road,
           camera.roadType,
           camera.roadClass,
+          camera.cameraType,
+          camera.direction,
+          camera.directionKind,
+          cameraDirectionType(camera),
           camera.id,
         ].join(" ").toLowerCase();
         return haystack.includes(search);
@@ -2538,6 +2584,8 @@ def _leaflet_html_template() -> str:
       fillSelect("road-filter", uniqueValues(cameras, cameraRoadType), "전체 도로종류");
       fillSelect("region-filter", uniqueValues(cameras, (camera) => optionValue(camera.region)), "전체 시도");
       fillSelect("speed-filter", uniqueValues(cameras, (camera) => String(camera.speed || 0)), "전체 제한속도");
+      fillSelect("camera-type-filter", uniqueValues(cameras, cameraEnforcementType), "전체 단속 구분");
+      fillSelect("direction-filter", uniqueValues(cameras, cameraDirectionType), "전체 도로방향");
     }
 
     function clearFilters() {
@@ -2546,6 +2594,8 @@ def _leaflet_html_template() -> str:
       document.getElementById("road-filter").value = "";
       document.getElementById("region-filter").value = "";
       document.getElementById("speed-filter").value = "";
+      document.getElementById("camera-type-filter").value = "";
+      document.getElementById("direction-filter").value = "";
     }
 
     async function setActiveDataset(key, fit = true) {
@@ -2582,7 +2632,7 @@ def _leaflet_html_template() -> str:
       setActiveDataset(event.target.value, false);
     });
 
-    for (const id of ["search", "category-filter", "road-filter", "region-filter", "speed-filter"]) {
+    for (const id of ["search", "category-filter", "road-filter", "region-filter", "speed-filter", "camera-type-filter", "direction-filter"]) {
       document.getElementById(id).addEventListener("input", scheduleRender);
       document.getElementById(id).addEventListener("change", scheduleRender);
     }
