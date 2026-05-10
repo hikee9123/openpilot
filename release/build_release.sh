@@ -105,6 +105,22 @@ rm selfdrive/modeld/models/driving_policy.onnx
 find third_party/ -name '*x86*' -exec rm -r {} +
 find third_party/ -name '*Darwin*' -exec rm -r {} +
 
+# Split large generated model artifacts so release branches can be pushed to GitHub without LFS.
+while IFS= read -r model_file; do
+  echo "[-] splitting large model artifact: $model_file"
+  rm -f "$model_file.part-"*
+  split -b 50m "$model_file" "$model_file.part-"
+  rm "$model_file"
+done < <(find selfdrive/modeld/models -name '*_tinygrad.pkl' -type f -size +95M)
+
+# Ensure files are within GitHub's limit
+BIG_FILES="$(find . -type f -not -path './.git/*' -size +95M)"
+if [ -n "$BIG_FILES" ]; then
+  printf '\n\n\n'
+  echo "Found files exceeding GitHub's 100MB limit:"
+  echo "$BIG_FILES"
+  exit 1
+fi
 
 # Restore third_party
 git checkout third_party/

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import re
+import subprocess
 from pathlib import Path
 
 HERE = os.path.abspath(os.path.dirname(__file__))
@@ -31,11 +32,12 @@ whitelist: list[str] = [
 ]
 
 if __name__ == "__main__":
-  for f in Path(ROOT).rglob("**/*"):
+  files = subprocess.check_output(["git", "-C", ROOT, "ls-files", "--recurse-submodules"], encoding="utf-8")
+  for rf in files.splitlines():
+    f = Path(ROOT) / rf
     if not (f.is_file() or f.is_symlink()):
       continue
 
-    rf = str(f.relative_to(ROOT))
     blacklisted = any(re.search(p, rf) for p in blacklist)
     whitelisted = any(re.search(p, rf) for p in whitelist)
     if blacklisted and not whitelisted:

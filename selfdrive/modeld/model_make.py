@@ -256,6 +256,8 @@ def _comma_default_paths() -> Dict[str, Path]:
   """comma 기본 PATH 반환"""
   vis_onnx = MODELS_DIR / VISION_ONNX
   pol_onnx = MODELS_DIR / POLICY_ONNX
+  _restore_split_file(VISION_PKL_PATH)
+  _restore_split_file(POLICY_PKL_PATH)
   return {
     'vision_onnx': vis_onnx,
     'policy_onnx': pol_onnx,
@@ -264,6 +266,23 @@ def _comma_default_paths() -> Dict[str, Path]:
     'vision_pkl':  VISION_PKL_PATH,
     'policy_pkl':  POLICY_PKL_PATH,
   }
+
+
+def _restore_split_file(path: Path) -> None:
+  if path.exists():
+    return
+
+  parts = sorted(path.parent.glob(path.name + ".part-*"))
+  if not parts:
+    return
+
+  tmp = path.with_name(path.name + ".tmp")
+  with tmp.open("wb") as out:
+    for part in parts:
+      with part.open("rb") as f:
+        shutil.copyfileobj(f, out)
+  tmp.replace(path)
+  cloudlog.warning(f"[modeld.release] restored split artifact: {path}")
 
 
 def _stale(target: Path, onnx: Path) -> bool:
