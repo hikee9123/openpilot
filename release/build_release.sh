@@ -6,35 +6,46 @@ set -x
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 
-cd $DIR
+cd "$DIR"
 
-BUILD_DIR=/data/openpilot
 SOURCE_DIR="$(git rev-parse --show-toplevel)"
 
-if [ -z "$RELEASE_BRANCH" ]; then
+if [ -z "${RELEASE_BRANCH:-}" ]; then
   echo "RELEASE_BRANCH is not set"
   exit 1
 fi
 
+BUILD_DIR="${BUILD_DIR:-/data/openpilot-release-$RELEASE_BRANCH}"
+RELEASE_REMOTE="${RELEASE_REMOTE:-$(git -C "$SOURCE_DIR" remote get-url origin)}"
+PANDA_RELEASE_CERT="${PANDA_RELEASE_CERT:-/data/pandaextra/certs/release}"
+PUSH="${PUSH:-0}"
+
+if [ "$BUILD_DIR" = "$SOURCE_DIR" ]; then
+  echo "BUILD_DIR must not be the source checkout"
+  exit 1
+fi
 
 # set git identity
-source $DIR/identity.sh
+source "$DIR/identity.sh"
 
 echo "[-] Setting up repo T=$SECONDS"
-rm -rf $BUILD_DIR
-mkdir -p $BUILD_DIR
-cd $BUILD_DIR
+echo "[-] source: $SOURCE_DIR"
+echo "[-] build: $BUILD_DIR"
+echo "[-] remote: $RELEASE_REMOTE"
+rm -rf "$BUILD_DIR"
+mkdir -p "$BUILD_DIR"
+cd "$BUILD_DIR"
 git init
-git remote add origin git@github.com:commaai/openpilot.git
-git checkout --orphan $RELEASE_BRANCH
+git remote add origin "$RELEASE_REMOTE"
+git checkout --orphan "$RELEASE_BRANCH"
 
 # do the files copy
 echo "[-] copying files T=$SECONDS"
-cd $SOURCE_DIR
-cp -pR --parents $(./release/release_files.py) $BUILD_DIR/
+cd "$SOURCE_DIR"
+cp -pR --parents $(./release/release_files.py) "$BUILD_DIR/"
 
 # in the directory
-cd $BUILD_DIR
+cd "$BUILD_DIR"
 
 rm -f panda/board/obj/panda.bin.signed
 rm -f panda/board/obj/panda_h7.bin.signed
@@ -48,11 +59,11 @@ git commit -a -m "openpilot v$VERSION release"
 export PYTHONPATH="$BUILD_DIR"
 scons -j$(nproc) --minimal
 
-if [ -z "$PANDA_DEBUG_BUILD" ]; then
+if [ -z "${PANDA_DEBUG_BUILD:-}" ] && [ -e "$PANDA_RELEASE_CERT" ]; then
   # release panda fw
-  CERT=/data/pandaextra/certs/release RELEASE=1 scons -j$(nproc) panda/
+  CERT="$PANDA_RELEASE_CERT" RELEASE=1 scons -j$(nproc) panda/
 else
-  # build with ALLOW_DEBUG=1 to enable features like experimental longitudinal
+  # build without release cert to enable features like experimental longitudinal
   scons -j$(nproc) panda/
 fi
 
@@ -90,13 +101,15 @@ git add -f .
 git commit --amend -m "openpilot v$VERSION"
 
 # Run tests
-cd $BUILD_DIR
+cd "$BUILD_DIR"
 RELEASE=1 pytest -n0 -s selfdrive/test/test_onroad.py
 #pytest selfdrive/car/tests/test_car_interfaces.py
 
-if [ ! -z "$RELEASE_BRANCH" ]; then
+if [ "$PUSH" = "1" ]; then
   echo "[-] pushing release T=$SECONDS"
-  git push -f origin $RELEASE_BRANCH:$RELEASE_BRANCH
+  git push -f origin "$RELEASE_BRANCH:$RELEASE_BRANCH"
+else
+  echo "[-] push skipped; set PUSH=1 to push $RELEASE_BRANCH to $RELEASE_REMOTE"
 fi
 
 echo "[-] done T=$SECONDS"
