@@ -432,6 +432,13 @@ public:
 
 private:
   std::map<std::string, ParamControl*> toggles;
+  void refreshOsmRoadsStatus();
+  bool osmRoadsInstallRunning();
+  ButtonControl *installOsmDbButton = nullptr;
+  QLabel *osmRoadsStatusLabel = nullptr;
+  QLabel *osmRoadsDetailLabel = nullptr;
+  QProgressBar *osmRoadsProgressBar = nullptr;
+  QTimer *osmRoadsStatusTimer = nullptr;
 
 
 protected:

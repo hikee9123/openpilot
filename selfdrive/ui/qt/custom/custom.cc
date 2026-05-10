@@ -1237,16 +1237,22 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
   osmSection->addWidget(osmEnable);
   toggles["OSMEnable"] = osmEnable;
 
-  auto *installOsmDb = new ButtonControl(
+  installOsmDbButton = new ButtonControl(
       tr("Install OSM road DB"),
       tr("INSTALL"),
       tr("Downloads the prebuilt OSM road graph DB from Git LFS and installs it in the navd DB path."),
       this);
-  connect(installOsmDb, &ButtonControl::clicked, this, [=]() {
+  connect(installOsmDbButton, &ButtonControl::clicked, this, [=]() {
+    if (osmRoadsInstallRunning()) {
+      refreshOsmRoadsStatus();
+      return;
+    }
+
     Params p;
     p.put("OsmRoadsUpdateStatus", "running");
     p.put("OsmRoadsUpdateError", "");
     p.put("OsmRoadsUpdateProgress", "0");
+    refreshOsmRoadsStatus();
 
     QProcess *proc = new QProcess(this);
     const QString repoRoot = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../..");
@@ -1257,7 +1263,7 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
     connect(proc, &QProcess::readyRead, proc, [proc]() { proc->readAll(); });
 
     connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [proc](int code, QProcess::ExitStatus status) {
+            this, [this, proc](int code, QProcess::ExitStatus status) {
       Params finishedParams;
       if (status == QProcess::NormalExit && code == 0) {
         finishedParams.put("OsmRoadsUpdateStatus", "success");
@@ -1269,10 +1275,85 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
         finishedParams.put("OsmRoadsUpdateError", QString("exit code %1").arg(code).toStdString());
       }
       proc->deleteLater();
+      refreshOsmRoadsStatus();
     });
     proc->start();
   });
-  osmSection->addWidget(installOsmDb);
+  osmSection->addWidget(installOsmDbButton);
+
+  auto *statusPanel = new QFrame(this);
+  statusPanel->setStyleSheet(R"(
+    QFrame {
+      border: none;
+      background-color: black;
+    }
+  )");
+  auto *statusLayout = new QVBoxLayout(statusPanel);
+  statusLayout->setContentsMargins(0, 18, 0, 24);
+  statusLayout->setSpacing(10);
+  osmRoadsStatusLabel = makeModelStatusLine(statusPanel, 32, "#f4f4f4");
+  osmRoadsDetailLabel = makeModelStatusLine(statusPanel, 26, "#a8a8a8");
+  osmRoadsProgressBar = makeModelProgressBar(statusPanel);
+  statusLayout->addWidget(osmRoadsStatusLabel);
+  statusLayout->addWidget(osmRoadsProgressBar);
+  statusLayout->addWidget(osmRoadsDetailLabel);
+  osmSection->addWidget(statusPanel);
+
+  osmRoadsStatusTimer = new QTimer(this);
+  connect(osmRoadsStatusTimer, &QTimer::timeout, this, &NavigationTab::refreshOsmRoadsStatus);
+  osmRoadsStatusTimer->start(1000);
+  refreshOsmRoadsStatus();
+}
+
+bool NavigationTab::osmRoadsInstallRunning()
+{
+  return params.get("OsmRoadsUpdateStatus") == "running";
+}
+
+void NavigationTab::refreshOsmRoadsStatus()
+{
+  if (!installOsmDbButton || !osmRoadsStatusLabel || !osmRoadsDetailLabel || !osmRoadsProgressBar) return;
+
+  const QString status = QString::fromStdString(params.get("OsmRoadsUpdateStatus"));
+  const QString error = QString::fromStdString(params.get("OsmRoadsUpdateError"));
+  const QString updatedAt = QString::fromStdString(params.get("OsmRoadsUpdatedAt"));
+  bool ok = false;
+  const int progress = std::clamp(QString::fromStdString(params.get("OsmRoadsUpdateProgress")).toInt(&ok), 0, 100);
+  bool countOk = false;
+  const int segmentCount = QString::fromStdString(params.get("OsmRoadsSegmentCount")).toInt(&countOk);
+  const bool running = status == "running";
+
+  osmRoadsProgressBar->setValue(ok ? progress : 0);
+  osmRoadsProgressBar->setVisible(running || progress > 0);
+  installOsmDbButton->setEnabled(!running);
+
+  if (running) {
+    installOsmDbButton->setText(tr("RUNNING"));
+    osmRoadsStatusLabel->setText(tr("Installing OSM road DB"));
+    osmRoadsDetailLabel->setText(QString("%1%").arg(ok ? progress : 0));
+    return;
+  }
+
+  if (status == "success") {
+    installOsmDbButton->setText(tr("UPDATE"));
+    osmRoadsStatusLabel->setText(tr("OSM road DB ready"));
+    QStringList details;
+    if (countOk && segmentCount > 0) details.append(QString("%1 segments").arg(segmentCount));
+    if (!updatedAt.isEmpty()) details.append(tr("Updated ") + updatedAt);
+    osmRoadsDetailLabel->setText(details.isEmpty() ? tr("Install completed") : details.join(" · "));
+    return;
+  }
+
+  if (status == "failed") {
+    installOsmDbButton->setText(tr("RETRY"));
+    osmRoadsStatusLabel->setText(tr("OSM road DB install failed"));
+    osmRoadsDetailLabel->setText(error.isEmpty() ? tr("Check network, Git LFS, and storage space.") : error.right(160));
+    return;
+  }
+
+  installOsmDbButton->setText(tr("INSTALL"));
+  osmRoadsStatusLabel->setText(tr("OSM road DB"));
+  osmRoadsDetailLabel->setText(tr("Not installed or status unknown"));
 }
 
 // ======================================================================================

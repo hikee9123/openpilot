@@ -56,7 +56,7 @@ def only_onroad(started: bool, params: Params, CP: car.CarParams) -> bool:
   return started
 
 def osm_enabled(started: bool, params: Params, CP: car.CarParams) -> bool:
-  return started and params.get_bool("OSMEnable")
+  return params.get_bool("OSMEnable") and (started or WEBCAM)
 
 def only_offroad(started: bool, params: Params, CP: car.CarParams) -> bool:
   return not started
