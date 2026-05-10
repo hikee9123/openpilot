@@ -80,6 +80,8 @@ def main() -> None:
   last_available = False
   last_send_t = 0.0
   last_log_t = 0.0
+  last_prediction_debug = ""
+  last_prediction_debug_t = 0.0
   history_segments: OrderedDict[int, OSMRoadSegment] = OrderedDict()
 
   try:
@@ -110,6 +112,13 @@ def main() -> None:
         continue
 
       prediction = predictor.update(gps)
+      now = time.monotonic()
+      if prediction is not None and not prediction.predicted_from_graph and prediction.debug_text:
+        if prediction.debug_text != last_prediction_debug or now - last_prediction_debug_t > 5.0:
+          cloudlog.info("osm_predictor %s", prediction.debug_text)
+          print(f"[osm_predictor] {prediction.debug_text}", flush=True)
+          last_prediction_debug = prediction.debug_text
+          last_prediction_debug_t = now
       current_segment = _current_segment(prediction)
       if current_segment is not None:
         history_segments.pop(current_segment.road_id, None)
@@ -118,7 +127,6 @@ def main() -> None:
           history_segments.popitem(last=False)
       road_name, bearing, roads = build_minimap_overlay(prediction, list(history_segments.values()))
       overlay_key = (road_name, bearing, tuple(tuple(sorted(road.items())) for road in roads))
-      now = time.monotonic()
       if not last_available or overlay_key != last_overlay or now - last_send_t > 2.5:
         _send_overlay(pm, True, road_name, bearing, roads)
         last_available = True

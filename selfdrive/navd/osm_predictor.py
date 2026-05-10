@@ -43,6 +43,7 @@ class RoadPrediction:
   nearby: list[OSMRoadSegment] = field(default_factory=list)
   predicted: list[OSMRoadSegment] = field(default_factory=list)
   predicted_from_graph: bool = False
+  debug_text: str = ""
   updated_at: float = 0.0
 
 
@@ -62,6 +63,12 @@ def _distance_m(a: GPSFix, b: GPSFix) -> float:
 
 def _same_display_name(a: str, b: str) -> bool:
   return bool(a) and bool(b) and a == b
+
+
+def _format_rejects(rejects: dict[str, int]) -> str:
+  if not rejects:
+    return "none"
+  return ", ".join(f"{reason}={count}" for reason, count in sorted(rejects.items()))
 
 
 class OSMRoadPredictor:
@@ -141,9 +148,10 @@ class OSMRoadPredictor:
     current = find_current_road(conn, gps.lat, gps.lon, gps.bearing_deg, self.lookup_radius_m,
                                 previous_name, previous_road_id, previous_osm_id)
     nearby = nearby_road_segments(conn, gps.lat, gps.lon, self.map_radius_m, limit=80)
-    predicted, predicted_from_graph = self._predict_forward(conn, gps, current)
+    predicted, predicted_from_graph, debug_text = self._predict_forward(conn, gps, current)
 
-    result = RoadPrediction(gps=gps, current=current, nearby=nearby, predicted=predicted, predicted_from_graph=predicted_from_graph, updated_at=now)
+    result = RoadPrediction(gps=gps, current=current, nearby=nearby, predicted=predicted,
+                            predicted_from_graph=predicted_from_graph, debug_text=debug_text, updated_at=now)
     self._last_gps = gps
     self._last_prediction = result
     self._last_update_t = now
@@ -157,50 +165,65 @@ class OSMRoadPredictor:
     self._successor_cache[road_id] = successors
     return successors
 
-  def _score_successor(self, gps: GPSFix, reference_bearing_deg: float, current_name: str, road: OSMRoadSegment) -> _SuccessorCandidate | None:
+  def _score_successor(self, gps: GPSFix, reference_bearing_deg: float, current_name: str, road: OSMRoadSegment) -> tuple[_SuccessorCandidate | None, str]:
     x1, y1 = latlon_to_car_space_m(gps.lat, gps.lon, gps.bearing_deg, road.lat1, road.lon1)
     x2, y2 = latlon_to_car_space_m(gps.lat, gps.lon, gps.bearing_deg, road.lat2, road.lon2)
     if max(x1, x2) < 5.0:
-      return None
+      return None, "behind"
 
     forward_points = [x for x in (x1, x2) if x >= 0.0]
     forward_m = min(forward_points) if forward_points else max(x1, x2)
     side_offset_m = min(abs(y1), abs(y2))
     side_limit_m = min(MAX_GRAPH_SIDE_OFFSET_M, max(MIN_GRAPH_SIDE_OFFSET_M, forward_m * 0.45))
     if side_offset_m > side_limit_m:
-      return None
+      return None, "side_offset"
 
     road_bearing = align_bearing_to_heading(road.bearing_deg, reference_bearing_deg)
     heading_diff = angle_diff_deg(reference_bearing_deg, road_bearing)
     if heading_diff > MAX_GRAPH_HEADING_DIFF_DEG:
-      return None
+      return None, "heading_diff"
 
     same_name_bonus = -12.0 if _same_display_name(current_name, road.display_name) else 0.0
     score = heading_diff * 3.0 + side_offset_m * 0.35 + forward_m * 0.02 + same_name_bonus
-    return _SuccessorCandidate(score, heading_diff, forward_m, road, road_bearing)
+    return _SuccessorCandidate(score, heading_diff, forward_m, road, road_bearing), ""
 
-  def _predict_forward(self, conn: sqlite3.Connection, gps: GPSFix, current: OSMRoadMatch | None) -> tuple[list[OSMRoadSegment], bool]:
+  def _predict_forward(self, conn: sqlite3.Connection, gps: GPSFix, current: OSMRoadMatch | None) -> tuple[list[OSMRoadSegment], bool, str]:
     if current is None:
-      return forward_road_segments(conn, gps.lat, gps.lon, gps.bearing_deg, forward_start_m=5.0, forward_end_m=self.forward_distance_m, limit=60), False
+      predicted = forward_road_segments(conn, gps.lat, gps.lon, gps.bearing_deg, forward_start_m=5.0, forward_end_m=self.forward_distance_m, limit=60)
+      return predicted, False, f"current=none fallback_count={len(predicted)}"
 
     predicted: list[OSMRoadSegment] = []
     visited = {current.road_id}
     road_id = current.road_id
     bearing = current.driving_bearing_deg
+    total_successors = 0
+    total_accepted = 0
+    rejects: dict[str, int] = {}
+    reject_samples: list[str] = []
+    stop_reason = ""
 
     for _ in range(40):
       candidates: list[_SuccessorCandidate] = []
-      for road in self._successors(conn, road_id):
+      successors = self._successors(conn, road_id)
+      total_successors += len(successors)
+      for road in successors:
         if road.road_id in visited:
+          rejects["visited"] = rejects.get("visited", 0) + 1
           continue
-        candidate = self._score_successor(gps, bearing, current.display_name, road)
+        candidate, reject_reason = self._score_successor(gps, bearing, current.display_name, road)
         if candidate is not None:
           candidates.append(candidate)
+        elif reject_reason:
+          rejects[reject_reason] = rejects.get(reject_reason, 0) + 1
+          if len(reject_samples) < 3:
+            reject_samples.append(f"{road.road_id}:{road.display_name or '-'}:{reject_reason}")
       if not candidates:
+        stop_reason = "no_candidates"
         break
       candidates.sort(key=lambda item: (item.score, item.heading_diff_deg, item.forward_m))
       best_candidate = candidates[0]
       best = best_candidate.road
+      total_accepted += len(candidates)
       predicted.append(best)
       visited.add(best.road_id)
       road_id = best.road_id
@@ -208,5 +231,16 @@ class OSMRoadPredictor:
 
     if not predicted:
       predicted = forward_road_segments(conn, gps.lat, gps.lon, gps.bearing_deg, forward_start_m=5.0, forward_end_m=self.forward_distance_m, limit=60)
-      return predicted[:80], False
-    return predicted[:80], True
+      debug_text = (
+        f"current={current.display_name or '-'} road_id={current.road_id} "
+        f"successors={total_successors} accepted={total_accepted} stop={stop_reason or '-'} "
+        f"rejects={_format_rejects(rejects)} samples={';'.join(reject_samples) or '-'} "
+        f"fallback_count={len(predicted)}"
+      )
+      return predicted[:80], False, debug_text
+
+    debug_text = (
+      f"current={current.display_name or '-'} road_id={current.road_id} "
+      f"graph_count={len(predicted)} successors={total_successors} accepted={total_accepted}"
+    )
+    return predicted[:80], True, debug_text
