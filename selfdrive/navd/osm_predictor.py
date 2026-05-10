@@ -81,6 +81,7 @@ class OSMRoadPredictor:
     min_update_interval_s: float = 1.0,
     min_move_m: float = 8.0,
     min_heading_change_deg: float = 8.0,
+    ready_cache_interval_s: float = 5.0,
   ) -> None:
     self.db_path = Path(db_path)
     self.lookup_radius_m = lookup_radius_m
@@ -89,8 +90,13 @@ class OSMRoadPredictor:
     self.min_update_interval_s = min_update_interval_s
     self.min_move_m = min_move_m
     self.min_heading_change_deg = min_heading_change_deg
+    self.ready_cache_interval_s = ready_cache_interval_s
     self._conn: sqlite3.Connection | None = None
     self._db_mtime = 0.0
+    self._ready_cache_valid = False
+    self._ready_cache_value = False
+    self._ready_cache_t = 0.0
+    self._ready_cache_mtime: float | None = None
     self._last_gps: GPSFix | None = None
     self._last_prediction: RoadPrediction | None = None
     self._last_update_t = 0.0
@@ -101,13 +107,28 @@ class OSMRoadPredictor:
       self._conn.close()
       self._conn = None
 
+  def _db_file_mtime(self) -> float | None:
+    try:
+      return self.db_path.stat().st_mtime
+    except OSError:
+      return None
+
   def ready(self) -> bool:
-    return self.db_path.exists() and database_segment_count(self.db_path) > 0
+    now = time.monotonic()
+    if self._ready_cache_valid and now - self._ready_cache_t < self.ready_cache_interval_s:
+      return self._ready_cache_value
+
+    mtime = self._db_file_mtime()
+    ready = mtime is not None and database_segment_count(self.db_path) > 0
+    self._ready_cache_valid = True
+    self._ready_cache_value = ready
+    self._ready_cache_t = now
+    self._ready_cache_mtime = mtime
+    return ready
 
   def _db_changed(self) -> bool:
-    try:
-      mtime = self.db_path.stat().st_mtime
-    except OSError:
+    mtime = self._ready_cache_mtime
+    if mtime is None:
       return False
     return self._conn is None or mtime != self._db_mtime
 
@@ -118,7 +139,7 @@ class OSMRoadPredictor:
     if self._db_changed():
       self.close()
       self._conn = connect_readonly_db(self.db_path)
-      self._db_mtime = self.db_path.stat().st_mtime
+      self._db_mtime = self._ready_cache_mtime or self.db_path.stat().st_mtime
       self._successor_cache.clear()
     return self._conn
 
