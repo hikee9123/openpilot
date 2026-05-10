@@ -19,10 +19,11 @@ def _segment_to_overlay(segment: OSMRoadSegment, prediction: RoadPrediction, cur
     "current": segment.road_id == current_id,
     "predicted": segment.road_id in predicted_ids,
     "history": segment.road_id in history_ids,
+    "fallback": segment.road_id in predicted_ids and not prediction.predicted_from_graph,
   }
 
 
-def build_minimap_overlay(prediction: RoadPrediction | None, history_segments: list[OSMRoadSegment] | None = None, max_segments: int = 90) -> tuple[str, float, list[dict]]:
+def build_minimap_overlay(prediction: RoadPrediction | None, history_segments: list[OSMRoadSegment] | None = None, max_segments: int = 160) -> tuple[str, float, list[dict]]:
   if prediction is None:
     return "", 0.0, []
 

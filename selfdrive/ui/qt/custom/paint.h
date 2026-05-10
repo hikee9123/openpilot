@@ -107,6 +107,7 @@ private:
 
     int   enabled, engaged;
     int   controlsAllowed;
+    float vEgo;
 
   } m_param;
 

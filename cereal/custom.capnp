@@ -58,6 +58,7 @@ struct NaviCustom @0xf35cc4560bbf6ec2 {
             current @7 :Bool;
             predicted @8 :Bool;
             history @9 :Bool;
+            fallback @10 :Bool;
         }
     }
 }

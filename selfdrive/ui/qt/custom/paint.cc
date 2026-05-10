@@ -163,6 +163,7 @@ void OnPaint::updateState(const UIState &s)
 
   // carState drives drawSpeed(), so keep it fresh regardless of overlay settings.
   auto car_state = sm1["carState"].getCarState();
+  m_param.vEgo = car_state.getVEgo();
   m_param.angleSteers = car_state.getSteeringAngleDeg();
   m_param.enginRpm =  car_state.getEngineRpmDEPRECATED();
   m_gasVal = car_state.getGasDEPRECATED();
@@ -217,6 +218,7 @@ void OnPaint::updateState(const UIState &s)
         road.getCurrent(),
         road.getPredicted(),
         road.getHistory(),
+        road.getFallback(),
       });
     }
   }
@@ -372,7 +374,7 @@ void OnPaint::drawLead(QPainter &p, const cereal::RadarState::LeadData::Reader &
 
 void OnPaint::drawHud(QPainter &p)
 {
-  osm_minimap.draw(p, QRect(0, 0, state->fb_w, state->fb_h), m_nda.osmRoadOverlay, osm_enabled, osm_minimap_position);
+  osm_minimap.draw(p, QRect(0, 0, state->fb_w, state->fb_h), m_nda.osmRoadOverlay, osm_enabled, osm_minimap_position, m_param.vEgo);
 
   if( !is_debug && !m_param.ui.getKegman() ) return;
 

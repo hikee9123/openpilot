@@ -1,6 +1,7 @@
 #include "selfdrive/ui/qt/custom/osm_minimap.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include <QPainterPath>
 
@@ -8,7 +9,11 @@
 
 namespace {
 
-constexpr double kMapRadiusM = 230.0;
+constexpr double kMinMapRadiusM = 230.0;
+constexpr double kMaxMapRadiusM = 1000.0;
+constexpr double kMinRadiusSpeedMps = 30.0 / 3.6;
+constexpr double kMaxRadiusSpeedMps = 60.0 / 3.6;
+constexpr double kRadiusAnimationAlpha = 0.08;
 constexpr int kHudMargin = 30;
 constexpr int kHudGap = 24;
 constexpr int kButtonSize = 192;
@@ -52,6 +57,15 @@ QRectF OsmMinimapRenderer::panelRect(const QRect &surface, int position) const {
   }
 }
 
+double OsmMinimapRenderer::targetMapRadiusM(float speed_mps) const {
+  if (!std::isfinite(speed_mps)) {
+    return kMinMapRadiusM;
+  }
+  const double bounded_speed = std::clamp<double>(std::max(0.0f, speed_mps), kMinRadiusSpeedMps, kMaxRadiusSpeedMps);
+  const double ratio = (bounded_speed - kMinRadiusSpeedMps) / (kMaxRadiusSpeedMps - kMinRadiusSpeedMps);
+  return kMinMapRadiusM + (kMaxMapRadiusM - kMinMapRadiusM) * ratio;
+}
+
 void OsmMinimapRenderer::drawStatus(QPainter &p, const QRect &surface, const QString &status, int position) {
   const QRectF panel = panelRect(surface, position);
 
@@ -71,7 +85,7 @@ void OsmMinimapRenderer::drawStatus(QPainter &p, const QRect &surface, const QSt
   p.restore();
 }
 
-void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinimapData &data, bool enabled, int position) {
+void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinimapData &data, bool enabled, int position, float speed_mps) {
   if (!enabled) return;
   if (!data.available) {
     drawStatus(p, surface, QStringLiteral("Waiting for GPS"), position);
@@ -84,7 +98,10 @@ void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinima
   }
 
   const QRectF panel = panelRect(surface, position);
-  const double scale = std::min(panel.width(), panel.height()) / (2.0 * kMapRadiusM);
+  const double target_radius_m = targetMapRadiusM(speed_mps);
+  animated_map_radius_m += (target_radius_m - animated_map_radius_m) * kRadiusAnimationAlpha;
+  animated_map_radius_m = std::clamp(animated_map_radius_m, kMinMapRadiusM, kMaxMapRadiusM);
+  const double scale = std::min(panel.width(), panel.height()) / (2.0 * animated_map_radius_m);
 
   p.save();
   p.setRenderHint(QPainter::Antialiasing, true);
@@ -139,6 +156,7 @@ void OsmMinimapRenderer::drawRoad(QPainter &p, const QRectF &panel, double scale
   const bool current = road.current;
   const bool predicted = road.predicted;
   const bool history = road.history;
+  const bool fallback = road.fallback;
   QColor color(210, 210, 210, 100);
   int width = 3;
   if (history) {
@@ -146,7 +164,7 @@ void OsmMinimapRenderer::drawRoad(QPainter &p, const QRectF &panel, double scale
     width = 4;
   }
   if (predicted) {
-    color = QColor(64, 196, 255, 210);
+    color = fallback ? QColor(255, 190, 64, 210) : QColor(64, 196, 255, 210);
     width = 5;
   }
   if (current) {
