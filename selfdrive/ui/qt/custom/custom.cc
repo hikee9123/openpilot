@@ -871,6 +871,24 @@ static QString modelSelectionLabel(const QString &modelName)
   return modelName + "    " + modelStatusSummary(modelName);
 }
 
+static QString modelDescription(const QString &modelName)
+{
+  static const QMap<QString, QString> descriptions = {
+    {"11.POP_Model", "Progressive control profile for confident longitudinal response"},
+    {"10.CD210_Model", "Comfort-oriented profile tuned for smoother everyday driving"},
+    {"9.WMI_Model", "Balanced experimental profile for natural lane keeping"},
+    {"8.SC_Driving", "Smooth steering profile with calm corrections"},
+    {"7.MacroStiff_Model", "Stable high-speed profile with firm path tracking"},
+    {"6.Dark_Souls_2", "Fast response profile with controlled stability"},
+    {"5.North_Nevada", "Natural and stable profile for relaxed driving"},
+    {"4.The_Cool_Peoples", "Responsive profile with sharper lateral behavior"},
+    {"3.Firehose", "Smooth profile with quick reaction timing"},
+    {"2.Steam_Powered", "Custom driving model profile"},
+    {"1.default", "Built-in comma model"},
+  };
+  return descriptions.value(modelName, "Custom driving model profile");
+}
+
 static QLabel *makeModelStatusLine(QWidget *parent, int fontSize, const QString &color)
 {
   QLabel *label = new QLabel(parent);
@@ -962,6 +980,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
     changeModelButton->setText(tr("WAIT"));
     changeModelButton->setDescription(selection);
     modelCompileStartedAt = QDateTime::currentMSecsSinceEpoch();
+    if (modelDescriptionLabel) modelDescriptionLabel->setText(modelDescription(selection));
     setModelCompileProgress(tr("Preparing files"), 10, currentModelBackend());
 
     QProcess *proc = new QProcess(this);
@@ -1011,9 +1030,10 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
         currentModel = QString::fromStdString(prev);
         changeModelButton->setTitle(tr("Failed"));
         changeModelButton->setText(tr("RETRY"));
-        if (modelStatusTitle && modelCompiledAt && modelArtifactStatus && modelProgressBar && modelProgressDetail) {
+        if (modelStatusTitle && modelDescriptionLabel && modelCompiledAt && modelArtifactStatus && modelProgressBar && modelProgressDetail) {
           const ModelCompileStatus previousStatus = getModelCompileStatus(currentModel);
           modelStatusTitle->setText(tr("Compile failed"));
+          modelDescriptionLabel->setText(modelDescription(selection));
           modelCompiledAt->setText(tr("Model: ") + selection);
           modelArtifactStatus->setText("Previous: " + previousStatus.state);
           modelProgressBar->setVisible(false);
@@ -1032,19 +1052,21 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
   modelStatusPanel = new QFrame(this);
   modelStatusPanel->setStyleSheet(R"(
     QFrame {
-      border-top: 1px solid #8a8a8a;
-      background-color: #050505;
+      border: none;
+      background-color: black;
     }
   )");
   auto *statusLayout = new QVBoxLayout(modelStatusPanel);
-  statusLayout->setContentsMargins(0, 30, 0, 30);
-  statusLayout->setSpacing(12);
+  statusLayout->setContentsMargins(0, 24, 0, 24);
+  statusLayout->setSpacing(10);
   modelStatusTitle = makeModelStatusLine(modelStatusPanel, 38, "#f4f4f4");
+  modelDescriptionLabel = makeModelStatusLine(modelStatusPanel, 28, "#a8a8a8");
   modelCompiledAt = makeModelStatusLine(modelStatusPanel, 30, "#d0d0d0");
   modelArtifactStatus = makeModelStatusLine(modelStatusPanel, 30, "#d0d0d0");
   modelProgressBar = makeModelProgressBar(modelStatusPanel);
   modelProgressDetail = makeModelStatusLine(modelStatusPanel, 28, "#bdbdbd");
   statusLayout->addWidget(modelStatusTitle);
+  statusLayout->addWidget(modelDescriptionLabel);
   statusLayout->addWidget(modelCompiledAt);
   statusLayout->addWidget(modelProgressBar);
   statusLayout->addWidget(modelProgressDetail);
@@ -1056,9 +1078,10 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
 
 void ModelTab::refreshModelStatus()
 {
-  if (!modelStatusTitle || !modelCompiledAt || !modelArtifactStatus || !modelProgressBar || !modelProgressDetail) return;
+  if (!modelStatusTitle || !modelDescriptionLabel || !modelCompiledAt || !modelArtifactStatus || !modelProgressBar || !modelProgressDetail) return;
   const ModelCompileStatus status = getModelCompileStatus(currentModel);
   modelStatusTitle->setText(status.state == "Ready" ? status.state + " · " + status.backend : status.state);
+  modelDescriptionLabel->setText(modelDescription(currentModel));
   modelCompiledAt->setText(status.compiledAt.isEmpty() ? "Compiled: -" : "Compiled: " + status.compiledAt);
   modelProgressBar->setVisible(false);
   modelProgressDetail->setVisible(false);
@@ -1067,7 +1090,7 @@ void ModelTab::refreshModelStatus()
 
 void ModelTab::setModelCompileProgress(const QString &stage, int percent, const QString &detail)
 {
-  if (!modelStatusTitle || !modelCompiledAt || !modelArtifactStatus || !modelProgressBar || !modelProgressDetail) return;
+  if (!modelStatusTitle || !modelDescriptionLabel || !modelCompiledAt || !modelArtifactStatus || !modelProgressBar || !modelProgressDetail) return;
   const int boundedPercent = std::clamp(percent, 0, 100);
   modelStatusTitle->setText(tr("Compiling model"));
   modelCompiledAt->setText(QString("%1                                  %2%").arg(stage).arg(boundedPercent));

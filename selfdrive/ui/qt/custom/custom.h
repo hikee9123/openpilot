@@ -390,6 +390,7 @@ private:
   ButtonControl *changeModelButton = nullptr;
   QFrame *modelStatusPanel = nullptr;
   QLabel *modelStatusTitle = nullptr;
+  QLabel *modelDescriptionLabel = nullptr;
   QLabel *modelCompiledAt = nullptr;
   QLabel *modelArtifactStatus = nullptr;
   QLabel *modelProgressDetail = nullptr;
