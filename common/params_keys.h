@@ -135,6 +135,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ExternalNaviType", {PERSISTENT, STRING}},
     {"MapboxToken", {PERSISTENT, STRING}},
     {"OSMEnable", {PERSISTENT, BOOL}},
+    {"OsmMinimapPosition", {PERSISTENT, INT, "3"}},
     {"OsmRoadsUpdateStatus", {PERSISTENT, STRING}},
     {"OsmRoadsUpdateError", {PERSISTENT, STRING}},
     {"OsmRoadsSegmentCount", {PERSISTENT, INT}},

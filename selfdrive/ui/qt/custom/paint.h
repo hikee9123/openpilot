@@ -74,6 +74,7 @@ private:
   int  touched_old = 0;
   Params params;
   bool osm_enabled = false;
+  int osm_minimap_position = 3;
 
   struct _PARAM_
   {

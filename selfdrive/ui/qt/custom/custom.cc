@@ -1308,6 +1308,15 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
   osmSection->addWidget(osmEnable);
   toggles["OSMEnable"] = osmEnable;
 
+  auto *osmMinimapPosition = new ButtonParamControl(
+      "OsmMinimapPosition",
+      tr("OSM minimap position"),
+      tr("Select where the OSM mini map is shown on the driving screen. Left top is beside the MAX speed box, right top is beside the steering wheel button, and left bottom is beside the driver monitoring icon."),
+      "../assets/offroad/icon_openpilot.png",
+      {tr("LT"), tr("RT"), tr("LB"), tr("RB")},
+      145);
+  osmSection->addWidget(osmMinimapPosition);
+
   installOsmDbButton = new ButtonControl(
       tr("Install OSM road DB"),
       tr("INSTALL"),

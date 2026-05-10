@@ -147,6 +147,7 @@ void OnPaint::updateState(const UIState &s)
       sm2.update(0);
   if ((sm1.frame % UI_FREQ) == 0) {
     osm_enabled = params.getBool("OSMEnable");
+    osm_minimap_position = std::clamp(get_param("OsmMinimapPosition"), 0, 3);
   }
 
   // 1.
@@ -349,7 +350,7 @@ void OnPaint::drawLead(QPainter &p, const cereal::RadarState::LeadData::Reader &
 
 void OnPaint::drawHud(QPainter &p)
 {
-  osm_minimap.draw(p, QRect(0, 0, state->fb_w, state->fb_h), m_nda.osmRoadOverlayText);
+  osm_minimap.draw(p, QRect(0, 0, state->fb_w, state->fb_h), m_nda.osmRoadOverlayText, osm_enabled, osm_minimap_position);
 
   if( !is_debug && !m_param.ui.getKegman() ) return;
 

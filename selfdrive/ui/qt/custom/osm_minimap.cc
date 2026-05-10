@@ -12,6 +12,14 @@
 namespace {
 
 constexpr double kMapRadiusM = 230.0;
+constexpr int kHudMargin = 30;
+constexpr int kHudGap = 24;
+constexpr int kButtonSize = 192;
+
+constexpr int kTopLeft = 0;
+constexpr int kTopRight = 1;
+constexpr int kBottomLeft = 2;
+constexpr int kBottomRight = 3;
 
 QPointF projectPoint(const QRectF &panel, double scale, double forward_m, double right_m) {
   const QPointF origin(panel.center().x(), panel.bottom() - 58.0);
@@ -28,19 +36,65 @@ QString roadName(const QJsonObject &road) {
 
 }  // namespace
 
-void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const QString &payload) {
-  if (payload.isEmpty()) return;
+QRectF OsmMinimapRenderer::panelRect(const QRect &surface, int position) const {
+  const int panel_w = std::clamp(surface.width() / 4, 310, 390);
+  const int panel_h = std::clamp(surface.height() / 4, 250, 330);
+  const int right = surface.left() + surface.width();
+  const int bottom = surface.top() + surface.height();
+
+  switch (std::clamp(position, kTopLeft, kBottomRight)) {
+    case kTopLeft:
+      return QRectF(surface.left() + 270, surface.top() + 45, panel_w, panel_h);
+    case kTopRight:
+      return QRectF(right - kHudMargin - kButtonSize - kHudGap - panel_w, surface.top() + kHudMargin, panel_w, panel_h);
+    case kBottomLeft:
+      return QRectF(surface.left() + kHudMargin + kButtonSize + kHudGap, bottom - kHudMargin - panel_h, panel_w, panel_h);
+    case kBottomRight:
+    default:
+      return QRectF(right - kHudMargin - panel_w, bottom - kHudMargin - panel_h, panel_w, panel_h);
+  }
+}
+
+void OsmMinimapRenderer::drawStatus(QPainter &p, const QRect &surface, const QString &status, int position) {
+  const QRectF panel = panelRect(surface, position);
+
+  p.save();
+  p.setRenderHint(QPainter::Antialiasing, true);
+  p.setPen(Qt::NoPen);
+  p.setBrush(QColor(0, 0, 0, 150));
+  p.drawRoundedRect(panel, 18, 18);
+
+  p.setFont(InterFont(24, QFont::DemiBold));
+  p.setPen(QColor(245, 245, 245, 225));
+  p.drawText(panel.adjusted(16, 10, -16, -panel.height() + 46), Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("OSM road prediction"));
+
+  p.setFont(InterFont(22, QFont::Normal));
+  p.setPen(QColor(220, 220, 220, 205));
+  p.drawText(panel.adjusted(16, 58, -16, -16), Qt::AlignCenter, status);
+  p.restore();
+}
+
+void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const QString &payload, bool enabled, int position) {
+  if (!enabled) return;
+  if (payload.isEmpty()) {
+    drawStatus(p, surface, QStringLiteral("Waiting for GPS"), position);
+    return;
+  }
 
   const QJsonDocument doc = QJsonDocument::fromJson(payload.toUtf8());
-  if (!doc.isObject()) return;
+  if (!doc.isObject()) {
+    drawStatus(p, surface, QStringLiteral("Waiting for road data"), position);
+    return;
+  }
 
   const QJsonObject root = doc.object();
   const QJsonArray roads = root.value("mapRoads").toArray();
-  if (roads.isEmpty()) return;
+  if (roads.isEmpty()) {
+    drawStatus(p, surface, QStringLiteral("No nearby road"), position);
+    return;
+  }
 
-  const int panel_w = std::clamp(surface.width() / 4, 310, 390);
-  const int panel_h = std::clamp(surface.height() / 4, 250, 330);
-  const QRectF panel(surface.right() - panel_w - 44, surface.bottom() - panel_h - 44, panel_w, panel_h);
+  const QRectF panel = panelRect(surface, position);
   const double scale = std::min(panel.width(), panel.height()) / (2.0 * kMapRadiusM);
 
   p.save();
