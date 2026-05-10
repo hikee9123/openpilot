@@ -118,21 +118,34 @@ static QString shellQuote(const QString &value) {
   return "'" + escaped + "'";
 }
 
-static QString osmRoadsInstallLogPath(bool ensure_dir = false) {
-  const QString navdTmpRoot = QDir("/data/params/d").exists()
-      ? QString("/data/navd/tmp")
-      : QDir::home().absoluteFilePath(".comma/navd/tmp");
+static QString osmRoadsNavdRoot() {
+  return QDir("/data/params/d").exists()
+      ? QString("/data/navd")
+      : QDir::home().absoluteFilePath(".comma/navd");
+}
+
+static QString osmRoadsNavdTmpRoot(bool ensure_dir = false) {
+  const QString navdTmpRoot = QDir(osmRoadsNavdRoot()).absoluteFilePath("tmp");
   if (ensure_dir) {
     QDir().mkpath(navdTmpRoot);
   }
-  return QDir(navdTmpRoot).absoluteFilePath("openpilot_osm_roads_install.log");
+  return navdTmpRoot;
+}
+
+static QString osmRoadsInstalledDbPath() {
+  return QDir(QDir(osmRoadsNavdRoot()).absoluteFilePath("db")).absoluteFilePath("osm_roads_kr.sqlite3");
+}
+
+static QString osmRoadsInstallLogPath(bool ensure_dir = false) {
+  return QDir(osmRoadsNavdTmpRoot(ensure_dir)).absoluteFilePath("openpilot_osm_roads_install.log");
 }
 
 static QString osmRoadsTmpRepoPath() {
-  const QString navdTmpRoot = QDir("/data/params/d").exists()
-      ? QString("/data/navd/tmp")
-      : QDir::home().absoluteFilePath(".comma/navd/tmp");
-  return QDir(navdTmpRoot).absoluteFilePath("osm_roads_git_db/repo");
+  return QDir(osmRoadsNavdTmpRoot()).absoluteFilePath("osm_roads_git_db/repo");
+}
+
+static QString osmRoadsTmpDbPath() {
+  return QDir(osmRoadsTmpRepoPath()).absoluteFilePath("db/osm_roads_kr.sqlite3");
 }
 
 static bool osmRoadsInstallSessionActive() {
@@ -155,8 +168,17 @@ static QString formatOsmRoadsBytes(qint64 size_bytes) {
   return QString("%1 GB").arg(value, 0, 'f', 1);
 }
 
+static QString osmRoadsFileDetail(const QString &label, const QString &path) {
+  const QFileInfo info(path);
+  if (!info.exists()) {
+    return QString();
+  }
+  const QString modified = info.lastModified().toString("yyyy-MM-dd HH:mm");
+  return QString("%1 %2 (%3, %4)").arg(label, path, formatOsmRoadsBytes(info.size()), modified);
+}
+
 static qint64 osmRoadsLfsPointerSize() {
-  QFile file(QDir(osmRoadsTmpRepoPath()).absoluteFilePath("db/osm_roads_kr.sqlite3"));
+  QFile file(osmRoadsTmpDbPath());
   if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
     return 0;
   }
@@ -1492,6 +1514,9 @@ void NavigationTab::refreshOsmRoadsStatus()
   qint64 downloadTotalBytes = QString::fromStdString(params.get("OsmRoadsDownloadTotalBytes")).toLongLong(&downloadTotalOk);
   bool countOk = false;
   const int segmentCount = QString::fromStdString(params.get("OsmRoadsSegmentCount")).toInt(&countOk);
+  const QString installedDbDetail = osmRoadsFileDetail("local DB", osmRoadsInstalledDbPath());
+  const QString tmpDbDetail = osmRoadsFileDetail("tmp DB", osmRoadsTmpDbPath());
+  const QString logFileDetail = osmRoadsFileDetail("log", osmRoadsInstallLogPath());
   bool running = status == "running";
   if (running && !osmRoadsInstallSessionActive()) {
     running = false;
@@ -1544,9 +1569,12 @@ void NavigationTab::refreshOsmRoadsStatus()
         details.append(downloaded);
       }
     }
+    if (!installedDbDetail.isEmpty()) {
+      details.append(installedDbDetail);
+    }
     details.append(tr("tmux a -t osm_db_install"));
     details.append(QString("tail -f %1").arg(osmRoadsInstallLogPath()));
-    osmRoadsDetailLabel->setText(details.join(" · "));
+    osmRoadsDetailLabel->setText(details.join(" | "));
     return;
   }
 
@@ -1556,21 +1584,34 @@ void NavigationTab::refreshOsmRoadsStatus()
     QStringList details;
     if (countOk && segmentCount > 0) details.append(QString("%1 segments").arg(segmentCount));
     if (!updatedAt.isEmpty()) details.append(tr("Updated ") + updatedAt);
-    osmRoadsDetailLabel->setText(details.isEmpty() ? tr("Install completed") : details.join(" · "));
+    if (!installedDbDetail.isEmpty()) details.append(installedDbDetail);
+    osmRoadsDetailLabel->setText(details.isEmpty() ? tr("Install completed") : details.join(" | "));
     return;
   }
 
   if (status == "failed") {
     installOsmDbButton->setText(tr("RETRY"));
     osmRoadsStatusLabel->setText(tr("OSM road DB install failed"));
-    osmRoadsDetailLabel->setText(error.isEmpty() ? tr("Check network, Git LFS, and storage space.") : error.right(160));
+    QStringList details;
+    details.append(error.isEmpty() ? tr("Check network, Git LFS, and storage space.") : error.right(220));
+    if (!installedDbDetail.isEmpty()) details.append(installedDbDetail);
+    if (!tmpDbDetail.isEmpty()) details.append(tmpDbDetail);
+    details.append(logFileDetail.isEmpty() ? QString("log %1").arg(osmRoadsInstallLogPath()) : logFileDetail);
+    osmRoadsDetailLabel->setText(details.join(" | "));
     return;
   }
 
   resetOsmRoadsLogReplay(false);
+  if (!installedDbDetail.isEmpty()) {
+    installOsmDbButton->setText(tr("UPDATE"));
+    osmRoadsStatusLabel->setText(tr("OSM road DB found"));
+    osmRoadsDetailLabel->setText(installedDbDetail);
+    return;
+  }
+
   installOsmDbButton->setText(tr("INSTALL"));
   osmRoadsStatusLabel->setText(tr("OSM road DB"));
-  osmRoadsDetailLabel->setText(tr("Not installed or status unknown"));
+  osmRoadsDetailLabel->setText(QString("Not installed or status unknown | local DB missing %1").arg(osmRoadsInstalledDbPath()));
 }
 
 // ======================================================================================
