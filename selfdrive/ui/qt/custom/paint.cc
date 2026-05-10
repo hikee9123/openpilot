@@ -197,7 +197,28 @@ void OnPaint::updateState(const UIState &s)
   m_nda.camLimitSpeed = naviData.getCamLimitSpeed();
   m_nda.camLimitSpeedLeftDist = naviData.getCamLimitSpeedLeftDist();
   m_nda.cntIdx = naviData.getCntIdx();
-  m_nda.osmRoadOverlayText = osm_enabled ? QString::fromStdString(naviData.getOsmRoadOverlayText()) : QString();
+  m_nda.osmRoadOverlay.clear();
+  if (osm_enabled && naviData.getActive()) {
+    auto overlay = naviData.getOsmRoadOverlay();
+    auto roads = overlay.getRoads();
+    m_nda.osmRoadOverlay.available = true;
+    m_nda.osmRoadOverlay.road = QString::fromUtf8(overlay.getRoad().cStr());
+    m_nda.osmRoadOverlay.bearing = overlay.getBearing();
+    m_nda.osmRoadOverlay.roads.reserve(roads.size());
+    for (auto road : roads) {
+      m_nda.osmRoadOverlay.roads.push_back({
+        road.getRoadId(),
+        QString::fromUtf8(road.getName().cStr()),
+        QString::fromUtf8(road.getHighway().cStr()),
+        road.getX1(),
+        road.getY1(),
+        road.getX2(),
+        road.getY2(),
+        road.getCurrent(),
+        road.getPredicted(),
+      });
+    }
+  }
 
   if( !is_debug && !m_param.ui.getKegman() ) return;
 
@@ -350,7 +371,7 @@ void OnPaint::drawLead(QPainter &p, const cereal::RadarState::LeadData::Reader &
 
 void OnPaint::drawHud(QPainter &p)
 {
-  osm_minimap.draw(p, QRect(0, 0, state->fb_w, state->fb_h), m_nda.osmRoadOverlayText, osm_enabled, osm_minimap_position);
+  osm_minimap.draw(p, QRect(0, 0, state->fb_w, state->fb_h), m_nda.osmRoadOverlay, osm_enabled, osm_minimap_position);
 
   if( !is_debug && !m_param.ui.getKegman() ) return;
 

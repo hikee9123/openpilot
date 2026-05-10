@@ -39,6 +39,25 @@ struct NaviCustom @0xf35cc4560bbf6ec2 {
         isNda2 @13 :Bool;
         cntIdx @14 :Int16;
         osmRoadOverlayText @15 :Text;
+        osmRoadOverlay @16 :OsmRoadOverlay;
+
+        struct OsmRoadOverlay {
+            road @0 :Text;
+            bearing @1 :Float32;
+            roads @2 :List(OsmRoad);
+        }
+
+        struct OsmRoad {
+            roadId @0 :UInt64;
+            name @1 :Text;
+            highway @2 :Text;
+            x1 @3 :Float32;
+            y1 @4 :Float32;
+            x2 @5 :Float32;
+            y2 @6 :Float32;
+            current @7 :Bool;
+            predicted @8 :Bool;
+        }
     }
 }
 

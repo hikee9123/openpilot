@@ -2,9 +2,6 @@
 
 #include <algorithm>
 
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QPainterPath>
 
 #include "selfdrive/ui/qt/util.h"
@@ -30,8 +27,8 @@ bool pointNearPanel(const QRectF &panel, const QPointF &point) {
   return panel.adjusted(-30.0, -30.0, 30.0, 30.0).contains(point);
 }
 
-QString roadName(const QJsonObject &road) {
-  return road.value("name").toString().left(32);
+QString roadName(const OsmMinimapRoad &road) {
+  return road.name.left(32);
 }
 
 }  // namespace
@@ -74,22 +71,14 @@ void OsmMinimapRenderer::drawStatus(QPainter &p, const QRect &surface, const QSt
   p.restore();
 }
 
-void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const QString &payload, bool enabled, int position) {
+void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinimapData &data, bool enabled, int position) {
   if (!enabled) return;
-  if (payload.isEmpty()) {
+  if (!data.available) {
     drawStatus(p, surface, QStringLiteral("Waiting for GPS"), position);
     return;
   }
 
-  const QJsonDocument doc = QJsonDocument::fromJson(payload.toUtf8());
-  if (!doc.isObject()) {
-    drawStatus(p, surface, QStringLiteral("Waiting for road data"), position);
-    return;
-  }
-
-  const QJsonObject root = doc.object();
-  const QJsonArray roads = root.value("mapRoads").toArray();
-  if (roads.isEmpty()) {
+  if (data.roads.empty()) {
     drawStatus(p, surface, QStringLiteral("No nearby road"), position);
     return;
   }
@@ -107,8 +96,8 @@ void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const QString &
   p.drawLine(QPointF(panel.center().x(), panel.top() + 40), QPointF(panel.center().x(), panel.bottom() - 24));
   p.drawLine(QPointF(panel.left() + 18, panel.bottom() - 58), QPointF(panel.right() - 18, panel.bottom() - 58));
 
-  for (const QJsonValue &value : roads) {
-    if (value.isObject()) drawRoad(p, panel, scale, value.toObject());
+  for (const OsmMinimapRoad &road : data.roads) {
+    drawRoad(p, panel, scale, road);
   }
 
   const QPointF ego(panel.center().x(), panel.bottom() - 58.0);
@@ -122,20 +111,20 @@ void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const QString &
   p.setBrush(QColor(255, 255, 255, 235));
   p.drawPath(ego_path);
 
-  const QString title = root.value("road").toString().isEmpty() ? QStringLiteral("OSM roads") : root.value("road").toString();
+  const QString title = data.road.isEmpty() ? QStringLiteral("OSM roads") : data.road;
   p.setFont(InterFont(24, QFont::DemiBold));
   p.setPen(QColor(245, 245, 245, 220));
   p.drawText(panel.adjusted(14, 8, -14, -panel.height() + 42), Qt::AlignLeft | Qt::AlignVCenter, title);
   p.restore();
 }
 
-void OsmMinimapRenderer::drawRoad(QPainter &p, const QRectF &panel, double scale, const QJsonObject &road) {
-  const QPointF a = projectPoint(panel, scale, road.value("x1").toDouble(), road.value("y1").toDouble());
-  const QPointF b = projectPoint(panel, scale, road.value("x2").toDouble(), road.value("y2").toDouble());
+void OsmMinimapRenderer::drawRoad(QPainter &p, const QRectF &panel, double scale, const OsmMinimapRoad &road) {
+  const QPointF a = projectPoint(panel, scale, road.x1, road.y1);
+  const QPointF b = projectPoint(panel, scale, road.x2, road.y2);
   if (!pointNearPanel(panel, a) && !pointNearPanel(panel, b)) return;
 
-  const bool current = road.value("current").toBool();
-  const bool predicted = road.value("predicted").toBool();
+  const bool current = road.current;
+  const bool predicted = road.predicted;
   QColor color(210, 210, 210, 100);
   int width = 3;
   if (predicted) {
@@ -150,10 +139,11 @@ void OsmMinimapRenderer::drawRoad(QPainter &p, const QRectF &panel, double scale
   p.setPen(QPen(color, width, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
   p.drawLine(a, b);
 
-  if (current && !roadName(road).isEmpty()) {
+  const QString name = roadName(road);
+  if (current && !name.isEmpty()) {
     const QPointF label = (a + b) / 2.0;
     p.setFont(InterFont(18, QFont::Normal));
     p.setPen(QColor(255, 255, 255, 210));
-    p.drawText(QRectF(label.x() - 80, label.y() - 22, 160, 22), Qt::AlignCenter, roadName(road));
+    p.drawText(QRectF(label.x() - 80, label.y() - 22, 160, 22), Qt::AlignCenter, name);
   }
 }

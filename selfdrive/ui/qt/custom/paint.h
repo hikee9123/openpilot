@@ -125,7 +125,7 @@ private:
      int camLimitSpeed;
      int camLimitSpeedLeftDist;
      int cntIdx;
-     QString osmRoadOverlayText;
+     OsmMinimapData osmRoadOverlay;
   } m_nda;
 
 

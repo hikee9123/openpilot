@@ -8,7 +8,7 @@ import cereal.messaging as messaging
 from openpilot.common.params import Params
 from openpilot.common.realtime import Ratekeeper
 from openpilot.common.swaglog import cloudlog
-from openpilot.selfdrive.navd.osm_minimap import build_minimap_payload
+from openpilot.selfdrive.navd.osm_minimap import build_minimap_overlay
 from openpilot.selfdrive.navd.osm_predictor import GPSFix, OSMRoadPredictor
 
 
@@ -31,12 +31,25 @@ def _select_gps(sm: messaging.SubMaster) -> GPSFix | None:
   return None
 
 
-def _send_payload(pm: messaging.PubMaster, payload: str, road_name: str = "") -> None:
+def _send_overlay(pm: messaging.PubMaster, available: bool, road_name: str = "", bearing: float = 0.0, roads: list[dict] | None = None) -> None:
   msg = messaging.new_message("naviCustom")
   nav = msg.naviCustom.naviData
-  nav.active = 1 if payload else 0
+  nav.active = 1 if available else 0
   nav.currentRoadName = road_name
-  nav.osmRoadOverlayText = payload
+  overlay = nav.init("osmRoadOverlay")
+  overlay.road = road_name
+  overlay.bearing = bearing
+  road_items = overlay.init("roads", len(roads or []))
+  for i, road in enumerate(roads or []):
+    road_items[i].roadId = road["roadId"]
+    road_items[i].name = road["name"]
+    road_items[i].highway = road["highway"]
+    road_items[i].x1 = road["x1"]
+    road_items[i].y1 = road["y1"]
+    road_items[i].x2 = road["x2"]
+    road_items[i].y2 = road["y2"]
+    road_items[i].current = road["current"]
+    road_items[i].predicted = road["predicted"]
   pm.send("naviCustom", msg)
 
 
@@ -46,7 +59,8 @@ def main() -> None:
   sm = messaging.SubMaster(["gpsLocationExternal", "gpsLocation"])
   rk = Ratekeeper(1.0, print_delay_threshold=None)
   predictor = OSMRoadPredictor()
-  last_payload = ""
+  last_overlay: tuple[str, float, tuple[tuple, ...]] | None = None
+  last_available = False
   last_send_t = 0.0
   last_log_t = 0.0
 
@@ -55,17 +69,19 @@ def main() -> None:
       sm.update(0)
 
       if not params.get_bool("OSMEnable"):
-        if last_payload:
-          _send_payload(pm, "")
-          last_payload = ""
+        if last_available:
+          _send_overlay(pm, False)
+          last_available = False
+          last_overlay = None
         rk.keep_time()
         continue
 
       gps = _select_gps(sm)
       if gps is None or not predictor.ready():
-        if last_payload:
-          _send_payload(pm, "")
-          last_payload = ""
+        if last_available:
+          _send_overlay(pm, False)
+          last_available = False
+          last_overlay = None
         now = time.monotonic()
         if now - last_log_t > 30.0:
           cloudlog.info("navid waiting for valid GPS and OSM roads DB")
@@ -74,12 +90,13 @@ def main() -> None:
         continue
 
       prediction = predictor.update(gps)
-      payload = build_minimap_payload(prediction)
-      road_name = prediction.current.display_name if prediction is not None and prediction.current is not None else ""
+      road_name, bearing, roads = build_minimap_overlay(prediction)
+      overlay_key = (road_name, bearing, tuple(tuple(sorted(road.items())) for road in roads))
       now = time.monotonic()
-      if payload != last_payload or now - last_send_t > 2.5:
-        _send_payload(pm, payload, road_name)
-        last_payload = payload
+      if not last_available or overlay_key != last_overlay or now - last_send_t > 2.5:
+        _send_overlay(pm, True, road_name, bearing, roads)
+        last_available = True
+        last_overlay = overlay_key
         last_send_t = now
 
       rk.keep_time()
