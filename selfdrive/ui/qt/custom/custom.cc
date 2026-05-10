@@ -1469,7 +1469,7 @@ void NavigationTab::emitOsmRoadsInstallLog()
   const QByteArray output = logFile.read(8192);
   osmRoadsLogReadOffset = logFile.pos();
 
-  const QStringList lines = QString::fromLocal8Bit(output).split('\n', Qt::SkipEmptyParts);
+  const QStringList lines = QString::fromLocal8Bit(output).split('\n', QString::SkipEmptyParts);
   for (const QString &line : lines) {
     const QByteArray text = line.left(500).toLocal8Bit();
     fprintf(stderr, "[osm_db_install] %s\n", text.constData());
