@@ -435,6 +435,7 @@ private:
   void refreshOsmRoadsStatus();
   bool osmRoadsInstallRunning();
   void resetOsmRoadsLogReplay(bool fromBeginning = false);
+  void skipOsmRoadsExistingLog();
   void emitOsmRoadsInstallLog();
   ButtonControl *installOsmDbButton = nullptr;
   QLabel *osmRoadsStatusLabel = nullptr;
@@ -442,6 +443,7 @@ private:
   QProgressBar *osmRoadsProgressBar = nullptr;
   QTimer *osmRoadsStatusTimer = nullptr;
   qint64 osmRoadsLogReadOffset = -1;
+  qint64 osmRoadsLastLoggedDownloadBytes = -1;
 
 
 protected:

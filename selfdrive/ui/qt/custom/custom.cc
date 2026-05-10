@@ -1392,6 +1392,7 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
   osmRoadsStatusTimer = new QTimer(this);
   connect(osmRoadsStatusTimer, &QTimer::timeout, this, &NavigationTab::refreshOsmRoadsStatus);
   osmRoadsStatusTimer->start(1000);
+  skipOsmRoadsExistingLog();
   refreshOsmRoadsStatus();
 }
 
@@ -1400,9 +1401,17 @@ bool NavigationTab::osmRoadsInstallRunning()
   return params.get("OsmRoadsUpdateStatus") == "running";
 }
 
+void NavigationTab::skipOsmRoadsExistingLog()
+{
+  QFile logFile(osmRoadsInstallLogPath(false));
+  osmRoadsLogReadOffset = logFile.exists() ? logFile.size() : 0;
+  osmRoadsLastLoggedDownloadBytes = -1;
+}
+
 void NavigationTab::resetOsmRoadsLogReplay(bool fromBeginning)
 {
   osmRoadsLogReadOffset = fromBeginning ? 0 : -1;
+  osmRoadsLastLoggedDownloadBytes = -1;
 }
 
 void NavigationTab::emitOsmRoadsInstallLog()
@@ -1428,7 +1437,8 @@ void NavigationTab::emitOsmRoadsInstallLog()
     return;
   }
   if (size - osmRoadsLogReadOffset > 8192) {
-    osmRoadsLogReadOffset = size - 8192;
+    osmRoadsLogReadOffset = size;
+    return;
   }
 
   logFile.seek(osmRoadsLogReadOffset);
@@ -1482,6 +1492,22 @@ void NavigationTab::refreshOsmRoadsStatus()
       downloadTotalBytes = osmRoadsLfsPointerSize();
       downloadTotalOk = downloadTotalBytes > 0;
     }
+    if (downloadOk && downloadBytes > 0) {
+      const qint64 logStepBytes = 10LL * 1024LL * 1024LL;
+      const bool completedDownload = downloadTotalOk && downloadTotalBytes > 0 && downloadBytes >= downloadTotalBytes;
+      if (osmRoadsLastLoggedDownloadBytes < 0 ||
+          downloadBytes - osmRoadsLastLoggedDownloadBytes >= logStepBytes ||
+          completedDownload) {
+        const QString downloaded = formatOsmRoadsBytes(downloadBytes);
+        const QString total = (downloadTotalOk && downloadTotalBytes > 0) ? formatOsmRoadsBytes(downloadTotalBytes) : QString();
+        const QByteArray message = total.isEmpty()
+            ? QString("downloaded %1").arg(downloaded).toLocal8Bit()
+            : QString("downloaded %1 / %2").arg(downloaded, total).toLocal8Bit();
+        fprintf(stderr, "[osm_db_install] %s\n", message.constData());
+        fflush(stderr);
+        osmRoadsLastLoggedDownloadBytes = downloadBytes;
+      }
+    }
     installOsmDbButton->setText(tr("STOP"));
     osmRoadsStatusLabel->setText(tr("Installing OSM road DB"));
     QStringList details;
@@ -1501,7 +1527,6 @@ void NavigationTab::refreshOsmRoadsStatus()
   }
 
   if (status == "success") {
-    emitOsmRoadsInstallLog();
     installOsmDbButton->setText(tr("UPDATE"));
     osmRoadsStatusLabel->setText(tr("OSM road DB ready"));
     QStringList details;
@@ -1512,7 +1537,6 @@ void NavigationTab::refreshOsmRoadsStatus()
   }
 
   if (status == "failed") {
-    emitOsmRoadsInstallLog();
     installOsmDbButton->setText(tr("RETRY"));
     osmRoadsStatusLabel->setText(tr("OSM road DB install failed"));
     osmRoadsDetailLabel->setText(error.isEmpty() ? tr("Check network, Git LFS, and storage space.") : error.right(160));
