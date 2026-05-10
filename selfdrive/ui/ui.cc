@@ -58,7 +58,16 @@ static void update_state(UIState *s) {
   } else if (!sm.allAliveAndValid({"wideRoadCameraState"})) {
     scene.light_sensor = -1;
   }
-  scene.started = sm["deviceState"].getDeviceState().getStarted() && scene.ignition;
+  if (util::getenv("CAM_SIM", "") == "webcam") {
+    static int webcam_ready_frames = 0;
+    const bool webcam_ready = sm.rcv_frame("roadCameraState") > 0 && sm.allAliveAndValid({"roadCameraState"});
+    webcam_ready_frames = webcam_ready ? std::min(webcam_ready_frames + 1, UI_FREQ) : 0;
+
+    scene.ignition = true;
+    scene.started = webcam_ready_frames >= UI_FREQ;
+  } else {
+    scene.started = sm["deviceState"].getDeviceState().getStarted() && scene.ignition;
+  }
 
   auto params = Params();
   scene.recording_audio = params.getBool("RecordAudio") && scene.started;
@@ -100,7 +109,7 @@ UIState::UIState(QObject *parent) : QObject(parent) {
   sm = std::make_unique<SubMaster>(std::vector<const char*>{
     "modelV2", "controlsState", "liveCalibration", "radarState", "deviceState",
     "pandaStates", "carParams", "driverMonitoringState", "carState", "driverStateV2",
-    "wideRoadCameraState", "managerState", "selfdriveState", "longitudinalPlan",
+    "roadCameraState", "wideRoadCameraState", "managerState", "selfdriveState", "longitudinalPlan",
     "peripheralState", // #custom
   });
   prime_state = new PrimeState(this);

@@ -1,5 +1,6 @@
 import av
 import cv2 as cv
+import os
 
 class Camera:
   def __init__(self, cam_type_state, stream_type, camera_id):
@@ -32,8 +33,8 @@ class Camera:
       ret, frame = self.cap.read()
       if not ret:
         break
-      # Rotate the frame 180 degrees (flip both axes)
-      frame = cv.flip(frame, -1)
+      if os.getenv("WEBCAM_FLIP", "0") == "1":
+        frame = cv.flip(frame, -1)
       yuv = Camera.bgr2nv12(frame)
       yield yuv.data.tobytes()
     self.cap.release()

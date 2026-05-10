@@ -77,6 +77,10 @@ function launch {
   fi
   export PYTHONPATH="$PWD:${PYTHONPATH:-}"
 
+  if [ "${CAM_SIM:-}" = "webcam" ]; then
+    export USE_WEBCAM=1
+  fi
+
   # hardware specific init
   if [ -f /AGNOS ]; then
     agnos_init

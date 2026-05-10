@@ -1,5 +1,6 @@
 #include "selfdrive/ui/qt/custom/paint.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include <QDebug>
@@ -157,7 +158,7 @@ void OnPaint::updateState(const UIState &s)
   scene->custom.brightness = m_param.ui.getBrightness();
 
 
-  if( !is_debug ) return;
+  if( !is_debug && !m_param.ui.getKegman() ) return;
 
   // 1.
   if (s.scene.pandaType == cereal::PandaState::PandaType::TRES)
@@ -198,9 +199,25 @@ void OnPaint::updateState(const UIState &s)
 
   // 2.
   auto deviceState = sm1["deviceState"].getDeviceState();
-  auto  maxCpuTemp = deviceState.getCpuTempC();
-  m_param.cpuPerc = deviceState.getCpuUsagePercent()[0];
-  m_param.cpuTemp = maxCpuTemp[0];
+  auto cpu_usage = deviceState.getCpuUsagePercent();
+  auto cpu_temps = deviceState.getCpuTempC();
+  auto gpu_temps = deviceState.getGpuTempC();
+
+  m_param.cpuPerc = 0;
+  for (auto usage : cpu_usage) {
+    m_param.cpuPerc = std::max(m_param.cpuPerc, static_cast<int>(usage));
+  }
+
+  m_param.cpuTemp = 0.0f;
+  for (auto temp : cpu_temps) {
+    m_param.cpuTemp = std::max(m_param.cpuTemp, temp);
+  }
+
+  m_param.gpuPerc = std::max(0, static_cast<int>(deviceState.getGpuUsagePercent()));
+  m_param.gpuTemp = 0.0f;
+  for (auto temp : gpu_temps) {
+    m_param.gpuTemp = std::max(m_param.gpuTemp, temp);
+  }
 
   // 2.
   auto radar_state = sm1["radarState"].getRadarState();  // radar
@@ -339,24 +356,27 @@ void OnPaint::drawLead(QPainter &p, const cereal::RadarState::LeadData::Reader &
 
 void OnPaint::drawHud(QPainter &p)
 {
-  if( !is_debug ) return;
+  if( !is_debug && !m_param.ui.getKegman() ) return;
 
-  ui_main_debug( p );
-
-  ui_main_navi( p );
-
-  //ui_graph( p );
-
-
-  if( m_param.ui.getDebug() )
+  if( is_debug )
   {
-    ui_draw_debug1( p );
-  }
+    ui_main_debug( p );
 
-  // 2. tpms
-  if( m_param.ui.getTpms() )
-  {
-    bb_draw_tpms( p, 75, 800);
+    ui_main_navi( p );
+
+    //ui_graph( p );
+
+
+    if( m_param.ui.getDebug() )
+    {
+      ui_draw_debug1( p );
+    }
+
+    // 2. tpms
+    if( m_param.ui.getTpms() )
+    {
+      bb_draw_tpms( p, 75, 800);
+    }
   }
 
   if( m_param.ui.getKegman() )
@@ -827,16 +847,16 @@ void OnPaint::bb_ui_draw_measures_right( QPainter &p, int bb_x, int bb_y, int bb
     if( m_param.cpuTemp > 100 )  m_param.cpuTemp = 0;
 
     QColor val_color = QColor(255, 255, 255, 200);
+    QColor label_color = QColor(255, 255, 255, 200);
 
-     val_color = get_color(  (int)m_param.cpuTemp, 92, 80 );
-     lab_color = get_color(  (int)m_param.cpuPerc, 90, 60 );
+    val_color = get_color((int)m_param.cpuTemp, 90, 60);
+    label_color = get_color(m_param.cpuPerc, 92, 80);
 
-      // temp is alway in C * 10
-      val_str.sprintf("%.1f", m_param.cpuTemp );
-      uom_str.sprintf("%d", m_param.cpuPerc);
-      bb_h += bb_ui_draw_measure(p,  val_str, uom_str, "CPU TEMP",
+      val_str.sprintf("%.1f", m_param.cpuTemp);
+      uom_str = "C";
+      bb_h += bb_ui_draw_measure(p, val_str, uom_str, QString("CPU %1%").arg((double)m_param.cpuPerc, 0, 'f', 1),
         bb_rx, bb_ry, bb_uom_dx,
-        val_color, lab_color, uom_color,
+        val_color, label_color, val_color,
         value_fontSize, label_fontSize, uom_fontSize );
 
     bb_ry = bb_y + bb_h;
@@ -887,28 +907,24 @@ void OnPaint::bb_ui_draw_measures_right( QPainter &p, int bb_x, int bb_y, int bb
   }
 
 
-  //add grey panda GPS accuracy
+  //add GPU temperature and usage
   if( m_param.ui.getKegmanGPU() )
   {
     nCnt++;
     if( nCnt > max_item ) return;
     QColor val_color = QColor(255, 255, 255, 200);
-    //show red/orange if gps accuracy is low
-     val_color = get_color( (int)m_param.gpsAccuracyUblox, 5, 2 );
+    QColor label_color = QColor(255, 255, 255, 200);
 
-    // gps accuracy is always in meters
-    if(m_param.gpsAccuracyUblox > 99 || m_param.gpsAccuracyUblox == 0) {
-       val_str = "-";
-    }else if(m_param.gpsAccuracyUblox > 9.99) {
-      val_str.sprintf("%.1f", m_param.gpsAccuracyUblox );
-    }
-    else {
-      val_str.sprintf("%.2f", m_param.gpsAccuracyUblox );
-    }
-    uom_str.sprintf("%.1f", m_param.altitudeUblox);
-    bb_h +=bb_ui_draw_measure(p,  val_str, uom_str, "GPS PREC",
+    if( m_param.gpuTemp > 120 )  m_param.gpuTemp = 0;
+
+    val_color = get_color((int)m_param.gpuTemp, 90, 60);
+    label_color = get_color(m_param.gpuPerc, 92, 80);
+
+    val_str.sprintf("%.1f", m_param.gpuTemp);
+    uom_str = "C";
+    bb_h += bb_ui_draw_measure(p, val_str, uom_str, QString("GPU %1%").arg((double)m_param.gpuPerc, 0, 'f', 1),
         bb_rx, bb_ry, bb_uom_dx,
-        val_color, lab_color, uom_color,
+        val_color, label_color, val_color,
         value_fontSize, label_fontSize, uom_fontSize );
     bb_ry = bb_y + bb_h;
   }
@@ -1074,5 +1090,3 @@ void OnPaint::bb_ui_draw_UI(QPainter &p)
   bb_ui_draw_measures_right(p, bb_dmr_x, bb_dmr_y, bb_dmr_w);
 }
 //BB END: functions added for the display of various itemsapType
-
-

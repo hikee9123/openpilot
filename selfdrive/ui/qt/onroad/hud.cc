@@ -17,6 +17,13 @@ void HudRenderer::updateState(const UIState &s) {
   status = s.status;
 
   const SubMaster &sm = *(s.sm);
+
+  // Keep custom HUD state fresh in CAM_SIM/webcam mode even when carState is not
+  // being published by the normal onroad process stack.
+  if (m_pPaint) {
+    m_pPaint->updateState(s);
+  }
+
   if (sm.rcv_frame("carState") < s.scene.started_frame) {
     is_cruise_set = false;
     set_speed = SET_SPEED_NA;
@@ -40,10 +47,6 @@ void HudRenderer::updateState(const UIState &s) {
   v_ego_cluster_seen = v_ego_cluster_seen || car_state.getVEgoCluster() != 0.0;
   float v_ego = v_ego_cluster_seen ? car_state.getVEgoCluster() : car_state.getVEgo();
   speed = std::max<float>(0.0f, v_ego * (is_metric ? MS_TO_KPH : MS_TO_MPH));
-
-  // #custom
-  if( m_pPaint )
-     m_pPaint->updateState(s);
 }
 
 void HudRenderer::draw(QPainter &p, const QRect &surface_rect) {

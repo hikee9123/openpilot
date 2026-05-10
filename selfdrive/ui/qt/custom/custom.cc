@@ -491,8 +491,9 @@ void CustomPanel::updateToggles(int /*bSave*/) {
   const bool tpms = m_jsonobj.value("tpms").toBool();
   const bool ndebug = m_jsonobj.value("ParamDebug").toBool();
 
-  const bool kegman = m_jsonobj.value("kegman").toBool() && bDebug;
+  const bool kegman = m_jsonobj.value("kegman").toBool();
   const bool kegmanCPU = m_jsonobj.value("kegmanCPU").toBool();
+  const bool kegmanLag = m_jsonobj.value("kegmanLag").toBool();
   const bool kegmanBattery = m_jsonobj.value("kegmanBattery").toBool();
   const bool kegmanGPU = m_jsonobj.value("kegmanGPU").toBool();
   const bool kegmanAngle = m_jsonobj.value("kegmanAngle").toBool();
@@ -511,6 +512,7 @@ void CustomPanel::updateToggles(int /*bSave*/) {
 
   ui.setKegman(kegman);
   ui.setKegmanCPU(kegmanCPU);
+  ui.setKegmanLag(kegmanLag);
   ui.setKegmanBattery(kegmanBattery);
   ui.setKegmanGPU(kegmanGPU);
   ui.setKegmanAngle(kegmanAngle);
@@ -1218,10 +1220,10 @@ UITab::UITab(CustomPanel *parent, QJsonObject &jsonobj)
   std::vector<std::tuple<QString, QString, QString, QString>> kegman_defs{
     { "kegman", "HUD Overlay (Kegman)",
       "Select up to 4 items below to show on the HUD.", "../assets/offroad/icon_shell.png" },
-    { "kegmanCPU", "CPU temperature", "1. Shows CPU temperature (°C). Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
+    { "kegmanCPU", "CPU temperature", "1. Shows max CPU temperature and max CPU usage. Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
     { "kegmanLag", "UI Lag", "2. Shows UI frame latency (ms). Counts toward the 4-item HUD limit", "../assets/offroad/icon_shell.png" },
     { "kegmanBattery", "Battery Voltage", "3. Shows system/battery voltage (V). Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
-    { "kegmanGPU", "GPS Accuracy", "4. Shows GPS horizontal accuracy (m). Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
+    { "kegmanGPU", "GPU load", "4. Shows GPU temperature and GPU usage. Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
     { "kegmanAngle", "Steering Angle", "5. Shows steering angle (°). Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
     { "kegmanEngine", "Engine Status", "6. Shows engine state (e.g., RPM/ON-OFF). Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
     { "kegmanDistance", "Relative Distance", "7. Shows radar relative distance (m). Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
@@ -1236,6 +1238,9 @@ UITab::UITab(CustomPanel *parent, QJsonObject &jsonobj)
     toggles[param.toStdString()] = toggle;
   }
   connect(toggles["ShowDebugMessage"], &ToggleControl::toggleFlipped, [=]() {
+    updateToggles(false);
+  });
+  connect(toggles["kegman"], &ToggleControl::toggleFlipped, [=]() {
     updateToggles(false);
   });
 
@@ -1265,6 +1270,7 @@ void UITab::updateToggles(int bSave) {
   auto debug_mode_toggle = toggles["ParamDebug"];
   auto kegman_mode_toggle = toggles["kegman"];
   auto kegman_cpu = toggles["kegmanCPU"];
+  auto kegman_lag = toggles["kegmanLag"];
   auto kegman_battery = toggles["kegmanBattery"];
   auto kegman_gpu = toggles["kegmanGPU"];
   auto kegman_angle = toggles["kegmanAngle"];
@@ -1274,10 +1280,11 @@ void UITab::updateToggles(int bSave) {
 
   tpms_mode_toggle->setEnabled(bDebug);
   debug_mode_toggle->setEnabled(bDebug);
-  kegman_mode_toggle->setEnabled(bDebug);
+  kegman_mode_toggle->setEnabled(true);
 
-  const bool kegman = bDebug && m_jsonobj.value("kegman").toBool();
+  const bool kegman = m_jsonobj.value("kegman").toBool();
   kegman_cpu->setEnabled(kegman);
+  kegman_lag->setEnabled(kegman);
   kegman_battery->setEnabled(kegman);
   kegman_gpu->setEnabled(kegman);
   kegman_angle->setEnabled(kegman);

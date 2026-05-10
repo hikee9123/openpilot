@@ -85,6 +85,8 @@ private:
 
     int   cpuPerc;
     float cpuTemp;
+    int   gpuPerc;
+    float gpuTemp;
 
     int   electGearStep;
     float   breakPos;
