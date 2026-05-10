@@ -764,6 +764,11 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
 
   QObject::connect(changeModelButton, &ButtonControl::clicked, this, [this]() {
     const QStringList items = {
+      "11.POP_Model",
+      "10.CD210_Model",
+      "9.WMI_Model",
+      "8.SC_Driving",
+      "7.MacroStiff_Model",
       "6.Dark_Souls_2",  // Dark Souls 2는 빠르게 반응하되, 그 반응을 스스로 제어할 수 있는 안정 지향형 고성능 모델이다.
       "5.North_Nevada",  // “North Nevada”는 안정성/자연스러움 강화형입니다.
       "4.The_Cool_Peoples",  // “Cool People’s”는 반응성/민첩성 향상형,

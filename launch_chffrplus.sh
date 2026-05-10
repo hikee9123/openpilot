@@ -4,6 +4,10 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
 
 source "$DIR/launch_env.sh"
 
+if [ -f "$DIR/.venv/bin/activate" ]; then
+  source "$DIR/.venv/bin/activate"
+fi
+
 function agnos_init {
   # TODO: move this to agnos
   sudo rm -f /data/etc/NetworkManager/system-connections/*.nmmeta
@@ -66,16 +70,22 @@ function launch {
   fi
 
   # handle pythonpath
-  ln -sfn $(pwd) /data/pythonpath
-  export PYTHONPATH="$PWD"
+  if [ -d /data ] && [ -w /data ]; then
+    ln -sfn "$PWD" /data/pythonpath
+  else
+    echo "Skipping /data/pythonpath symlink; /data is not writable"
+  fi
+  export PYTHONPATH="$PWD:${PYTHONPATH:-}"
 
   # hardware specific init
   if [ -f /AGNOS ]; then
     agnos_init
   fi
 
-  # write tmux scrollback to a file
-  tmux capture-pane -pq -S-1000 > /tmp/launch_log
+  # write tmux scrollback to a file when launched inside tmux
+  if [ -n "${TMUX:-}" ] && command -v tmux > /dev/null 2>&1; then
+    tmux capture-pane -pq -S-1000 > /tmp/launch_log
+  fi
 
   # start manager
   cd system/manager

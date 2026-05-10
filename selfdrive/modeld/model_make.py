@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
+import hashlib
 import os
+import shutil
+import sys
 import time
 import subprocess
+import urllib.request
 from pathlib import Path
 from typing import Optional, Dict, Any
 from openpilot.common.swaglog import cloudlog
@@ -46,6 +50,74 @@ POLICY_META = "driving_policy_metadata.pkl"
 VISION_PKL  = "driving_vision_tinygrad.pkl"
 POLICY_PKL  = "driving_policy_tinygrad.pkl"
 
+LEGACY_MODEL_SOURCES: Dict[str, Dict[str, Dict[str, Any]]] = {
+  "7.MacroStiff_Model": {
+    VISION_ONNX: {
+      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/MacroStiff/driving_vision.onnx",
+      "sha256": "1dc66bc06f250b577653ccbeaa2c6521b3d46749f601d0a1a366419e929ca438",
+      "size": 46271942,
+      "local_candidates": [SUPERCOMBOS_DIR / "6.Dark_Souls_2" / VISION_ONNX],
+    },
+    POLICY_ONNX: {
+      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/MacroStiff/driving_policy.onnx",
+      "sha256": "4cf2023d6742c20aac7cecbf520afe370a64bcf5efdcf3531b1b128f9dfa3cc8",
+      "size": 13926324,
+    },
+  },
+  "8.SC_Driving": {
+    VISION_ONNX: {
+      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/SC/driving_vision.onnx",
+      "sha256": "1dc66bc06f250b577653ccbeaa2c6521b3d46749f601d0a1a366419e929ca438",
+      "size": 46271942,
+      "local_candidates": [SUPERCOMBOS_DIR / "6.Dark_Souls_2" / VISION_ONNX],
+    },
+    POLICY_ONNX: {
+      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/SC/driving_policy.onnx",
+      "sha256": "66f406ee179d984a4d8c93e38da479dcd1893127308dd3a7c322a7481a6b51b2",
+      "size": 13926324,
+    },
+  },
+  "9.WMI_Model": {
+    VISION_ONNX: {
+      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/WMIv11/driving_vision.onnx",
+      "sha256": "1dc66bc06f250b577653ccbeaa2c6521b3d46749f601d0a1a366419e929ca438",
+      "size": 46271942,
+      "local_candidates": [SUPERCOMBOS_DIR / "6.Dark_Souls_2" / VISION_ONNX],
+    },
+    POLICY_ONNX: {
+      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/WMIv11/driving_policy.onnx",
+      "sha256": "1edea5bb56f876db4cec97c150799513f6a59373f3ad152d55e4dcaab1b809e3",
+      "size": 13926324,
+    },
+  },
+  "10.CD210_Model": {
+    VISION_ONNX: {
+      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/CD210/driving_vision.onnx",
+      "sha256": "ee29ee5bce84d1ce23e9ff381280de9b4e4d96d2934cd751740354884e112c66",
+      "size": 46877473,
+    },
+    POLICY_ONNX: {
+      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/CD210/driving_policy.onnx",
+      "sha256": "78477124cbf3ffe30fa951ebada8410b43c4242c6054584d656f1d329b067e15",
+      "size": 14060847,
+    },
+  },
+  "11.POP_Model": {
+    VISION_ONNX: {
+      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/CD210/driving_vision.onnx",
+      "sha256": "ee29ee5bce84d1ce23e9ff381280de9b4e4d96d2934cd751740354884e112c66",
+      "size": 46877473,
+      "local_candidates": [SUPERCOMBOS_DIR / "10.CD210_Model" / VISION_ONNX],
+    },
+    POLICY_ONNX: {
+      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/CD210/driving_policy.onnx",
+      "sha256": "78477124cbf3ffe30fa951ebada8410b43c4242c6054584d656f1d329b067e15",
+      "size": 14060847,
+      "local_candidates": [SUPERCOMBOS_DIR / "10.CD210_Model" / POLICY_ONNX],
+    },
+  },
+}
+
 # 결정성(비결정적 해싱 등) 줄이기
 os.environ.setdefault("PYTHONHASHSEED", "0")
 
@@ -63,6 +135,34 @@ def _parse_flags_to_env(flags: str) -> Dict[str, str]:
       if k:
         d[k] = v
   return d
+
+
+def _default_tg_flags() -> str:
+  if "USBGPU" in os.environ:
+    return "DEV=AMD AMD_IFACE=USB AMD_LLVM=1 NOLOCALS=0 IMAGE=0"
+  if os.path.isfile("/TICI"):
+    return "DEV=QCOM"
+  if sys.platform == "darwin":
+    return "DEV=CPU IMAGE=0"
+  return "DEV=LLVM IMAGE=0"
+
+
+def _sanitize_tinygrad_env(env: Dict[str, str]) -> None:
+  int_env_keys = (
+    "DEBUG", "IMAGE", "BEAM", "NOOPT", "JIT", "JIT_BATCH_SIZE", "WINO", "CAPTURING", "TRACEMETA",
+    "TC", "TC_SELECT", "TC_OPT", "AMX", "TRANSCENDENTAL", "TC_SEARCH_OVER_SHAPE", "NOLOCALS",
+    "FUSE_ARANGE", "FUSE_CONV_BW", "SPLIT_REDUCEOP", "NO_MEMORY_PLANNER", "RING", "PICKLE_BUFFERS",
+    "VIZ", "LRU", "CACHELEVEL", "IGNORE_BEAM_CACHE", "DEVECTORIZE", "DISABLE_COMPILER_CACHE",
+    "BLOCK_REORDER", "DONT_REALIZE_EXPAND", "DONT_GROUP_REDUCES", "QUANTIZE", "VALIDATE_WITH_CPU",
+    "DISABLE_FAST_IDIV", "CORRECT_DIVMOD_FOLDING", "FUSE_OPTIM", "ALLOW_DEVICE_USAGE",
+    "MAX_BUFFER_SIZE", "AMD_LLVM", "RANGEIFY", "POSTOPT", "FUSE_ATTENTION", "FLOAT16",
+  )
+  for key in int_env_keys:
+    if key in env:
+      try:
+        int(env[key])
+      except ValueError:
+        env.pop(key)
 
 
 def _run_subprocess(args: list[str], cwd: Path, extra_env: Dict[str, str] | None = None) -> subprocess.CompletedProcess:
@@ -91,6 +191,72 @@ def _comma_default_paths() -> Dict[str, Path]:
 def _stale(target: Path, onnx: Path) -> bool:
   """target이 없거나 ONNX가 더 최신이면 True"""
   return (not target.exists()) or (onnx.stat().st_mtime > target.stat().st_mtime)
+
+
+def _sha256(path: Path) -> str:
+  h = hashlib.sha256()
+  with path.open("rb") as f:
+    for chunk in iter(lambda: f.read(1024 * 1024), b""):
+      h.update(chunk)
+  return h.hexdigest()
+
+
+def _verified_model_file(path: Path, spec: Dict[str, Any]) -> bool:
+  return path.exists() and path.stat().st_size == spec["size"] and _sha256(path) == spec["sha256"]
+
+
+def _copy_verified_candidate(dest: Path, spec: Dict[str, Any]) -> bool:
+  for candidate in spec.get("local_candidates", []):
+    if candidate == dest:
+      continue
+    if _verified_model_file(candidate, spec):
+      dest.parent.mkdir(parents=True, exist_ok=True)
+      shutil.copy2(candidate, dest)
+      cloudlog.warning(f"[modeld.fetch] copied {candidate} -> {dest}")
+      return True
+  return False
+
+
+def _download_verified_model_file(dest: Path, spec: Dict[str, Any]) -> None:
+  dest.parent.mkdir(parents=True, exist_ok=True)
+  tmp = dest.with_name(dest.name + ".tmp")
+  if tmp.exists():
+    tmp.unlink()
+
+  req = urllib.request.Request(spec["url"], headers={"User-Agent": "openpilot-model-make"})
+  cloudlog.warning(f"[modeld.fetch] downloading {spec['url']} -> {dest}")
+  with urllib.request.urlopen(req, timeout=300) as response, tmp.open("wb") as f:
+    while True:
+      chunk = response.read(1024 * 1024)
+      if not chunk:
+        break
+      f.write(chunk)
+
+  if not _verified_model_file(tmp, spec):
+    actual_size = tmp.stat().st_size if tmp.exists() else 0
+    actual_sha = _sha256(tmp) if tmp.exists() else ""
+    tmp.unlink(missing_ok=True)
+    raise RuntimeError(
+      f"Downloaded model verification failed for {dest}: "
+      f"size={actual_size} sha256={actual_sha}"
+    )
+
+  tmp.replace(dest)
+  cloudlog.warning(f"[modeld.fetch] verified {dest}")
+
+
+def _ensure_legacy_model_files(model_dir: Path) -> None:
+  specs = LEGACY_MODEL_SOURCES.get(model_dir.name)
+  if not specs:
+    return
+
+  for filename, spec in specs.items():
+    dest = model_dir / filename
+    if _verified_model_file(dest, spec):
+      continue
+    if _copy_verified_candidate(dest, spec):
+      continue
+    _download_verified_model_file(dest, spec)
 
 
 
@@ -130,7 +296,7 @@ def _ensure_pkl_and_metadata(onnx_path: Path, pkl_path: Path, meta_path: Path) -
   - PKL: stale이면 compile3.py로 생성(+사이즈 가드)
   """
   # 1) 메타 보장
-  if (not meta_path.exists()) or (onnx_path.stat().st_mtime >= meta_path.stat().st_mtime):
+  if _stale(meta_path, onnx_path):
     _ensure_metadata_generated(onnx_path, meta_path)
 
 
@@ -151,8 +317,9 @@ def _ensure_pkl_and_metadata(onnx_path: Path, pkl_path: Path, meta_path: Path) -
     raise FileNotFoundError("tinygrad_repo/examples/openpilot/compile3.py file not found.")
 
   # ENV 주입 (프리픽스 X)
-  flags = os.environ.get("TG_FLAGS", "DEV=LLVM IMAGE=0")  # 필요시 한 곳에서만 조절
+  flags = os.environ.get("TG_FLAGS", _default_tg_flags())  # 필요시 TG_FLAGS로 override
   env = os.environ.copy()
+  _sanitize_tinygrad_env(env)
   env["PYTHONPATH"] = env.get("PYTHONPATH", "") + os.pathsep + str(tinyroot)
   env.update(_parse_flags_to_env(flags))
 
@@ -183,6 +350,8 @@ def _resolve_onnx_only_paths(model_dir: Path) -> Dict[str, Path]:
   - 어떤 단계에서라도 예외가 발생하면 호출자에게 실패를 전달한다.
   """
   try:
+    _ensure_legacy_model_files(model_dir)
+
     vis_onnx = model_dir / VISION_ONNX
     pol_onnx = model_dir / POLICY_ONNX
     if not vis_onnx.exists() or not pol_onnx.exists():
@@ -236,7 +405,7 @@ def _choose_model_dir_from_params_only() -> Optional[Path]:
       cloudlog.warning("[modeld.params] ActiveModelName='1.default', using comma default PATH")
       return None
     bundle = SUPERCOMBOS_DIR / pname
-    if bundle.exists():
+    if bundle.exists() or pname in LEGACY_MODEL_SOURCES:
       cloudlog.warning(f"[modeld.params] ActiveModelName='{pname}'")
       return bundle
 
