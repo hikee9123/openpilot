@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -e
+set -o pipefail
 set -x
 
 # git diff --name-status origin/release3-staging | grep "^A" | less
@@ -15,10 +16,24 @@ if [ -z "${RELEASE_BRANCH:-}" ]; then
   exit 1
 fi
 
-BUILD_DIR="${BUILD_DIR:-/data/openpilot-release-$RELEASE_BRANCH}"
+DEFAULT_BUILD_ROOT="/data"
+if [ ! -d "$DEFAULT_BUILD_ROOT" ] || [ ! -w "$DEFAULT_BUILD_ROOT" ]; then
+  DEFAULT_BUILD_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}"
+fi
+BUILD_DIR="${BUILD_DIR:-$DEFAULT_BUILD_ROOT/openpilot-release-$RELEASE_BRANCH}"
 RELEASE_REMOTE="${RELEASE_REMOTE:-$(git -C "$SOURCE_DIR" remote get-url origin)}"
 PANDA_RELEASE_CERT="${PANDA_RELEASE_CERT:-/data/pandaextra/certs/release}"
 PUSH="${PUSH:-0}"
+if [ -z "${SCONS:-}" ]; then
+  if [ -x "$SOURCE_DIR/.venv/bin/scons" ]; then
+    SCONS="$SOURCE_DIR/.venv/bin/scons"
+  else
+    SCONS="scons"
+  fi
+fi
+if [ -d "$SOURCE_DIR/.venv/bin" ]; then
+  export PATH="$SOURCE_DIR/.venv/bin:$PATH"
+fi
 
 if [ "$BUILD_DIR" = "$SOURCE_DIR" ]; then
   echo "BUILD_DIR must not be the source checkout"
@@ -32,6 +47,7 @@ echo "[-] Setting up repo T=$SECONDS"
 echo "[-] source: $SOURCE_DIR"
 echo "[-] build: $BUILD_DIR"
 echo "[-] remote: $RELEASE_REMOTE"
+echo "[-] scons: $SCONS"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
@@ -42,7 +58,7 @@ git checkout --orphan "$RELEASE_BRANCH"
 # do the files copy
 echo "[-] copying files T=$SECONDS"
 cd "$SOURCE_DIR"
-cp -pR --parents $(./release/release_files.py) "$BUILD_DIR/"
+./release/release_files.py | tar -cf - -T - | tar -C "$BUILD_DIR" -xf -
 
 # in the directory
 cd "$BUILD_DIR"
@@ -57,14 +73,14 @@ git commit -a -m "openpilot v$VERSION release"
 
 # Build
 export PYTHONPATH="$BUILD_DIR"
-scons -j$(nproc) --minimal
+"$SCONS" -j$(nproc) --minimal
 
 if [ -z "${PANDA_DEBUG_BUILD:-}" ] && [ -e "$PANDA_RELEASE_CERT" ]; then
   # release panda fw
-  CERT="$PANDA_RELEASE_CERT" RELEASE=1 scons -j$(nproc) panda/
+  CERT="$PANDA_RELEASE_CERT" RELEASE=1 "$SCONS" -j$(nproc) panda/
 else
   # build without release cert to enable features like experimental longitudinal
-  scons -j$(nproc) panda/
+  "$SCONS" -j$(nproc) panda/
 fi
 
 # Ensure no submodules in release

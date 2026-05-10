@@ -39,6 +39,14 @@ Updating staging:
 
 `build_release.sh` can build and optionally push a release branch to a fork-owned remote.
 
+For the common `release3` fork build, run:
+
+```bash
+release/build_release3.sh
+```
+
+This defaults to `RELEASE_BRANCH=release3` and `PUSH=1`, so it builds and pushes to the source checkout's `origin` unless `RELEASE_REMOTE` is set.
+
 Example:
 
 ```bash
@@ -50,4 +58,4 @@ PUSH=1 \
 release/build_release.sh
 ```
 
-`BUILD_DIR` defaults to `/data/openpilot-release-$RELEASE_BRANCH`. `RELEASE_REMOTE` defaults to the source checkout's `origin`. Push is skipped unless `PUSH=1` is set. Release commit identity defaults to local `git config user.name` and `git config user.email`, and can be overridden with the standard `GIT_AUTHOR_*` and `GIT_COMMITTER_*` environment variables.
+`BUILD_DIR` defaults to `/data/openpilot-release-$RELEASE_BRANCH` when `/data` is writable, otherwise `${XDG_CACHE_HOME:-$HOME/.cache}/openpilot-release-$RELEASE_BRANCH`. `RELEASE_REMOTE` defaults to the source checkout's `origin`. `SCONS` defaults to the source checkout's `.venv/bin/scons` when available, otherwise `scons` from `PATH`; the source checkout's `.venv/bin` is also prepended to `PATH` for build helpers like `cythonize`. Push is skipped unless `PUSH=1` is set. Release commit identity defaults to local `git config user.name` and `git config user.email`, and can be overridden with the standard `GIT_AUTHOR_*` and `GIT_COMMITTER_*` environment variables.

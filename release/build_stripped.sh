@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -ex
+set -o pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 
@@ -38,7 +39,7 @@ git submodule foreach --recursive git clean -xdff
 # do the files copy
 echo "[-] copying files T=$SECONDS"
 cd $SOURCE_DIR
-cp -pR --parents $(./release/release_files.py) $TARGET_DIR/
+./release/release_files.py | tar -cf - -T - | tar -C "$TARGET_DIR" -xf -
 
 # in the directory
 cd $TARGET_DIR

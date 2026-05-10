@@ -9,6 +9,13 @@ ROOT = HERE + "/.."
 blacklist = [
   ".git/",
   ".github/workflows/",
+  ".mypy_cache/",
+  ".pytest_cache/",
+  ".ruff_cache/",
+  ".venv/",
+  "__pycache__/",
+  ".*\\.py[co]$",
+  ".sconsign.dblite",
 
   "matlab.*.md",
 
