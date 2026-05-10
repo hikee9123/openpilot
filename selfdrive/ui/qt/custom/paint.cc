@@ -157,6 +157,32 @@ void OnPaint::updateState(const UIState &s)
   scene->custom.autoScreenOff = m_param.ui.getAutoScreenOff();
   scene->custom.brightness = m_param.ui.getBrightness();
 
+  // carState drives drawSpeed(), so keep it fresh regardless of overlay settings.
+  auto car_state = sm1["carState"].getCarState();
+  m_param.angleSteers = car_state.getSteeringAngleDeg();
+  m_param.enginRpm =  car_state.getEngineRpmDEPRECATED();
+  m_gasVal = car_state.getGasDEPRECATED();
+  bool  brakePress = car_state.getBrakePressed();
+  bool  brakeLights = car_state.getBrakeLightsDEPRECATED();
+  if( brakePress ) m_nBrakeStatus = 1; else m_nBrakeStatus = 0;
+  if( brakeLights ) m_nBrakeStatus |= 2;
+
+  auto carState_custom = car_state.getCarSCustom();
+  m_param.tpmsData  = carState_custom.getTpms();
+
+  // debug Message
+  alert.alertTextMsg1 = carState_custom.getAlertTextMsg1();
+  alert.alertTextMsg2 = carState_custom.getAlertTextMsg2();
+  alert.alertTextMsg3 = carState_custom.getAlertTextMsg3();
+  m_param.electGearStep  = carState_custom.getElectGearStep();
+  m_param.breakPos = carState_custom.getBreakPos();
+  scene->custom.leadDistance = carState_custom.getLeadDistance();
+  int touched = carState_custom.getTouched();
+  if( touched_old != touched)
+  {
+    touched_old = touched;
+    scene->custom.touched++;
+  }
 
   if( !is_debug && !m_param.ui.getKegman() ) return;
 
@@ -223,35 +249,6 @@ void OnPaint::updateState(const UIState &s)
   auto radar_state = sm1["radarState"].getRadarState();  // radar
   m_param.lead_radar = radar_state.getLeadOne();
 
-
-  // 2.
-  auto car_state = sm1["carState"].getCarState();
-  m_param.angleSteers = car_state.getSteeringAngleDeg();
-  m_param.enginRpm =  car_state.getEngineRpmDEPRECATED();
-  m_gasVal = car_state.getGasDEPRECATED();
-  bool  brakePress = car_state.getBrakePressed();
-  bool  brakeLights = car_state.getBrakeLightsDEPRECATED();
-  if( brakePress ) m_nBrakeStatus = 1; else m_nBrakeStatus = 0;
-  if( brakeLights ) m_nBrakeStatus |= 2;
-
-
-  // 1.
-  auto carState_custom = car_state.getCarSCustom();
-  m_param.tpmsData  = carState_custom.getTpms();
-
-  // debug Message
-  alert.alertTextMsg1 = carState_custom.getAlertTextMsg1();
-  alert.alertTextMsg2 = carState_custom.getAlertTextMsg2();
-  alert.alertTextMsg3 = carState_custom.getAlertTextMsg3();
-  m_param.electGearStep  = carState_custom.getElectGearStep();
-  m_param.breakPos = carState_custom.getBreakPos();
-  scene->custom.leadDistance = carState_custom.getLeadDistance();
-  int touched = carState_custom.getTouched();
-  if( touched_old != touched)
-  {
-    touched_old = touched;
-    scene->custom.touched++;
-  }
 
   // 2.
   if (sm1.frame % (UI_FREQ) != 0)
