@@ -5,7 +5,27 @@ import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any
 from openpilot.common.swaglog import cloudlog
-from openpilot.common.params import Params
+try:
+  from openpilot.common.params import Params
+except Exception as e:
+  class Params:
+    def __init__(self):
+      prefix = os.environ.get("OPENPILOT_PREFIX", "d")
+      if "PARAMS_ROOT" in os.environ:
+        params_root = Path(os.environ["PARAMS_ROOT"])
+      elif Path("/data/params").exists():
+        params_root = Path("/data/params")
+      else:
+        params_root = Path.home() / (".comma" + os.environ.get("OPENPILOT_PREFIX", "")) / "params"
+      self.params_path = params_root / prefix
+
+    def get(self, key: str) -> bytes | None:
+      try:
+        return (self.params_path / key).read_bytes()
+      except FileNotFoundError:
+        return None
+
+  cloudlog.warning(f"[modeld.params] using file fallback because Params import failed: {e}")
 
 # ----------------------------
 # Constants / Paths
@@ -160,7 +180,7 @@ def _ensure_pkl_and_metadata(onnx_path: Path, pkl_path: Path, meta_path: Path) -
 def _resolve_onnx_only_paths(model_dir: Path) -> Dict[str, Path]:
   """
   주어진 model_dir에서 ONNX/메타/PKL을 확인/생성한다.
-  - 어떤 단계에서라도 예외가 발생하면 comma 기본 PATH로 폴백한다.
+  - 어떤 단계에서라도 예외가 발생하면 호출자에게 실패를 전달한다.
   """
   try:
     vis_onnx = model_dir / VISION_ONNX
@@ -201,8 +221,8 @@ def _resolve_onnx_only_paths(model_dir: Path) -> Dict[str, Path]:
     }
 
   except Exception as e:
-    cloudlog.error(f"[modeld.resolve] _resolve_onnx_only_paths failed for {model_dir}: {e}. Falling back to comma default PATH.")
-    return _comma_default_paths()
+    cloudlog.error(f"[modeld.resolve] _resolve_onnx_only_paths failed for {model_dir}: {e}")
+    raise
 
 
 def _choose_model_dir_from_params_only() -> Optional[Path]:
