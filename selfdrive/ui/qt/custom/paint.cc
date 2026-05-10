@@ -145,6 +145,9 @@ void OnPaint::updateState(const UIState &s)
 
   if ( (sm1.frame % UI_FREQ) != 0 )
       sm2.update(0);
+  if ((sm1.frame % UI_FREQ) == 0) {
+    osm_enabled = params.getBool("OSMEnable");
+  }
 
   // 1.
   auto uiCustom = sm2["uICustom"].getUICustom();
@@ -184,6 +187,17 @@ void OnPaint::updateState(const UIState &s)
     scene->custom.touched++;
   }
 
+  // Navigation overlay data is used by the OSM mini map even when debug/kegman overlays are off.
+  auto navi_custom = sm2["naviCustom"].getNaviCustom();
+  auto naviData = navi_custom.getNaviData();
+  m_nda.activeNDA = naviData.getActive();
+  m_nda.camType = naviData.getCamType();
+  m_nda.roadLimitSpeed = naviData.getRoadLimitSpeed();
+  m_nda.camLimitSpeed = naviData.getCamLimitSpeed();
+  m_nda.camLimitSpeedLeftDist = naviData.getCamLimitSpeedLeftDist();
+  m_nda.cntIdx = naviData.getCntIdx();
+  m_nda.osmRoadOverlayText = osm_enabled ? QString::fromStdString(naviData.getOsmRoadOverlayText()) : QString();
+
   if( !is_debug && !m_param.ui.getKegman() ) return;
 
   // 1.
@@ -203,24 +217,6 @@ void OnPaint::updateState(const UIState &s)
   // 1.
   auto peripheralState = sm2["peripheralState"].getPeripheralState();
   m_param.batteryVoltage = peripheralState.getVoltage() * 0.001;
-
-
-  // 1.
-  auto navi_custom = sm2["naviCustom"].getNaviCustom();
-  auto naviData = navi_custom.getNaviData();
-  int activeNDA = naviData.getActive();
-  int camType  = naviData.getCamType();
-  int roadLimitSpeed = naviData.getRoadLimitSpeed();
-  int camLimitSpeed = naviData.getCamLimitSpeed();
-  int camLimitSpeedLeftDist = naviData.getCamLimitSpeedLeftDist();
-  int cntIdx = naviData.getCntIdx();
-
-  m_nda.activeNDA = activeNDA;
-  m_nda.camType = camType;
-  m_nda.roadLimitSpeed = roadLimitSpeed;
-  m_nda.camLimitSpeed = camLimitSpeed;
-  m_nda.camLimitSpeedLeftDist = camLimitSpeedLeftDist;
-  m_nda.cntIdx = cntIdx;
 
 
   // 2.
@@ -353,6 +349,8 @@ void OnPaint::drawLead(QPainter &p, const cereal::RadarState::LeadData::Reader &
 
 void OnPaint::drawHud(QPainter &p)
 {
+  osm_minimap.draw(p, QRect(0, 0, state->fb_w, state->fb_h), m_nda.osmRoadOverlayText);
+
   if( !is_debug && !m_param.ui.getKegman() ) return;
 
   if( is_debug )

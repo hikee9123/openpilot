@@ -3,9 +3,10 @@
 #include <QStackedLayout>
 #include <QWidget>
 
-
+#include "common/params.h"
 #include "selfdrive/ui/ui.h"
 #include "selfdrive/ui/qt/custom/widgetNetImg.h"
+#include "selfdrive/ui/qt/custom/osm_minimap.h"
 
 
 /*
@@ -71,6 +72,8 @@ private:
   const int bdr_s = 30;
 
   int  touched_old = 0;
+  Params params;
+  bool osm_enabled = false;
 
   struct _PARAM_
   {
@@ -121,11 +124,13 @@ private:
      int camLimitSpeed;
      int camLimitSpeedLeftDist;
      int cntIdx;
+     QString osmRoadOverlayText;
   } m_nda;
 
 
 private:
    NetworkImageWidget *icon_01;
+   OsmMinimapRenderer osm_minimap;
    //QPixmap img_tire_pressure;
    int  is_debug;
    int  is_carTracking;

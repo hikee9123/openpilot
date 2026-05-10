@@ -33,7 +33,7 @@ qt_src = ["main.cc", "ui.cc", "qt/sidebar.cc", "qt/body.cc",
           "qt/onroad/buttons.cc", "qt/onroad/alerts.cc", "qt/onroad/driver_monitoring.cc", "qt/onroad/hud.cc"]
 
 # #custom UI
-qt_src += ["qt/custom/paint.cc","qt/custom/widgetNetImg.cc","qt/custom/custom.cc","qt/custom/csidebar.cc"]
+qt_src += ["qt/custom/paint.cc","qt/custom/widgetNetImg.cc","qt/custom/custom.cc","qt/custom/csidebar.cc","qt/custom/osm_minimap.cc"]
 
 # build translation files
 with open(File("translations/languages.json").abspath) as f:

@@ -19,6 +19,7 @@
 #include <QDebug>
 #include <QFile>
 #include <QFileInfo>
+#include <QCoreApplication>
 #include <QtConcurrent>
 #include <QVariant>
 #include <QHBoxLayout>
@@ -1221,6 +1222,57 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
   addItem(toggle1);
 
   addItem(new MapboxToken());
+
+  auto *osmSection = new CollapsibleSection(tr("OSM road prediction"), this);
+  addItem(osmSection);
+
+  auto *osmEnable = new ParamControl(
+      "OSMEnable",
+      tr("Use OSM road prediction"),
+      tr("Use the local OSM road DB for current-road matching, forward-road prediction, and the mini map."),
+      "../assets/offroad/icon_openpilot.png",
+      this);
+  const bool osmLocked = params.getBool("OSMEnableLock");
+  osmEnable->setEnabled(!osmLocked);
+  osmSection->addWidget(osmEnable);
+  toggles["OSMEnable"] = osmEnable;
+
+  auto *installOsmDb = new ButtonControl(
+      tr("Install OSM road DB"),
+      tr("INSTALL"),
+      tr("Downloads the prebuilt OSM road graph DB from Git LFS and installs it in the navd DB path."),
+      this);
+  connect(installOsmDb, &ButtonControl::clicked, this, [=]() {
+    Params p;
+    p.put("OsmRoadsUpdateStatus", "running");
+    p.put("OsmRoadsUpdateError", "");
+    p.put("OsmRoadsUpdateProgress", "0");
+
+    QProcess *proc = new QProcess(this);
+    const QString repoRoot = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../..");
+    proc->setWorkingDirectory(QDir(repoRoot).canonicalPath());
+    proc->setProgram("python3");
+    proc->setArguments({"tools/scripts/install_osm_roads_db_from_git.py", "--require-road-graph"});
+    proc->setProcessChannelMode(QProcess::MergedChannels);
+    connect(proc, &QProcess::readyRead, proc, [proc]() { proc->readAll(); });
+
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [proc](int code, QProcess::ExitStatus status) {
+      Params finishedParams;
+      if (status == QProcess::NormalExit && code == 0) {
+        finishedParams.put("OsmRoadsUpdateStatus", "success");
+        finishedParams.put("OsmRoadsUpdateError", "");
+        finishedParams.put("OsmRoadsUpdateProgress", "100");
+        finishedParams.put("OsmRoadsUpdatedAt", QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm").toStdString());
+      } else {
+        finishedParams.put("OsmRoadsUpdateStatus", "failed");
+        finishedParams.put("OsmRoadsUpdateError", QString("exit code %1").arg(code).toStdString());
+      }
+      proc->deleteLater();
+    });
+    proc->start();
+  });
+  osmSection->addWidget(installOsmDb);
 }
 
 // ======================================================================================
