@@ -53,13 +53,13 @@ const QColor bg_colors [] = {
 typedef struct UIScene {
   Eigen::Matrix3f view_from_calib = VIEW_FROM_DEVICE;
   Eigen::Matrix3f view_from_wide_calib = VIEW_FROM_DEVICE;
-  cereal::PandaState::PandaType pandaType;
+  cereal::PandaState::PandaType pandaType = cereal::PandaState::PandaType::UNKNOWN;
 
   cereal::LongitudinalPersonality personality;
 
   float light_sensor = -1;
-  bool started, ignition, is_metric, recording_audio;
-  uint64_t started_frame;
+  bool started = false, ignition = false, is_metric = false, recording_audio = false;
+  uint64_t started_frame = 0;
 
   // #custom
   struct _CUSTOM
