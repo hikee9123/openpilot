@@ -26,6 +26,7 @@ from openpilot.selfdrive.navd.osm_roads import (
 MAX_GRAPH_HEADING_DIFF_DEG = 70.0
 MIN_GRAPH_SIDE_OFFSET_M = 80.0
 MAX_GRAPH_SIDE_OFFSET_M = 260.0
+MAX_GRAPH_SKIP_AHEAD_SEGMENTS = 5
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,10 @@ def _distance_m(a: GPSFix, b: GPSFix) -> float:
 
 def _same_display_name(a: str, b: str) -> bool:
   return bool(a) and bool(b) and a == b
+
+
+def _same_road_identity(current_name: str, current_osm_id: int, road: OSMRoadSegment) -> bool:
+  return _same_display_name(current_name, road.display_name) or (current_osm_id > 0 and road.osm_id == current_osm_id)
 
 
 def _format_rejects(rejects: dict[str, int]) -> str:
@@ -208,6 +213,32 @@ class OSMRoadPredictor:
     score = heading_diff * 3.0 + side_offset_m * 0.35 + forward_m * 0.02 + same_name_bonus
     return _SuccessorCandidate(score, heading_diff, forward_m, road, road_bearing), ""
 
+  def _skip_ahead_successor(self, conn: sqlite3.Connection, gps: GPSFix, reference_bearing_deg: float,
+                            current_name: str, current_osm_id: int, start_road: OSMRoadSegment,
+                            visited: set[int]) -> tuple[_SuccessorCandidate | None, int]:
+    if not _same_road_identity(current_name, current_osm_id, start_road):
+      return None, 0
+
+    frontier = [start_road]
+    seen = set(visited)
+    seen.add(start_road.road_id)
+    skipped = 0
+    while frontier and skipped < MAX_GRAPH_SKIP_AHEAD_SEGMENTS:
+      road = frontier.pop(0)
+      skipped += 1
+      for next_road in self._successors(conn, road.road_id):
+        if next_road.road_id in seen:
+          continue
+        seen.add(next_road.road_id)
+        if not _same_road_identity(current_name, current_osm_id, next_road):
+          continue
+        candidate, reject_reason = self._score_successor(gps, reference_bearing_deg, current_name, next_road)
+        if candidate is not None:
+          return candidate, skipped
+        if reject_reason == "behind":
+          frontier.append(next_road)
+    return None, skipped
+
   def _predict_forward(self, conn: sqlite3.Connection, gps: GPSFix, current: OSMRoadMatch | None) -> tuple[list[OSMRoadSegment], bool, str]:
     if current is None:
       predicted = forward_road_segments(conn, gps.lat, gps.lon, gps.bearing_deg, forward_start_m=5.0, forward_end_m=self.forward_distance_m, limit=60)
@@ -219,6 +250,8 @@ class OSMRoadPredictor:
     bearing = current.driving_bearing_deg
     total_successors = 0
     total_accepted = 0
+    total_skip_ahead = 0
+    skip_ahead_hits = 0
     rejects: dict[str, int] = {}
     reject_samples: list[str] = []
     stop_reason = ""
@@ -234,6 +267,19 @@ class OSMRoadPredictor:
         candidate, reject_reason = self._score_successor(gps, bearing, current.display_name, road)
         if candidate is not None:
           candidates.append(candidate)
+        elif reject_reason == "behind":
+          skip_candidate, skipped = self._skip_ahead_successor(conn, gps, bearing, current.display_name,
+                                                               current.osm_id, road, visited)
+          total_skip_ahead += skipped
+          if skip_candidate is not None:
+            candidates.append(skip_candidate)
+            skip_ahead_hits += 1
+            if len(reject_samples) < 3:
+              reject_samples.append(f"{road.road_id}->{skip_candidate.road.road_id}:skip_ahead")
+          else:
+            rejects[reject_reason] = rejects.get(reject_reason, 0) + 1
+            if len(reject_samples) < 3:
+              reject_samples.append(f"{road.road_id}:{road.display_name or '-'}:{reject_reason}")
         elif reject_reason:
           rejects[reject_reason] = rejects.get(reject_reason, 0) + 1
           if len(reject_samples) < 3:
@@ -254,7 +300,7 @@ class OSMRoadPredictor:
       predicted = forward_road_segments(conn, gps.lat, gps.lon, gps.bearing_deg, forward_start_m=5.0, forward_end_m=self.forward_distance_m, limit=60)
       debug_text = (
         f"current={current.display_name or '-'} road_id={current.road_id} "
-        f"successors={total_successors} accepted={total_accepted} stop={stop_reason or '-'} "
+        f"successors={total_successors} accepted={total_accepted} skip_ahead={total_skip_ahead}/{skip_ahead_hits} stop={stop_reason or '-'} "
         f"rejects={_format_rejects(rejects)} samples={';'.join(reject_samples) or '-'} "
         f"fallback_count={len(predicted)}"
       )
@@ -262,6 +308,7 @@ class OSMRoadPredictor:
 
     debug_text = (
       f"current={current.display_name or '-'} road_id={current.road_id} "
-      f"graph_count={len(predicted)} successors={total_successors} accepted={total_accepted}"
+      f"graph_count={len(predicted)} successors={total_successors} accepted={total_accepted} "
+      f"skip_ahead={total_skip_ahead}/{skip_ahead_hits}"
     )
     return predicted[:80], True, debug_text
