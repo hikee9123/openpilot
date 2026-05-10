@@ -216,6 +216,7 @@ void OnPaint::updateState(const UIState &s)
         road.getY2(),
         road.getCurrent(),
         road.getPredicted(),
+        road.getHistory(),
       });
     }
   }

@@ -57,6 +57,7 @@ struct NaviCustom @0xf35cc4560bbf6ec2 {
             y2 @6 :Float32;
             current @7 :Bool;
             predicted @8 :Bool;
+            history @9 :Bool;
         }
     }
 }

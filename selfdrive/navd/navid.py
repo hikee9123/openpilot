@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import time
+from collections import OrderedDict
 
 import cereal.messaging as messaging
 from openpilot.common.params import Params
@@ -10,6 +11,10 @@ from openpilot.common.realtime import Ratekeeper
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.navd.osm_minimap import build_minimap_overlay
 from openpilot.selfdrive.navd.osm_predictor import GPSFix, OSMRoadPredictor
+from openpilot.selfdrive.navd.osm_roads import OSMRoadSegment
+
+
+HISTORY_SEGMENT_LIMIT = 40
 
 
 def _valid_number(value: float) -> bool:
@@ -50,7 +55,18 @@ def _send_overlay(pm: messaging.PubMaster, available: bool, road_name: str = "",
     road_items[i].y2 = road["y2"]
     road_items[i].current = road["current"]
     road_items[i].predicted = road["predicted"]
+    road_items[i].history = road["history"]
   pm.send("naviCustom", msg)
+
+
+def _current_segment(prediction) -> OSMRoadSegment | None:
+  if prediction is None or prediction.current is None:
+    return None
+  current_id = prediction.current.road_id
+  for segment in prediction.nearby:
+    if segment.road_id == current_id:
+      return segment
+  return None
 
 
 def main() -> None:
@@ -63,6 +79,7 @@ def main() -> None:
   last_available = False
   last_send_t = 0.0
   last_log_t = 0.0
+  history_segments: OrderedDict[int, OSMRoadSegment] = OrderedDict()
 
   try:
     while True:
@@ -73,6 +90,7 @@ def main() -> None:
           _send_overlay(pm, False)
           last_available = False
           last_overlay = None
+          history_segments.clear()
         rk.keep_time()
         continue
 
@@ -82,6 +100,7 @@ def main() -> None:
           _send_overlay(pm, False)
           last_available = False
           last_overlay = None
+          history_segments.clear()
         now = time.monotonic()
         if now - last_log_t > 30.0:
           cloudlog.info("navid waiting for valid GPS and OSM roads DB")
@@ -90,7 +109,13 @@ def main() -> None:
         continue
 
       prediction = predictor.update(gps)
-      road_name, bearing, roads = build_minimap_overlay(prediction)
+      current_segment = _current_segment(prediction)
+      if current_segment is not None:
+        history_segments.pop(current_segment.road_id, None)
+        history_segments[current_segment.road_id] = current_segment
+        while len(history_segments) > HISTORY_SEGMENT_LIMIT:
+          history_segments.popitem(last=False)
+      road_name, bearing, roads = build_minimap_overlay(prediction, list(history_segments.values()))
       overlay_key = (road_name, bearing, tuple(tuple(sorted(road.items())) for road in roads))
       now = time.monotonic()
       if not last_available or overlay_key != last_overlay or now - last_send_t > 2.5:

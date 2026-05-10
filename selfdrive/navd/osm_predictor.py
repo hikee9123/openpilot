@@ -12,6 +12,7 @@ from openpilot.selfdrive.navd.osm_roads import (
   DEFAULT_OSM_ROADS_DB_PATH,
   OSMRoadMatch,
   OSMRoadSegment,
+  align_bearing_to_heading,
   angle_diff_deg,
   connect_readonly_db,
   database_segment_count,
@@ -136,26 +137,35 @@ class OSMRoadPredictor:
 
   def _predict_forward(self, conn: sqlite3.Connection, gps: GPSFix, current: OSMRoadMatch | None) -> list[OSMRoadSegment]:
     if current is None:
-      return forward_road_segments(conn, gps.lat, gps.lon, gps.bearing_deg, forward_end_m=self.forward_distance_m, limit=60)
+      return forward_road_segments(conn, gps.lat, gps.lon, gps.bearing_deg, forward_start_m=5.0, forward_end_m=self.forward_distance_m, limit=60)
 
     predicted: list[OSMRoadSegment] = []
     visited = {current.road_id}
     road_id = current.road_id
-    bearing = current.bearing_deg
+    bearing = current.driving_bearing_deg
 
     for _ in range(14):
-      candidates = [road for road in self._successors(conn, road_id) if road.road_id not in visited]
+      candidates: list[tuple[float, int, OSMRoadSegment, float]] = []
+      for road in self._successors(conn, road_id):
+        if road.road_id in visited:
+          continue
+        x1, _ = latlon_to_car_space_m(gps.lat, gps.lon, gps.bearing_deg, road.lat1, road.lon1)
+        x2, _ = latlon_to_car_space_m(gps.lat, gps.lon, gps.bearing_deg, road.lat2, road.lon2)
+        if max(x1, x2) < 5.0:
+          continue
+        road_bearing = align_bearing_to_heading(road.bearing_deg, bearing)
+        candidates.append((angle_diff_deg(bearing, road_bearing), 0 if road.display_name == current.display_name else 1, road, road_bearing))
       if not candidates:
         break
-      candidates.sort(key=lambda road: (angle_diff_deg(bearing, road.bearing_deg), 0 if road.display_name == current.display_name else 1))
-      best = candidates[0]
-      if angle_diff_deg(bearing, best.bearing_deg) > 95.0:
+      candidates.sort(key=lambda item: (item[0], item[1]))
+      best_diff, _, best, best_bearing = candidates[0]
+      if best_diff > 95.0:
         break
       predicted.append(best)
       visited.add(best.road_id)
       road_id = best.road_id
-      bearing = best.bearing_deg
+      bearing = best_bearing
 
     if not predicted:
-      predicted = forward_road_segments(conn, gps.lat, gps.lon, gps.bearing_deg, forward_end_m=self.forward_distance_m, limit=60)
+      predicted = forward_road_segments(conn, gps.lat, gps.lon, gps.bearing_deg, forward_start_m=5.0, forward_end_m=self.forward_distance_m, limit=60)
     return predicted[:40]

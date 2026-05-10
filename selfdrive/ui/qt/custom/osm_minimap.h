@@ -17,6 +17,7 @@ struct OsmMinimapRoad {
   float y2 = 0.0f;
   bool current = false;
   bool predicted = false;
+  bool history = false;
 };
 
 struct OsmMinimapData {

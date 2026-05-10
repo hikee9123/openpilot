@@ -41,6 +41,7 @@ class OSMRoadMatch:
   distance_m: float
   heading_diff_deg: float
   bearing_deg: float
+  driving_bearing_deg: float
   score: float
 
   @property
@@ -106,6 +107,13 @@ def angle_diff_deg(a: float, b: float) -> float:
 
 def bidirectional_heading_diff_deg(segment_bearing_deg: float, heading_deg: float) -> float:
   return min(angle_diff_deg(segment_bearing_deg, heading_deg), angle_diff_deg((segment_bearing_deg + 180.0) % 360.0, heading_deg))
+
+
+def align_bearing_to_heading(segment_bearing_deg: float, heading_deg: float | None) -> float:
+  if heading_deg is None:
+    return segment_bearing_deg % 360.0
+  opposite_bearing = (segment_bearing_deg + 180.0) % 360.0
+  return opposite_bearing if angle_diff_deg(opposite_bearing, heading_deg) < angle_diff_deg(segment_bearing_deg, heading_deg) else segment_bearing_deg % 360.0
 
 
 def _lon_scale(lat: float) -> float:
@@ -354,6 +362,7 @@ def find_current_road(
       distance_m=distance_m,
       heading_diff_deg=heading_diff,
       bearing_deg=float(row["bearing_deg"]),
+      driving_bearing_deg=align_bearing_to_heading(float(row["bearing_deg"]), heading_deg),
       score=score,
     )
     if best is None or match.score < best.score:

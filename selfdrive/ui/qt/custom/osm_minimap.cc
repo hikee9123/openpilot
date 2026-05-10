@@ -34,8 +34,8 @@ QString roadName(const OsmMinimapRoad &road) {
 }  // namespace
 
 QRectF OsmMinimapRenderer::panelRect(const QRect &surface, int position) const {
-  const int panel_w = std::clamp(surface.width() / 4, 310, 390);
   const int panel_h = std::clamp(surface.height() / 4, 250, 330);
+  const int panel_w = panel_h;
   const int right = surface.left() + surface.width();
   const int bottom = surface.top() + surface.height();
 
@@ -101,7 +101,16 @@ void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinima
   p.drawLine(QPointF(panel.left() + 18, panel.bottom() - 58), QPointF(panel.right() - 18, panel.bottom() - 58));
 
   for (const OsmMinimapRoad &road : data.roads) {
-    drawRoad(p, panel, scale, road);
+    if (!road.history && !road.predicted && !road.current) drawRoad(p, panel, scale, road);
+  }
+  for (const OsmMinimapRoad &road : data.roads) {
+    if (road.history && !road.predicted && !road.current) drawRoad(p, panel, scale, road);
+  }
+  for (const OsmMinimapRoad &road : data.roads) {
+    if (road.predicted && !road.current) drawRoad(p, panel, scale, road);
+  }
+  for (const OsmMinimapRoad &road : data.roads) {
+    if (road.current) drawRoad(p, panel, scale, road);
   }
 
   const QPointF ego(panel.center().x(), panel.bottom() - 58.0);
@@ -129,8 +138,13 @@ void OsmMinimapRenderer::drawRoad(QPainter &p, const QRectF &panel, double scale
 
   const bool current = road.current;
   const bool predicted = road.predicted;
+  const bool history = road.history;
   QColor color(210, 210, 210, 100);
   int width = 3;
+  if (history) {
+    color = QColor(150, 255, 170, 145);
+    width = 4;
+  }
   if (predicted) {
     color = QColor(64, 196, 255, 210);
     width = 5;
