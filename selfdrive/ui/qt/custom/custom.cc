@@ -34,6 +34,7 @@
 
 #include "common/params.h"
 #include "common/util.h"
+#include "system/hardware/hw.h"
 
 #include "selfdrive/ui/qt/util.h"
 #include "selfdrive/ui/qt/custom/custom.h"
@@ -1314,6 +1315,11 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
       tr("Publish simulated GPS only in webcam mode for OSM road prediction testing."),
       "../assets/offroad/icon_openpilot.png",
       this);
+  if (!Hardware::PC()) {
+    params.putBool("OsmGpsSimulation", false);
+    osmGpsSimulation->setEnabled(false);
+    osmGpsSimulation->setDescription(tr("Disabled on device hardware. GPS simulation is only available on PC webcam mode."));
+  }
   osmSection->addWidget(osmGpsSimulation);
   toggles["OsmGpsSimulation"] = osmGpsSimulation;
 

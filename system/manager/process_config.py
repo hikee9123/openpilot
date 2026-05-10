@@ -59,6 +59,10 @@ def osm_enabled(started: bool, params: Params, CP: car.CarParams) -> bool:
   return params.get_bool("OSMEnable") and (started or WEBCAM)
 
 def osm_gps_simulation(started: bool, params: Params, CP: car.CarParams) -> bool:
+  if not PC:
+    if params.get_bool("OsmGpsSimulation"):
+      params.put_bool("OsmGpsSimulation", False)
+    return False
   return WEBCAM and params.get_bool("OSMEnable") and params.get_bool("OsmGpsSimulation")
 
 def only_offroad(started: bool, params: Params, CP: car.CarParams) -> bool:
