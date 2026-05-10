@@ -167,10 +167,8 @@ def _sanitize_tinygrad_env(env: Dict[str, str]) -> None:
 
 def _run_subprocess(args: list[str], cwd: Path, extra_env: Dict[str, str] | None = None) -> subprocess.CompletedProcess:
   """shell=False + 리스트 인자 방식으로 안전 실행"""
-  env = os.environ.copy()
-  if extra_env:
-    env.update(extra_env)
-  cloudlog.warning(f"[modeld.subprocess] cwd={cwd} args={args} env_overrides={list((extra_env or {}).keys())}")
+  env = extra_env.copy() if extra_env is not None else os.environ.copy()
+  cloudlog.warning(f"[modeld.subprocess] cwd={cwd} args={args}")
   return subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env, shell=False)
 
 
@@ -334,8 +332,18 @@ def _ensure_pkl_and_metadata(onnx_path: Path, pkl_path: Path, meta_path: Path) -
     cloudlog.error(err)
     raise RuntimeError(err)
 
+  for _ in range(20):
+    if pkl_path.exists():
+      break
+    time.sleep(0.25)
+
   if not pkl_path.exists():
-    raise RuntimeError(f"pkl not created: {pkl_path}")
+    siblings = ", ".join(sorted(p.name for p in pkl_path.parent.iterdir()))
+    raise RuntimeError(
+      f"pkl not created: {pkl_path}\n"
+      f"cmd: {' '.join(args)}\nstdout:\n{res.stdout}\nstderr:\n{res.stderr}\n"
+      f"files in {pkl_path.parent}: {siblings}"
+    )
 
 
   cloudlog.warning(f"pkl OK: {pkl_path}")
