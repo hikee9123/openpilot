@@ -19,7 +19,8 @@ def _segment_to_overlay(segment: OSMRoadSegment, prediction: RoadPrediction, cur
     "current": segment.road_id == current_id,
     "predicted": segment.road_id in predicted_ids,
     "history": segment.road_id in history_ids,
-    "fallback": segment.road_id in predicted_ids and not prediction.predicted_from_graph,
+    "fallback": segment.road_id in predicted_ids and not prediction.predicted_from_graph and not prediction.predicted_from_assist,
+    "assist": segment.road_id in predicted_ids and prediction.predicted_from_assist,
   }
 
 

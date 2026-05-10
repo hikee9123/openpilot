@@ -12,10 +12,10 @@ from openpilot.selfdrive.navd.osm_roads import (
   DEFAULT_OSM_ROADS_DB_PATH,
   OSMRoadMatch,
   OSMRoadSegment,
-  align_bearing_to_heading,
   angle_diff_deg,
   connect_readonly_db,
   database_segment_count,
+  driving_bearing_for_oneway,
   find_current_road,
   forward_road_segments,
   latlon_to_car_space_m,
@@ -27,6 +27,7 @@ MAX_GRAPH_HEADING_DIFF_DEG = 70.0
 MIN_GRAPH_SIDE_OFFSET_M = 80.0
 MAX_GRAPH_SIDE_OFFSET_M = 260.0
 MAX_GRAPH_SKIP_AHEAD_SEGMENTS = 5
+MAX_GRAPH_ENDPOINT_ASSIST_M = 260.0
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,7 @@ class RoadPrediction:
   nearby: list[OSMRoadSegment] = field(default_factory=list)
   predicted: list[OSMRoadSegment] = field(default_factory=list)
   predicted_from_graph: bool = False
+  predicted_from_assist: bool = False
   debug_text: str = ""
   updated_at: float = 0.0
 
@@ -174,10 +176,11 @@ class OSMRoadPredictor:
     current = find_current_road(conn, gps.lat, gps.lon, gps.bearing_deg, self.lookup_radius_m,
                                 previous_name, previous_road_id, previous_osm_id)
     nearby = nearby_road_segments(conn, gps.lat, gps.lon, self.map_radius_m, limit=80)
-    predicted, predicted_from_graph, debug_text = self._predict_forward(conn, gps, current)
+    predicted, predicted_from_graph, predicted_from_assist, debug_text = self._predict_forward(conn, gps, current)
 
     result = RoadPrediction(gps=gps, current=current, nearby=nearby, predicted=predicted,
-                            predicted_from_graph=predicted_from_graph, debug_text=debug_text, updated_at=now)
+                            predicted_from_graph=predicted_from_graph, predicted_from_assist=predicted_from_assist,
+                            debug_text=debug_text, updated_at=now)
     self._last_gps = gps
     self._last_prediction = result
     self._last_update_t = now
@@ -190,6 +193,34 @@ class OSMRoadPredictor:
     successors = [transition.road for transition in road_successors(conn, road_id, limit=8) if transition.turn_angle_deg <= 75.0]
     self._successor_cache[road_id] = successors
     return successors
+
+  def _road_segment(self, conn: sqlite3.Connection, road_id: int) -> OSMRoadSegment | None:
+    try:
+      row = conn.execute("""
+        SELECT id, osm_id, name, ref, highway, road_class, oneway,
+               lat1, lon1, lat2, lon2, bearing_deg, 0.0 AS distance_m
+        FROM roads
+        WHERE id = ?
+      """, (road_id,)).fetchone()
+    except sqlite3.Error:
+      return None
+    if row is None:
+      return None
+    return OSMRoadSegment(
+      road_id=int(row["id"]),
+      osm_id=int(row["osm_id"]),
+      name=str(row["name"] or ""),
+      ref=str(row["ref"] or ""),
+      highway=str(row["highway"] or ""),
+      road_class=str(row["road_class"] or ""),
+      oneway=int(row["oneway"]),
+      lat1=float(row["lat1"]),
+      lon1=float(row["lon1"]),
+      lat2=float(row["lat2"]),
+      lon2=float(row["lon2"]),
+      bearing_deg=float(row["bearing_deg"]),
+      distance_m=float(row["distance_m"]),
+    )
 
   def _score_successor(self, gps: GPSFix, reference_bearing_deg: float, current_name: str, road: OSMRoadSegment) -> tuple[_SuccessorCandidate | None, str]:
     x1, y1 = latlon_to_car_space_m(gps.lat, gps.lon, gps.bearing_deg, road.lat1, road.lon1)
@@ -204,7 +235,7 @@ class OSMRoadPredictor:
     if side_offset_m > side_limit_m:
       return None, "side_offset"
 
-    road_bearing = align_bearing_to_heading(road.bearing_deg, reference_bearing_deg)
+    road_bearing = driving_bearing_for_oneway(road.bearing_deg, road.oneway, reference_bearing_deg)
     heading_diff = angle_diff_deg(reference_bearing_deg, road_bearing)
     if heading_diff > MAX_GRAPH_HEADING_DIFF_DEG:
       return None, "heading_diff"
@@ -239,10 +270,38 @@ class OSMRoadPredictor:
           frontier.append(next_road)
     return None, skipped
 
-  def _predict_forward(self, conn: sqlite3.Connection, gps: GPSFix, current: OSMRoadMatch | None) -> tuple[list[OSMRoadSegment], bool, str]:
+  def _endpoint_assist_successor(self, conn: sqlite3.Connection, gps: GPSFix, reference_bearing_deg: float,
+                                 current_name: str, road_id: int, visited: set[int]) -> _SuccessorCandidate | None:
+    road = self._road_segment(conn, road_id)
+    if road is None:
+      return None
+
+    forward_to_lat2 = angle_diff_deg(road.bearing_deg, reference_bearing_deg) <= 90.0
+    end_lat = road.lat2 if forward_to_lat2 else road.lat1
+    end_lon = road.lon2 if forward_to_lat2 else road.lon1
+    candidates = forward_road_segments(conn, end_lat, end_lon, reference_bearing_deg,
+                                       forward_start_m=-20.0, forward_end_m=MAX_GRAPH_ENDPOINT_ASSIST_M,
+                                       side_limit_m=90.0, major_side_limit_m=130.0, limit=80)
+    scored: list[tuple[float, _SuccessorCandidate]] = []
+    for candidate_road in candidates:
+      if candidate_road.road_id in visited or candidate_road.road_id == road_id:
+        continue
+      candidate, reject_reason = self._score_successor(gps, reference_bearing_deg, current_name, candidate_road)
+      if candidate is None:
+        continue
+      x1, y1 = latlon_to_car_space_m(end_lat, end_lon, reference_bearing_deg, candidate_road.lat1, candidate_road.lon1)
+      x2, y2 = latlon_to_car_space_m(end_lat, end_lon, reference_bearing_deg, candidate_road.lat2, candidate_road.lon2)
+      endpoint_gap_m = min(math.hypot(x1, y1), math.hypot(x2, y2))
+      scored.append((candidate.score + endpoint_gap_m * 0.4, candidate))
+    if not scored:
+      return None
+    scored.sort(key=lambda item: item[0])
+    return scored[0][1]
+
+  def _predict_forward(self, conn: sqlite3.Connection, gps: GPSFix, current: OSMRoadMatch | None) -> tuple[list[OSMRoadSegment], bool, bool, str]:
     if current is None:
       predicted = forward_road_segments(conn, gps.lat, gps.lon, gps.bearing_deg, forward_start_m=5.0, forward_end_m=self.forward_distance_m, limit=60)
-      return predicted, False, f"current=none fallback_count={len(predicted)}"
+      return predicted, False, False, f"current=none fallback_count={len(predicted)}"
 
     predicted: list[OSMRoadSegment] = []
     visited = {current.road_id}
@@ -252,6 +311,7 @@ class OSMRoadPredictor:
     total_accepted = 0
     total_skip_ahead = 0
     skip_ahead_hits = 0
+    endpoint_assist_hits = 0
     rejects: dict[str, int] = {}
     reject_samples: list[str] = []
     stop_reason = ""
@@ -260,6 +320,13 @@ class OSMRoadPredictor:
       candidates: list[_SuccessorCandidate] = []
       successors = self._successors(conn, road_id)
       total_successors += len(successors)
+      if not successors:
+        assist_candidate = self._endpoint_assist_successor(conn, gps, bearing, current.display_name, road_id, visited)
+        if assist_candidate is not None:
+          candidates.append(assist_candidate)
+          endpoint_assist_hits += 1
+          if len(reject_samples) < 3:
+            reject_samples.append(f"{road_id}->{assist_candidate.road.road_id}:endpoint_assist")
       for road in successors:
         if road.road_id in visited:
           rejects["visited"] = rejects.get("visited", 0) + 1
@@ -298,17 +365,19 @@ class OSMRoadPredictor:
 
     if not predicted:
       predicted = forward_road_segments(conn, gps.lat, gps.lon, gps.bearing_deg, forward_start_m=5.0, forward_end_m=self.forward_distance_m, limit=60)
+      graph_gap_assist = total_successors == 0
       debug_text = (
         f"current={current.display_name or '-'} road_id={current.road_id} "
-        f"successors={total_successors} accepted={total_accepted} skip_ahead={total_skip_ahead}/{skip_ahead_hits} stop={stop_reason or '-'} "
+        f"successors={total_successors} accepted={total_accepted} skip_ahead={total_skip_ahead}/{skip_ahead_hits} "
+        f"endpoint_assist={endpoint_assist_hits} stop={stop_reason or '-'} "
         f"rejects={_format_rejects(rejects)} samples={';'.join(reject_samples) or '-'} "
         f"fallback_count={len(predicted)}"
       )
-      return predicted[:80], False, debug_text
+      return predicted[:80], False, graph_gap_assist, debug_text
 
     debug_text = (
       f"current={current.display_name or '-'} road_id={current.road_id} "
       f"graph_count={len(predicted)} successors={total_successors} accepted={total_accepted} "
-      f"skip_ahead={total_skip_ahead}/{skip_ahead_hits}"
+      f"skip_ahead={total_skip_ahead}/{skip_ahead_hits} endpoint_assist={endpoint_assist_hits}"
     )
-    return predicted[:80], True, debug_text
+    return predicted[:80], endpoint_assist_hits == 0, endpoint_assist_hits > 0, debug_text

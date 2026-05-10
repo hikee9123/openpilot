@@ -57,6 +57,7 @@ def _send_overlay(pm: messaging.PubMaster, available: bool, road_name: str = "",
     road_items[i].predicted = road["predicted"]
     road_items[i].history = road["history"]
     road_items[i].fallback = road["fallback"]
+    road_items[i].assist = road["assist"]
   pm.send("naviCustom", msg)
 
 

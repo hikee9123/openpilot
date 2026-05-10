@@ -157,6 +157,7 @@ void OsmMinimapRenderer::drawRoad(QPainter &p, const QRectF &panel, double scale
   const bool predicted = road.predicted;
   const bool history = road.history;
   const bool fallback = road.fallback;
+  const bool assist = road.assist;
   QColor color(210, 210, 210, 100);
   int width = 3;
   if (history) {
@@ -164,7 +165,11 @@ void OsmMinimapRenderer::drawRoad(QPainter &p, const QRectF &panel, double scale
     width = 4;
   }
   if (predicted) {
-    color = fallback ? QColor(255, 190, 64, 210) : QColor(64, 196, 255, 210);
+    if (assist) {
+      color = QColor(190, 120, 255, 220);
+    } else {
+      color = fallback ? QColor(255, 190, 64, 210) : QColor(64, 196, 255, 210);
+    }
     width = 5;
   }
   if (current) {

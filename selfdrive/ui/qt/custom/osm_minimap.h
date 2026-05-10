@@ -19,6 +19,7 @@ struct OsmMinimapRoad {
   bool predicted = false;
   bool history = false;
   bool fallback = false;
+  bool assist = false;
 };
 
 struct OsmMinimapData {
