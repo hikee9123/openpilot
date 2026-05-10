@@ -13,10 +13,14 @@
 #include <QJsonArray>
 #include <QProcess>
 #include <QDir>
+#include <QDateTime>
 #include <QDebug>
+#include <QFileInfo>
 #include <QtConcurrent>
 #include <QVariant>
 #include <QHBoxLayout>
+#include <QMap>
+#include <QProgressBar>
 #include <QScrollArea>
 #include <QToolButton>
 #include <QPropertyAnimation>
@@ -753,6 +757,153 @@ static inline QString detectOpenpilotRoot()
     return QDir::homePath();
 }
 
+struct ModelCompileStatus {
+  QString state;
+  QString compiledAt;
+  QString vision;
+  QString policy;
+  QString backend;
+};
+
+static QStringList modelOptions()
+{
+  return {
+    "11.POP_Model",
+    "10.CD210_Model",
+    "9.WMI_Model",
+    "8.SC_Driving",
+    "7.MacroStiff_Model",
+    "6.Dark_Souls_2",
+    "5.North_Nevada",
+    "4.The_Cool_Peoples",
+    "3.Firehose",
+    "2.Steam_Powered",
+    "1.default",
+  };
+}
+
+static QString modeldRootPath()
+{
+  QDir root(detectOpenpilotRoot());
+  root.cd("openpilot");
+  return root.filePath("selfdrive/modeld");
+}
+
+static QString modelBundlePath(const QString &modelName)
+{
+  QDir modeld(modeldRootPath());
+  return modeld.filePath("models/supercombos/" + modelName);
+}
+
+static QString formatModelTime(const QDateTime &dt)
+{
+  return dt.isValid() ? dt.toLocalTime().toString("yyyy-MM-dd HH:mm") : QString();
+}
+
+static QString currentModelBackend()
+{
+  if (QFileInfo::exists("/TICI")) return "QCOM";
+  return "LLVM";
+}
+
+static QString formatElapsed(qint64 startedAt)
+{
+  if (startedAt <= 0) return "00:00";
+  const qint64 elapsed = std::max<qint64>(0, QDateTime::currentMSecsSinceEpoch() - startedAt) / 1000;
+  return QString("%1:%2")
+      .arg(elapsed / 60, 2, 10, QChar('0'))
+      .arg(elapsed % 60, 2, 10, QChar('0'));
+}
+
+static QString artifactState(const QFileInfo &onnx, const QFileInfo &pkl)
+{
+  if (!onnx.exists()) return "missing onnx";
+  if (!pkl.exists()) return "missing";
+  if (pkl.lastModified() < onnx.lastModified()) return "stale";
+  return "ready";
+}
+
+static ModelCompileStatus getModelCompileStatus(const QString &modelName)
+{
+  if (modelName.isEmpty() || modelName == "1.default") {
+    return {"Built-in", QString(), "built-in", "built-in", "built-in"};
+  }
+
+  const QDir bundle(modelBundlePath(modelName));
+  const QFileInfo visionOnnx(bundle.filePath("driving_vision.onnx"));
+  const QFileInfo policyOnnx(bundle.filePath("driving_policy.onnx"));
+  const QFileInfo visionPkl(bundle.filePath("driving_vision_tinygrad.pkl"));
+  const QFileInfo policyPkl(bundle.filePath("driving_policy_tinygrad.pkl"));
+
+  const QString vision = artifactState(visionOnnx, visionPkl);
+  const QString policy = artifactState(policyOnnx, policyPkl);
+  QString state;
+  if (vision == "missing onnx" || policy == "missing onnx") {
+    state = "Missing ONNX";
+  } else if (vision == "ready" && policy == "ready") {
+    state = "Ready";
+  } else if (vision == "stale" || policy == "stale") {
+    state = "Stale";
+  } else if (visionPkl.exists() || policyPkl.exists()) {
+    state = "Partial";
+  } else {
+    state = "Not compiled";
+  }
+
+  QDateTime compiledAt;
+  if (visionPkl.exists()) compiledAt = visionPkl.lastModified();
+  if (policyPkl.exists() && (!compiledAt.isValid() || policyPkl.lastModified() > compiledAt)) {
+    compiledAt = policyPkl.lastModified();
+  }
+
+  return {state, formatModelTime(compiledAt), vision, policy, currentModelBackend()};
+}
+
+static QString modelStatusSummary(const QString &modelName)
+{
+  const ModelCompileStatus status = getModelCompileStatus(modelName);
+  if (status.compiledAt.isEmpty()) return status.state;
+  return status.state + " · " + status.compiledAt;
+}
+
+static QString modelSelectionLabel(const QString &modelName)
+{
+  return modelName + "    " + modelStatusSummary(modelName);
+}
+
+static QLabel *makeModelStatusLine(QWidget *parent, int fontSize, const QString &color)
+{
+  QLabel *label = new QLabel(parent);
+  label->setStyleSheet(QString(R"(
+    font-family: "Roboto Mono", "DejaVu Sans Mono", monospace;
+    font-size: %1px;
+    color: %2;
+  )").arg(fontSize).arg(color));
+  label->setWordWrap(true);
+  label->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+  return label;
+}
+
+static QProgressBar *makeModelProgressBar(QWidget *parent)
+{
+  auto *bar = new QProgressBar(parent);
+  bar->setRange(0, 100);
+  bar->setTextVisible(false);
+  bar->setFixedHeight(18);
+  bar->setStyleSheet(R"(
+    QProgressBar {
+      border: 1px solid #666;
+      background-color: #1b1b1b;
+      border-radius: 4px;
+    }
+    QProgressBar::chunk {
+      background-color: #4aa3ff;
+      border-radius: 3px;
+    }
+  )");
+  return bar;
+}
+
 ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
     : ListWidget(parent), m_jsonobj(jsonobj), m_pCustom(parent) {
   const QString selected_model = QString::fromStdString(Params().get("ActiveModelName"));
@@ -763,20 +914,18 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
       selected_model.isEmpty() ? tr("SELECT") : tr("CHANGE"), "");
 
   QObject::connect(changeModelButton, &ButtonControl::clicked, this, [this]() {
-    const QStringList items = {
-      "11.POP_Model",
-      "10.CD210_Model",
-      "9.WMI_Model",
-      "8.SC_Driving",
-      "7.MacroStiff_Model",
-      "6.Dark_Souls_2",  // Dark Souls 2는 빠르게 반응하되, 그 반응을 스스로 제어할 수 있는 안정 지향형 고성능 모델이다.
-      "5.North_Nevada",  // “North Nevada”는 안정성/자연스러움 강화형입니다.
-      "4.The_Cool_Peoples",  // “Cool People’s”는 반응성/민첩성 향상형,
-      "3.Firehose",         // 부드럽고 안정적이지만 여전히 반응성이 빠른 모델
-      "2.Steam_Powered",
-      "1.default"};
+    QStringList items;
+    QMap<QString, QString> modelByLabel;
+    QString currentLabel;
+    for (const QString &modelName : modelOptions()) {
+      const QString label = modelSelectionLabel(modelName);
+      items.append(label);
+      modelByLabel.insert(label, modelName);
+      if (modelName == currentModel) currentLabel = label;
+    }
 
-    const QString selection = MultiOptionDialog::getSelection(tr("Select a model"), items, currentModel, this);
+    const QString selectedLabel = MultiOptionDialog::getSelection(tr("Select a model"), items, currentLabel, this);
+    const QString selection = modelByLabel.value(selectedLabel, selectedLabel);
     if (selection.isEmpty() || selection == currentModel) return;
 
     Params params;
@@ -787,7 +936,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
       currentModel = selection;
       changeModelButton->setTitle(selection);
       changeModelButton->setText(tr("CHANGE"));
-      changeModelButton->setDescription(QString());
+      refreshModelStatus();
       qWarning() << "Using Comma default PATH";
       return;
     }
@@ -809,9 +958,11 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
     }
 
     changeModelButton->setEnabled(false);
-    changeModelButton->setTitle(tr("Compiling..."));
+    changeModelButton->setTitle(selection);
     changeModelButton->setText(tr("WAIT"));
     changeModelButton->setDescription(selection);
+    modelCompileStartedAt = QDateTime::currentMSecsSinceEpoch();
+    setModelCompileProgress(tr("Preparing files"), 10, currentModelBackend());
 
     QProcess *proc = new QProcess(this);
     proc->setProgram(scriptPath);
@@ -825,11 +976,25 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
       const auto out = QString::fromUtf8(proc->readAllStandardOutput());
       qWarning() << "[model_make][out]" << out.trimmed();
       changeModelButton->setDescription(out.right(80));
+      if (out.contains("driving_vision_tinygrad.pkl")) {
+        setModelCompileProgress(tr("Vision model"), out.contains("pkl OK") ? 70 : 32, currentModelBackend());
+      } else if (out.contains("driving_policy_tinygrad.pkl")) {
+        setModelCompileProgress(tr("Policy model"), out.contains("pkl OK") ? 95 : 76, currentModelBackend());
+      } else if (out.contains("meta OK")) {
+        setModelCompileProgress(tr("Generating metadata"), 20, currentModelBackend());
+      }
     });
     connect(proc, &QProcess::readyReadStandardError, this, [this, proc]() {
       const auto err = QString::fromUtf8(proc->readAllStandardError());
       qWarning() << "[model_make][err]" << err.trimmed();
       changeModelButton->setDescription(err.right(80));
+      if (err.contains("driving_vision_tinygrad.pkl")) {
+        setModelCompileProgress(tr("Vision model"), err.contains("pkl OK") ? 70 : 32, currentModelBackend());
+      } else if (err.contains("driving_policy_tinygrad.pkl")) {
+        setModelCompileProgress(tr("Policy model"), err.contains("pkl OK") ? 95 : 76, currentModelBackend());
+      } else if (err.contains("meta OK")) {
+        setModelCompileProgress(tr("Generating metadata"), 20, currentModelBackend());
+      }
     });
 
     connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
@@ -839,10 +1004,22 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
         currentModel = selection;
         changeModelButton->setTitle(selection);
         changeModelButton->setText(tr("CHANGE"));
+        modelCompileStartedAt = 0;
+        refreshModelStatus();
       } else {
         Params().put("ActiveModelName", prev);
+        currentModel = QString::fromStdString(prev);
         changeModelButton->setTitle(tr("Failed"));
         changeModelButton->setText(tr("RETRY"));
+        if (modelStatusTitle && modelCompiledAt && modelArtifactStatus && modelProgressBar && modelProgressDetail) {
+          const ModelCompileStatus previousStatus = getModelCompileStatus(currentModel);
+          modelStatusTitle->setText(tr("Compile failed"));
+          modelCompiledAt->setText(tr("Model: ") + selection);
+          modelArtifactStatus->setText("Previous: " + previousStatus.state);
+          modelProgressBar->setVisible(false);
+          modelProgressDetail->setVisible(true);
+          modelProgressDetail->setText("Vision: " + previousStatus.vision + " · Policy: " + previousStatus.policy);
+        }
       }
       changeModelButton->setEnabled(true);
       proc->deleteLater();
@@ -852,10 +1029,56 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
   });
 
   addItem(changeModelButton);
+  modelStatusPanel = new QFrame(this);
+  modelStatusPanel->setStyleSheet(R"(
+    QFrame {
+      border-top: 1px solid #8a8a8a;
+      background-color: #050505;
+    }
+  )");
+  auto *statusLayout = new QVBoxLayout(modelStatusPanel);
+  statusLayout->setContentsMargins(0, 30, 0, 30);
+  statusLayout->setSpacing(12);
+  modelStatusTitle = makeModelStatusLine(modelStatusPanel, 38, "#f4f4f4");
+  modelCompiledAt = makeModelStatusLine(modelStatusPanel, 30, "#d0d0d0");
+  modelArtifactStatus = makeModelStatusLine(modelStatusPanel, 30, "#d0d0d0");
+  modelProgressBar = makeModelProgressBar(modelStatusPanel);
+  modelProgressDetail = makeModelStatusLine(modelStatusPanel, 28, "#bdbdbd");
+  statusLayout->addWidget(modelStatusTitle);
+  statusLayout->addWidget(modelCompiledAt);
+  statusLayout->addWidget(modelProgressBar);
+  statusLayout->addWidget(modelProgressDetail);
+  statusLayout->addWidget(modelArtifactStatus);
+  addItem(modelStatusPanel);
+  refreshModelStatus();
   applyListWidgetBaseStyle(this);
 }
 
-void ModelTab::showEvent(QShowEvent *event) { QWidget::showEvent(event); }
+void ModelTab::refreshModelStatus()
+{
+  if (!modelStatusTitle || !modelCompiledAt || !modelArtifactStatus || !modelProgressBar || !modelProgressDetail) return;
+  const ModelCompileStatus status = getModelCompileStatus(currentModel);
+  modelStatusTitle->setText(status.state == "Ready" ? status.state + " · " + status.backend : status.state);
+  modelCompiledAt->setText(status.compiledAt.isEmpty() ? "Compiled: -" : "Compiled: " + status.compiledAt);
+  modelProgressBar->setVisible(false);
+  modelProgressDetail->setVisible(false);
+  modelArtifactStatus->setText("Vision: " + status.vision + "\nPolicy: " + status.policy);
+}
+
+void ModelTab::setModelCompileProgress(const QString &stage, int percent, const QString &detail)
+{
+  if (!modelStatusTitle || !modelCompiledAt || !modelArtifactStatus || !modelProgressBar || !modelProgressDetail) return;
+  const int boundedPercent = std::clamp(percent, 0, 100);
+  modelStatusTitle->setText(tr("Compiling model"));
+  modelCompiledAt->setText(QString("%1                                  %2%").arg(stage).arg(boundedPercent));
+  modelProgressBar->setVisible(true);
+  modelProgressBar->setValue(boundedPercent);
+  modelProgressDetail->setVisible(true);
+  modelProgressDetail->setText("Backend: " + detail + " · Elapsed: " + formatElapsed(modelCompileStartedAt));
+  modelArtifactStatus->setText(QString());
+}
+
+void ModelTab::showEvent(QShowEvent *event) { QWidget::showEvent(event); refreshModelStatus(); }
 void ModelTab::hideEvent(QHideEvent *event) { QWidget::hideEvent(event); }
 
 // ======================================================================================

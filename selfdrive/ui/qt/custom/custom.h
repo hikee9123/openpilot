@@ -12,6 +12,8 @@
 #include <QTimer>
 
 class QProcess;
+class QLabel;
+class QProgressBar;
 
 #include <QJsonObject>
 #include <QJsonDocument>
@@ -382,8 +384,17 @@ public:
 
 private:
   std::map<std::string, CValueControl*> m_valueCtrl;
+  void refreshModelStatus();
+  void setModelCompileProgress(const QString &stage, int percent, const QString &detail);
   QString currentModel;
   ButtonControl *changeModelButton = nullptr;
+  QFrame *modelStatusPanel = nullptr;
+  QLabel *modelStatusTitle = nullptr;
+  QLabel *modelCompiledAt = nullptr;
+  QLabel *modelArtifactStatus = nullptr;
+  QLabel *modelProgressDetail = nullptr;
+  QProgressBar *modelProgressBar = nullptr;
+  qint64 modelCompileStartedAt = 0;
   QProcess *modelProcess = nullptr;
 
 
