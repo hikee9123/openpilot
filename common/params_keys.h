@@ -139,6 +139,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"OsmRoadsUpdateError", {PERSISTENT, STRING}},
     {"OsmRoadsSegmentCount", {PERSISTENT, INT}},
     {"OsmRoadsUpdateProgress", {PERSISTENT, INT}},
+    {"OsmRoadsDownloadBytes", {PERSISTENT, STRING}},
+    {"OsmRoadsDownloadTotalBytes", {PERSISTENT, STRING}},
     {"OsmRoadsUpdatedAt", {PERSISTENT, STRING}},
     {"SelectedCar", {PERSISTENT, STRING}},
     {"ActiveModelName", {PERSISTENT, STRING}},

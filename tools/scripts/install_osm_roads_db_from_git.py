@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import argparse
 import os
+import select
 import shutil
 import sqlite3
 import stat
 import subprocess
 import sys
+import time
 from contextlib import closing
 from pathlib import Path
 
@@ -29,29 +31,104 @@ DEFAULT_REPO_REF = "main"
 DEFAULT_REPO_DB_PATH = Path("db/osm_roads_kr.sqlite3")
 OSM_ROADS_PROGRESS_KEY = "OsmRoadsUpdateProgress"
 OSM_ROADS_COUNT_KEY = "OsmRoadsSegmentCount"
+OSM_ROADS_STATUS_KEY = "OsmRoadsUpdateStatus"
+OSM_ROADS_ERROR_KEY = "OsmRoadsUpdateError"
+OSM_ROADS_UPDATED_AT_KEY = "OsmRoadsUpdatedAt"
+OSM_ROADS_DOWNLOAD_BYTES_KEY = "OsmRoadsDownloadBytes"
+OSM_ROADS_DOWNLOAD_TOTAL_BYTES_KEY = "OsmRoadsDownloadTotalBytes"
+
+
+def _put_param(params: Params, key: str, value: object) -> None:
+  try:
+    params.put(key, value)
+  except Exception:
+    pass
 
 
 def _put_progress(params: Params, progress: int) -> None:
-  try:
-    params.put(OSM_ROADS_PROGRESS_KEY, max(0, min(100, int(progress))))
-  except Exception:
-    pass
+  _put_param(params, OSM_ROADS_PROGRESS_KEY, max(0, min(100, int(progress))))
 
 
 def _put_segment_count(params: Params, count: int) -> None:
+  _put_param(params, OSM_ROADS_COUNT_KEY, max(0, int(count)))
+
+
+def _put_download_size(params: Params, downloaded_bytes: int, total_bytes: int = 0) -> None:
+  _put_param(params, OSM_ROADS_DOWNLOAD_BYTES_KEY, str(max(0, int(downloaded_bytes))))
+  _put_param(params, OSM_ROADS_DOWNLOAD_TOTAL_BYTES_KEY, str(max(0, int(total_bytes))))
+
+
+def _format_bytes(size_bytes: int) -> str:
+  value = float(max(0, int(size_bytes)))
+  for unit in ("B", "KB", "MB", "GB"):
+    if value < 1024.0 or unit == "GB":
+      return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+    value /= 1024.0
+  return f"{value:.1f} GB"
+
+
+def _lfs_pointer_size(pointer_path: Path) -> int:
   try:
-    params.put(OSM_ROADS_COUNT_KEY, max(0, int(count)))
-  except Exception:
+    with pointer_path.open("r", encoding="utf-8") as f:
+      for line in f:
+        if line.startswith("size "):
+          return max(0, int(line.split()[1]))
+  except (OSError, UnicodeDecodeError, ValueError, IndexError):
     pass
+  return 0
 
 
-def _run(command: list[str], cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
+def _largest_lfs_incomplete_size(repo_dir: Path) -> int:
+  incomplete_dir = repo_dir / ".git" / "lfs" / "incomplete"
+  try:
+    return max((path.stat().st_size for path in incomplete_dir.iterdir() if path.is_file()), default=0)
+  except OSError:
+    return 0
+
+
+def _run(
+  command: list[str],
+  cwd: Path | None = None,
+  env: dict[str, str] | None = None,
+  params: Params | None = None,
+  progress_start: int | None = None,
+  progress_end: int | None = None,
+  download_total_bytes: int = 0,
+) -> None:
   where = f" cwd={cwd}" if cwd is not None else ""
   print(f"$ {' '.join(command)}{where}", flush=True)
   with subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as process:
     assert process.stdout is not None
-    for line in process.stdout:
-      print(line.rstrip(), flush=True)
+    started_at = time.monotonic()
+    last_heartbeat = started_at
+    while True:
+      ready, _, _ = select.select([process.stdout], [], [], 1.0)
+      if ready:
+        line = process.stdout.readline()
+        if line:
+          print(line.rstrip(), flush=True)
+        elif process.poll() is not None:
+          break
+      elif process.poll() is not None:
+        break
+
+      now = time.monotonic()
+      if now - last_heartbeat >= 15.0 and process.poll() is None:
+        elapsed = int(now - started_at)
+        downloaded_bytes = _largest_lfs_incomplete_size(cwd) if cwd is not None and download_total_bytes > 0 else 0
+        download_text = ""
+        if downloaded_bytes > 0:
+          _put_download_size(params, downloaded_bytes, download_total_bytes) if params is not None else None
+          download_text = f" downloaded {_format_bytes(downloaded_bytes)} / {_format_bytes(download_total_bytes)}"
+        print(f"... still running {' '.join(command)} ({elapsed}s){download_text}", flush=True)
+        if params is not None and progress_start is not None and progress_end is not None and progress_end > progress_start:
+          if downloaded_bytes > 0 and download_total_bytes > 0:
+            fraction = min(1.0, downloaded_bytes / download_total_bytes)
+            progress = min(progress_end - 1, progress_start + int((progress_end - progress_start) * fraction))
+          else:
+            progress = min(progress_end - 1, progress_start + elapsed // 20)
+          _put_progress(params, progress)
+        last_heartbeat = now
     returncode = process.wait()
   if returncode != 0:
     raise RuntimeError(f"command failed with exit code {returncode}: {' '.join(command)}")
@@ -192,8 +269,11 @@ def main() -> int:
     raise RuntimeError("git is not installed")
 
   params = Params()
+  _put_param(params, OSM_ROADS_STATUS_KEY, "running")
+  _put_param(params, OSM_ROADS_ERROR_KEY, "")
   _put_progress(params, 0)
   _put_segment_count(params, 0)
+  _put_download_size(params, 0, 0)
   ensure_navd_dirs(db_dir=args.db.parent, tmp_dir=args.tmp_dir)
   clone_dir = args.tmp_dir / "repo"
   _rmtree_if_exists(clone_dir)
@@ -205,20 +285,35 @@ def main() -> int:
     print(f"git ref {args.ref}", flush=True)
     print(f"repo DB path {args.repo_db_path}", flush=True)
     _put_progress(params, 5)
-    _run(["git", "clone", "--depth", "1", "--branch", args.ref, args.repo, str(clone_dir)], env=env)
+    _run(["git", "clone", "--depth", "1", "--branch", args.ref, args.repo, str(clone_dir)], env=env, params=params, progress_start=5, progress_end=15)
 
     _put_progress(params, 15)
     _run(["git", "lfs", "install", "--local"], cwd=clone_dir)
-    _run(["git", "lfs", "pull", "-I", str(args.repo_db_path).replace("\\", "/")], cwd=clone_dir)
+    total_bytes = _lfs_pointer_size(clone_dir / args.repo_db_path)
+    if total_bytes > 0:
+      _put_download_size(params, 0, total_bytes)
+      print(f"OSM roads DB download size {_format_bytes(total_bytes)} ({total_bytes:,} bytes)", flush=True)
+    _run(
+      ["git", "lfs", "pull", "-I", str(args.repo_db_path).replace("\\", "/")],
+      cwd=clone_dir,
+      params=params,
+      progress_start=15,
+      progress_end=80,
+      download_total_bytes=total_bytes,
+    )
 
     downloaded_db = clone_dir / args.repo_db_path
     size_bytes = downloaded_db.stat().st_size
+    _put_download_size(params, size_bytes, total_bytes if total_bytes > 0 else size_bytes)
     print(f"downloaded git DB {downloaded_db} ({size_bytes} bytes)", flush=True)
     _put_progress(params, 80)
 
     count = _replace_db(downloaded_db, args.db, args.require_road_graph)
     _put_segment_count(params, count)
     _put_progress(params, 100)
+    _put_param(params, OSM_ROADS_STATUS_KEY, "success")
+    _put_param(params, OSM_ROADS_ERROR_KEY, "")
+    _put_param(params, OSM_ROADS_UPDATED_AT_KEY, time.strftime("%Y-%m-%d %H:%M"))
     print(f"installed git OSM roads DB {args.db}", flush=True)
     print(f"osm road segments {count}", flush=True)
     return 0
@@ -228,4 +323,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-  raise SystemExit(main())
+  try:
+    raise SystemExit(main())
+  except Exception as e:
+    params = Params()
+    _put_param(params, OSM_ROADS_STATUS_KEY, "failed")
+    _put_param(params, OSM_ROADS_ERROR_KEY, str(e)[-500:])
+    print(f"OSM roads DB install failed: {e}", flush=True)
+    raise SystemExit(1)

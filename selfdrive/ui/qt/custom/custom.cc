@@ -6,6 +6,7 @@
 #include <tuple>
 #include <vector>
 #include <cstdlib>
+#include <cstdio>
 #include <algorithm>   // std::clamp
 
 #include <QTabWidget>
@@ -19,6 +20,7 @@
 #include <QDebug>
 #include <QFile>
 #include <QFileInfo>
+#include <QIODevice>
 #include <QCoreApplication>
 #include <QtConcurrent>
 #include <QVariant>
@@ -41,6 +43,7 @@
 // ======================================================================================
 namespace {
 constexpr double kEPS = 1e-9;
+constexpr const char *kOsmRoadsInstallSession = "osm_db_install";
 
 // 버튼 공통 스타일(중복 제거)
 static const char *kRoundBtnStyle = R"(
@@ -106,6 +109,74 @@ inline int decimalsFor(double step) {
     scale *= 10.0;
   }
   return 8;  // 안전한 fallback
+}
+
+static QString shellQuote(const QString &value) {
+  QString escaped = value;
+  escaped.replace("'", "'\\''");
+  return "'" + escaped + "'";
+}
+
+static QString osmRoadsInstallLogPath(bool ensure_dir = false) {
+  const QString navdTmpRoot = QDir("/data/params/d").exists()
+      ? QString("/data/navd/tmp")
+      : QDir::home().absoluteFilePath(".comma/navd/tmp");
+  if (ensure_dir) {
+    QDir().mkpath(navdTmpRoot);
+  }
+  return QDir(navdTmpRoot).absoluteFilePath("openpilot_osm_roads_install.log");
+}
+
+static QString osmRoadsTmpRepoPath() {
+  const QString navdTmpRoot = QDir("/data/params/d").exists()
+      ? QString("/data/navd/tmp")
+      : QDir::home().absoluteFilePath(".comma/navd/tmp");
+  return QDir(navdTmpRoot).absoluteFilePath("osm_roads_git_db/repo");
+}
+
+static bool osmRoadsInstallSessionActive() {
+  return QProcess::execute("bash", {"-lc", QString("command -v tmux >/dev/null && tmux has-session -t %1 2>/dev/null").arg(kOsmRoadsInstallSession)}) == 0;
+}
+
+static void stopOsmRoadsInstallSession() {
+  QProcess::execute("bash", {"-lc", QString("command -v tmux >/dev/null && tmux kill-session -t %1 2>/dev/null || true").arg(kOsmRoadsInstallSession)});
+}
+
+static QString formatOsmRoadsBytes(qint64 size_bytes) {
+  double value = static_cast<double>(std::max<qint64>(0, size_bytes));
+  const QStringList units = {"B", "KB", "MB", "GB"};
+  for (const QString &unit : units) {
+    if (value < 1024.0 || unit == "GB") {
+      return unit == "B" ? QString("%1 B").arg(static_cast<qint64>(value)) : QString("%1 %2").arg(value, 0, 'f', 1).arg(unit);
+    }
+    value /= 1024.0;
+  }
+  return QString("%1 GB").arg(value, 0, 'f', 1);
+}
+
+static qint64 osmRoadsLfsPointerSize() {
+  QFile file(QDir(osmRoadsTmpRepoPath()).absoluteFilePath("db/osm_roads_kr.sqlite3"));
+  if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    return 0;
+  }
+  while (!file.atEnd()) {
+    const QByteArray line = file.readLine().trimmed();
+    if (line.startsWith("size ")) {
+      bool ok = false;
+      const qint64 size = QString::fromUtf8(line.mid(5)).toLongLong(&ok);
+      return ok ? size : 0;
+    }
+  }
+  return 0;
+}
+
+static qint64 osmRoadsLfsIncompleteSize() {
+  const QDir incompleteDir(QDir(osmRoadsTmpRepoPath()).absoluteFilePath(".git/lfs/incomplete"));
+  qint64 largest = 0;
+  for (const QFileInfo &file : incompleteDir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot)) {
+    largest = std::max(largest, file.size());
+  }
+  return largest;
 }
 
 } // namespace
@@ -1243,12 +1314,22 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
       tr("Downloads the prebuilt OSM road graph DB from Git LFS and installs it in the navd DB path."),
       this);
   connect(installOsmDbButton, &ButtonControl::clicked, this, [=]() {
+    Params p;
     if (osmRoadsInstallRunning()) {
-      refreshOsmRoadsStatus();
-      return;
+      if (osmRoadsInstallSessionActive()) {
+        stopOsmRoadsInstallSession();
+        resetOsmRoadsLogReplay(false);
+        p.put("OsmRoadsUpdateStatus", "failed");
+        p.put("OsmRoadsUpdateError", "OSM road DB install stopped by user.");
+        p.put("OsmRoadsUpdateProgress", "0");
+        refreshOsmRoadsStatus();
+        return;
+      }
+
+      p.put("OsmRoadsUpdateStatus", "failed");
+      p.put("OsmRoadsUpdateError", "Previous OSM road DB install process is not running. Starting a new install.");
     }
 
-    Params p;
     p.put("OsmRoadsUpdateStatus", "running");
     p.put("OsmRoadsUpdateError", "");
     p.put("OsmRoadsUpdateProgress", "0");
@@ -1256,23 +1337,32 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
 
     QProcess *proc = new QProcess(this);
     const QString repoRoot = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../..");
-    proc->setWorkingDirectory(QDir(repoRoot).canonicalPath());
-    proc->setProgram("python3");
-    proc->setArguments({"tools/scripts/install_osm_roads_db_from_git.py", "--require-road-graph"});
+    const QString canonicalRepoRoot = QDir(repoRoot).canonicalPath();
+    const QString logPath = osmRoadsInstallLogPath(true);
+    QFile::remove(logPath);
+    QFile logFile(logPath);
+    if (logFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+      logFile.close();
+    }
+    resetOsmRoadsLogReplay(true);
+    const QString installCommand = QString("cd %1 && python3 tools/scripts/install_osm_roads_db_from_git.py --require-road-graph 2>&1 | tee %2")
+        .arg(shellQuote(canonicalRepoRoot), shellQuote(logPath));
+    const QString tmuxCommand = QString("command -v tmux >/dev/null && "
+                                        "(tmux has-session -t osm_db_install 2>/dev/null || "
+                                        "tmux new-session -d -s osm_db_install %1)")
+        .arg(shellQuote(installCommand));
+    proc->setWorkingDirectory(canonicalRepoRoot);
+    proc->setProgram("bash");
+    proc->setArguments({"-lc", tmuxCommand});
     proc->setProcessChannelMode(QProcess::MergedChannels);
     connect(proc, &QProcess::readyRead, proc, [proc]() { proc->readAll(); });
 
     connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, [this, proc](int code, QProcess::ExitStatus status) {
       Params finishedParams;
-      if (status == QProcess::NormalExit && code == 0) {
-        finishedParams.put("OsmRoadsUpdateStatus", "success");
-        finishedParams.put("OsmRoadsUpdateError", "");
-        finishedParams.put("OsmRoadsUpdateProgress", "100");
-        finishedParams.put("OsmRoadsUpdatedAt", QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm").toStdString());
-      } else {
+      if (status != QProcess::NormalExit || code != 0) {
         finishedParams.put("OsmRoadsUpdateStatus", "failed");
-        finishedParams.put("OsmRoadsUpdateError", QString("exit code %1").arg(code).toStdString());
+        finishedParams.put("OsmRoadsUpdateError", QString("tmux start failed: exit code %1").arg(code).toStdString());
       }
       proc->deleteLater();
       refreshOsmRoadsStatus();
@@ -1310,31 +1400,108 @@ bool NavigationTab::osmRoadsInstallRunning()
   return params.get("OsmRoadsUpdateStatus") == "running";
 }
 
+void NavigationTab::resetOsmRoadsLogReplay(bool fromBeginning)
+{
+  osmRoadsLogReadOffset = fromBeginning ? 0 : -1;
+}
+
+void NavigationTab::emitOsmRoadsInstallLog()
+{
+  const QString logPath = osmRoadsInstallLogPath(true);
+  QFile logFile(logPath);
+  if (!logFile.exists() && logFile.open(QIODevice::WriteOnly)) {
+    logFile.close();
+  }
+
+  if (!logFile.open(QIODevice::ReadOnly)) {
+    return;
+  }
+
+  const qint64 size = logFile.size();
+  if (osmRoadsLogReadOffset < 0) {
+    osmRoadsLogReadOffset = std::max<qint64>(0, size - 4096);
+  }
+  if (size < osmRoadsLogReadOffset) {
+    osmRoadsLogReadOffset = 0;
+  }
+  if (size <= osmRoadsLogReadOffset) {
+    return;
+  }
+  if (size - osmRoadsLogReadOffset > 8192) {
+    osmRoadsLogReadOffset = size - 8192;
+  }
+
+  logFile.seek(osmRoadsLogReadOffset);
+  const QByteArray output = logFile.read(8192);
+  osmRoadsLogReadOffset = logFile.pos();
+
+  const QStringList lines = QString::fromLocal8Bit(output).split('\n', Qt::SkipEmptyParts);
+  for (const QString &line : lines) {
+    const QByteArray text = line.left(500).toLocal8Bit();
+    fprintf(stderr, "[osm_db_install] %s\n", text.constData());
+    fflush(stderr);
+  }
+}
+
 void NavigationTab::refreshOsmRoadsStatus()
 {
   if (!installOsmDbButton || !osmRoadsStatusLabel || !osmRoadsDetailLabel || !osmRoadsProgressBar) return;
 
-  const QString status = QString::fromStdString(params.get("OsmRoadsUpdateStatus"));
-  const QString error = QString::fromStdString(params.get("OsmRoadsUpdateError"));
+  QString status = QString::fromStdString(params.get("OsmRoadsUpdateStatus"));
+  QString error = QString::fromStdString(params.get("OsmRoadsUpdateError"));
   const QString updatedAt = QString::fromStdString(params.get("OsmRoadsUpdatedAt"));
   bool ok = false;
   const int progress = std::clamp(QString::fromStdString(params.get("OsmRoadsUpdateProgress")).toInt(&ok), 0, 100);
+  bool downloadOk = false;
+  qint64 downloadBytes = QString::fromStdString(params.get("OsmRoadsDownloadBytes")).toLongLong(&downloadOk);
+  bool downloadTotalOk = false;
+  qint64 downloadTotalBytes = QString::fromStdString(params.get("OsmRoadsDownloadTotalBytes")).toLongLong(&downloadTotalOk);
   bool countOk = false;
   const int segmentCount = QString::fromStdString(params.get("OsmRoadsSegmentCount")).toInt(&countOk);
-  const bool running = status == "running";
+  bool running = status == "running";
+  if (running && !osmRoadsInstallSessionActive()) {
+    running = false;
+    status = "failed";
+    error = tr("Previous OSM road DB install process is not running.");
+    Params staleParams;
+    staleParams.put("OsmRoadsUpdateStatus", "failed");
+    staleParams.put("OsmRoadsUpdateError", error.toStdString());
+  }
 
   osmRoadsProgressBar->setValue(ok ? progress : 0);
   osmRoadsProgressBar->setVisible(running || progress > 0);
-  installOsmDbButton->setEnabled(!running);
+  installOsmDbButton->setEnabled(true);
 
   if (running) {
-    installOsmDbButton->setText(tr("RUNNING"));
+    emitOsmRoadsInstallLog();
+    if (!downloadOk || downloadBytes <= 0) {
+      downloadBytes = osmRoadsLfsIncompleteSize();
+      downloadOk = downloadBytes > 0;
+    }
+    if (!downloadTotalOk || downloadTotalBytes <= 0) {
+      downloadTotalBytes = osmRoadsLfsPointerSize();
+      downloadTotalOk = downloadTotalBytes > 0;
+    }
+    installOsmDbButton->setText(tr("STOP"));
     osmRoadsStatusLabel->setText(tr("Installing OSM road DB"));
-    osmRoadsDetailLabel->setText(QString("%1%").arg(ok ? progress : 0));
+    QStringList details;
+    details.append(QString("%1%").arg(ok ? progress : 0));
+    if (downloadOk && downloadBytes > 0) {
+      const QString downloaded = formatOsmRoadsBytes(downloadBytes);
+      if (downloadTotalOk && downloadTotalBytes > 0) {
+        details.append(QString("%1 / %2").arg(downloaded, formatOsmRoadsBytes(downloadTotalBytes)));
+      } else {
+        details.append(downloaded);
+      }
+    }
+    details.append(tr("tmux a -t osm_db_install"));
+    details.append(QString("tail -f %1").arg(osmRoadsInstallLogPath()));
+    osmRoadsDetailLabel->setText(details.join(" · "));
     return;
   }
 
   if (status == "success") {
+    emitOsmRoadsInstallLog();
     installOsmDbButton->setText(tr("UPDATE"));
     osmRoadsStatusLabel->setText(tr("OSM road DB ready"));
     QStringList details;
@@ -1345,12 +1512,14 @@ void NavigationTab::refreshOsmRoadsStatus()
   }
 
   if (status == "failed") {
+    emitOsmRoadsInstallLog();
     installOsmDbButton->setText(tr("RETRY"));
     osmRoadsStatusLabel->setText(tr("OSM road DB install failed"));
     osmRoadsDetailLabel->setText(error.isEmpty() ? tr("Check network, Git LFS, and storage space.") : error.right(160));
     return;
   }
 
+  resetOsmRoadsLogReplay(false);
   installOsmDbButton->setText(tr("INSTALL"));
   osmRoadsStatusLabel->setText(tr("OSM road DB"));
   osmRoadsDetailLabel->setText(tr("Not installed or status unknown"));

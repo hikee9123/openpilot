@@ -434,11 +434,14 @@ private:
   std::map<std::string, ParamControl*> toggles;
   void refreshOsmRoadsStatus();
   bool osmRoadsInstallRunning();
+  void resetOsmRoadsLogReplay(bool fromBeginning = false);
+  void emitOsmRoadsInstallLog();
   ButtonControl *installOsmDbButton = nullptr;
   QLabel *osmRoadsStatusLabel = nullptr;
   QLabel *osmRoadsDetailLabel = nullptr;
   QProgressBar *osmRoadsProgressBar = nullptr;
   QTimer *osmRoadsStatusTimer = nullptr;
+  qint64 osmRoadsLogReadOffset = -1;
 
 
 protected:
