@@ -92,6 +92,10 @@ void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinima
   p.setBrush(QColor(0, 0, 0, 150));
   p.drawRoundedRect(panel, 18, 18);
 
+  QPainterPath clip_path;
+  clip_path.addRoundedRect(panel, 18, 18);
+  p.setClipPath(clip_path);
+
   p.setPen(QPen(QColor(255, 255, 255, 42), 1));
   p.drawLine(QPointF(panel.center().x(), panel.top() + 40), QPointF(panel.center().x(), panel.bottom() - 24));
   p.drawLine(QPointF(panel.left() + 18, panel.bottom() - 58), QPointF(panel.right() - 18, panel.bottom() - 58));
