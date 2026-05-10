@@ -418,6 +418,8 @@ void CustomPanel::OnTimer() {
   sm->update(0);
   if (scene.started) {
     m_time = 0;
+    scene.custom.powerOffRemaining = 0;
+    scene.custom.powerOffProgress = 0.0f;
     updateToggles(false);
     const auto car_state = sm2["carState"].getCarState();
     float vEgo = car_state.getVEgo();
@@ -425,8 +427,19 @@ void CustomPanel::OnTimer() {
   } else {
     m_time++;
     const int powerOff = m_jsonobj.value("ParamPowerOff").toInt();
-    if (powerOff && (m_time > powerOff) && (scene.custom.m_powerflag)) {
+    if (powerOff > 0 && scene.custom.m_powerflag) {
+      const int elapsed = std::clamp(m_time, 0, powerOff);
+      scene.custom.powerOffRemaining = std::max(powerOff - elapsed, 0);
+      scene.custom.powerOffProgress = static_cast<float>(elapsed) / static_cast<float>(powerOff);
+    } else {
+      scene.custom.powerOffRemaining = 0;
+      scene.custom.powerOffProgress = 0.0f;
+    }
+
+    if (powerOff && (m_time >= powerOff) && (scene.custom.m_powerflag)) {
       scene.custom.m_powerflag = 0;
+      scene.custom.powerOffRemaining = 0;
+      scene.custom.powerOffProgress = 0.0f;
       params.putBool("DoShutdown", true);
     }
   }

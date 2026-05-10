@@ -1,6 +1,9 @@
 #include "selfdrive/ui/qt/custom/csidebar.h"
 
+#include <algorithm>
+
 #include <QMouseEvent>
+#include <QPainter>
 
 #include "selfdrive/ui/qt/util.h"
 
@@ -27,6 +30,8 @@ void CSidebar::mouseReleaseEvent(QMouseEvent *event, cereal::UserBookmark::Build
 
 
   scene.custom.m_powerflag = 0;
+  scene.custom.powerOffRemaining = 0;
+  scene.custom.powerOffProgress = 0.0f;
   m_idxUserFlag++;
   userFlag.setIdx( m_idxUserFlag );
 
@@ -35,9 +40,10 @@ void CSidebar::mouseReleaseEvent(QMouseEvent *event, cereal::UserBookmark::Build
 int CSidebar::updateState(const UIState &s)
 {
   SubMaster &sm = *(s.sm);
-  if (sm.frame % (UI_FREQ) != 0) return 0;
+  const bool autoPowerOffActive = s.scene.custom.m_powerflag;
+  if (sm.frame % (UI_FREQ) != 0) return autoPowerOffActive ? 1 : 0;
   frame_cnt++;
-  if( frame_cnt < 2 ) return 0;
+  if( frame_cnt < 2 ) return autoPowerOffActive ? 1 : 0;
   frame_cnt = 0;
 
   auto peripheralState = sm["peripheralState"].getPeripheralState();
@@ -97,10 +103,37 @@ void CSidebar::paintEvent(QPainter &p)
 
   if( scene.custom.m_powerflag )
   {
-    const QRect home_btn1 = QRect(60,860,180,180);
+    const QRect home_btn1 = QRect(60, 860, 180, 180);
+    const QPoint center = home_btn1.center();
+    const int remaining = scene.custom.powerOffRemaining;
+    const float progress = std::clamp(scene.custom.powerOffProgress, 0.0f, 1.0f);
 
-    p.setBrush(  QColor( 255,255, 0, 150 ) );
-    p.drawEllipse( home_btn1.x(), home_btn1.y(), 180, 180);
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(255, 255, 0, 95));
+    p.drawEllipse(home_btn1);
+
+    QPen ringPen(remaining <= 5 ? QColor(255, 85, 0, 255) : QColor(255, 225, 0, 255), 12);
+    ringPen.setCapStyle(Qt::RoundCap);
+    p.setPen(ringPen);
+    p.setBrush(Qt::NoBrush);
+    p.drawArc(home_btn1.adjusted(8, 8, -8, -8), 90 * 16, -static_cast<int>(360.0f * progress * 16.0f));
+
+    if (remaining > 0) {
+      const QString text = QString::number(remaining) + "s";
+      const int fontSize = remaining < 100 ? 54 : 44;
+      p.setFont(InterFont(fontSize, QFont::DemiBold));
+      const QRect textRect = p.fontMetrics().boundingRect(text).adjusted(-14, -8, 14, 8);
+      QRect bgRect(center.x() - textRect.width() / 2, center.y() - textRect.height() / 2,
+                   textRect.width(), textRect.height());
+      p.setPen(Qt::NoPen);
+      p.setBrush(QColor(0, 0, 0, 180));
+      p.drawRoundedRect(bgRect, 12, 12);
+      p.setPen(Qt::white);
+      p.drawText(bgRect, Qt::AlignCenter, text);
+    }
+    p.restore();
   }
 
 }
