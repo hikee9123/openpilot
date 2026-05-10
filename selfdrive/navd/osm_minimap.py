@@ -5,7 +5,8 @@ from openpilot.selfdrive.navd.osm_predictor import RoadPrediction
 from openpilot.selfdrive.navd.osm_roads import OSMRoadSegment, latlon_to_car_space_m
 
 
-def _segment_to_overlay(segment: OSMRoadSegment, prediction: RoadPrediction, current_id: int | None, predicted_ids: set[int], history_ids: set[int]) -> dict:
+def _segment_to_overlay(segment: OSMRoadSegment, prediction: RoadPrediction, current_id: int | None,
+                        predicted_ids: set[int], history_ids: set[int], assist_ids: set[int]) -> dict:
   x1, y1 = latlon_to_car_space_m(prediction.gps.lat, prediction.gps.lon, prediction.gps.bearing_deg, segment.lat1, segment.lon1)
   x2, y2 = latlon_to_car_space_m(prediction.gps.lat, prediction.gps.lon, prediction.gps.bearing_deg, segment.lat2, segment.lon2)
   return {
@@ -19,8 +20,8 @@ def _segment_to_overlay(segment: OSMRoadSegment, prediction: RoadPrediction, cur
     "current": segment.road_id == current_id,
     "predicted": segment.road_id in predicted_ids,
     "history": segment.road_id in history_ids,
-    "fallback": segment.road_id in predicted_ids and not prediction.predicted_from_graph and not prediction.predicted_from_assist,
-    "assist": segment.road_id in predicted_ids and prediction.predicted_from_assist,
+    "fallback": segment.road_id in predicted_ids and not prediction.predicted_from_graph and segment.road_id not in assist_ids,
+    "assist": segment.road_id in assist_ids,
   }
 
 
@@ -30,6 +31,7 @@ def build_minimap_overlay(prediction: RoadPrediction | None, history_segments: l
 
   current_id = prediction.current.road_id if prediction.current is not None else None
   predicted_ids = {segment.road_id for segment in prediction.predicted}
+  assist_ids = prediction.assist_road_ids
   history_segments = history_segments or []
   history_ids = {segment.road_id for segment in history_segments}
   merged: dict[int, OSMRoadSegment] = {}
@@ -48,7 +50,7 @@ def build_minimap_overlay(prediction: RoadPrediction | None, history_segments: l
     return prediction.current.display_name if prediction.current is not None else "", round(prediction.gps.bearing_deg, 1), []
 
   roads = [
-    _segment_to_overlay(segment, prediction, current_id, predicted_ids, history_ids)
+    _segment_to_overlay(segment, prediction, current_id, predicted_ids, history_ids, assist_ids)
     for segment in list(merged.values())[:max_segments]
   ]
   return prediction.current.display_name if prediction.current is not None else "", round(prediction.gps.bearing_deg, 1), roads

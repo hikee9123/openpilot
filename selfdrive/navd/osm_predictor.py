@@ -46,6 +46,7 @@ class RoadPrediction:
   predicted: list[OSMRoadSegment] = field(default_factory=list)
   predicted_from_graph: bool = False
   predicted_from_assist: bool = False
+  assist_road_ids: set[int] = field(default_factory=set)
   debug_text: str = ""
   updated_at: float = 0.0
 
@@ -176,11 +177,11 @@ class OSMRoadPredictor:
     current = find_current_road(conn, gps.lat, gps.lon, gps.bearing_deg, self.lookup_radius_m,
                                 previous_name, previous_road_id, previous_osm_id)
     nearby = nearby_road_segments(conn, gps.lat, gps.lon, self.map_radius_m, limit=80)
-    predicted, predicted_from_graph, predicted_from_assist, debug_text = self._predict_forward(conn, gps, current)
+    predicted, predicted_from_graph, predicted_from_assist, assist_road_ids, debug_text = self._predict_forward(conn, gps, current)
 
     result = RoadPrediction(gps=gps, current=current, nearby=nearby, predicted=predicted,
                             predicted_from_graph=predicted_from_graph, predicted_from_assist=predicted_from_assist,
-                            debug_text=debug_text, updated_at=now)
+                            assist_road_ids=assist_road_ids, debug_text=debug_text, updated_at=now)
     self._last_gps = gps
     self._last_prediction = result
     self._last_update_t = now
@@ -298,12 +299,13 @@ class OSMRoadPredictor:
     scored.sort(key=lambda item: item[0])
     return scored[0][1]
 
-  def _predict_forward(self, conn: sqlite3.Connection, gps: GPSFix, current: OSMRoadMatch | None) -> tuple[list[OSMRoadSegment], bool, bool, str]:
+  def _predict_forward(self, conn: sqlite3.Connection, gps: GPSFix, current: OSMRoadMatch | None) -> tuple[list[OSMRoadSegment], bool, bool, set[int], str]:
     if current is None:
       predicted = forward_road_segments(conn, gps.lat, gps.lon, gps.bearing_deg, forward_start_m=5.0, forward_end_m=self.forward_distance_m, limit=60)
-      return predicted, False, False, f"current=none fallback_count={len(predicted)}"
+      return predicted, False, False, set(), f"current=none fallback_count={len(predicted)}"
 
     predicted: list[OSMRoadSegment] = []
+    assist_road_ids: set[int] = set()
     visited = {current.road_id}
     road_id = current.road_id
     bearing = current.driving_bearing_deg
@@ -324,6 +326,7 @@ class OSMRoadPredictor:
         assist_candidate = self._endpoint_assist_successor(conn, gps, bearing, current.display_name, road_id, visited)
         if assist_candidate is not None:
           candidates.append(assist_candidate)
+          assist_road_ids.add(assist_candidate.road.road_id)
           endpoint_assist_hits += 1
           if len(reject_samples) < 3:
             reject_samples.append(f"{road_id}->{assist_candidate.road.road_id}:endpoint_assist")
@@ -366,6 +369,8 @@ class OSMRoadPredictor:
     if not predicted:
       predicted = forward_road_segments(conn, gps.lat, gps.lon, gps.bearing_deg, forward_start_m=5.0, forward_end_m=self.forward_distance_m, limit=60)
       graph_gap_assist = total_successors == 0
+      if graph_gap_assist:
+        assist_road_ids = {segment.road_id for segment in predicted}
       debug_text = (
         f"current={current.display_name or '-'} road_id={current.road_id} "
         f"successors={total_successors} accepted={total_accepted} skip_ahead={total_skip_ahead}/{skip_ahead_hits} "
@@ -373,11 +378,11 @@ class OSMRoadPredictor:
         f"rejects={_format_rejects(rejects)} samples={';'.join(reject_samples) or '-'} "
         f"fallback_count={len(predicted)}"
       )
-      return predicted[:80], False, graph_gap_assist, debug_text
+      return predicted[:80], False, graph_gap_assist, assist_road_ids, debug_text
 
     debug_text = (
       f"current={current.display_name or '-'} road_id={current.road_id} "
       f"graph_count={len(predicted)} successors={total_successors} accepted={total_accepted} "
       f"skip_ahead={total_skip_ahead}/{skip_ahead_hits} endpoint_assist={endpoint_assist_hits}"
     )
-    return predicted[:80], endpoint_assist_hits == 0, endpoint_assist_hits > 0, debug_text
+    return predicted[:80], True, endpoint_assist_hits > 0, assist_road_ids, debug_text
