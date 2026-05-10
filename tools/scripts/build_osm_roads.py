@@ -131,6 +131,10 @@ class RoadSegmentHandler(osmium.SimpleHandler if osmium is not None else object)
       "highway": highway,
       "road_class": HIGHWAY_CLASS.get(highway, "ETC"),
       "oneway": _oneway(way.tags),
+      "tunnel": _tag(way.tags, "tunnel"),
+      "layer": _tag(way.tags, "layer"),
+      "covered": _tag(way.tags, "covered"),
+      "bridge": _tag(way.tags, "bridge"),
     }
     for (lat1, lon1), (lat2, lon2) in zip(points, points[1:], strict=False):
       if lat1 == lat2 and lon1 == lon2:

@@ -7,7 +7,9 @@ try:
     build_road_graph,
     find_current_road,
     forward_road_segments,
+    init_db,
     insert_road_segments,
+    nearby_road_segments,
     road_name_matches,
     road_successors,
     segment_allowed_bearings,
@@ -18,7 +20,9 @@ except ModuleNotFoundError:
     build_road_graph,
     find_current_road,
     forward_road_segments,
+    init_db,
     insert_road_segments,
+    nearby_road_segments,
     road_name_matches,
     road_successors,
     segment_allowed_bearings,
@@ -84,6 +88,74 @@ def test_osm_road_queries_accept_reused_connection(tmp_path: Path) -> None:
   assert match is not None
   assert match.name == "Test Expressway"
   assert [segment.name for segment in segments] == ["Test Expressway", "Cross Road"]
+
+
+def test_insert_road_segments_stores_structure_tags(tmp_path: Path) -> None:
+  db_path = tmp_path / "osm_roads.sqlite3"
+  with sqlite3.connect(db_path) as conn:
+    insert_road_segments(conn, [{
+      "osm_id": 3,
+      "name": "Tunnel Bridge Road",
+      "ref": "",
+      "highway": "primary",
+      "road_class": "NATIONAL_ROAD",
+      "oneway": 1,
+      "lat1": 37.0000,
+      "lon1": 127.0000,
+      "lat2": 37.0100,
+      "lon2": 127.0000,
+      "tunnel": "yes",
+      "layer": "-1",
+      "covered": "yes",
+      "bridge": "viaduct",
+    }])
+    row = conn.execute("SELECT tunnel, layer, covered, bridge FROM roads").fetchone()
+
+  assert row == ("yes", "-1", "yes", "viaduct")
+
+  match = find_current_road(db_path, 37.0050, 127.0000, 0.0, radius_m=80.0)
+  assert match is not None
+  assert (match.tunnel, match.layer, match.covered, match.bridge) == ("yes", "-1", "yes", "viaduct")
+
+  nearby = nearby_road_segments(db_path, 37.0050, 127.0000, radius_m=80.0)
+  forward = forward_road_segments(db_path, 37.0, 127.0, 0.0, -100.0, 1500.0, 70.0, 140.0, 10)
+  assert [
+    (segment.tunnel, segment.layer, segment.covered, segment.bridge)
+    for segment in nearby
+  ] == [("yes", "-1", "yes", "viaduct")]
+  assert [
+    (segment.tunnel, segment.layer, segment.covered, segment.bridge)
+    for segment in forward
+  ] == [("yes", "-1", "yes", "viaduct")]
+
+
+def test_init_db_migrates_existing_roads_table_with_structure_tags(tmp_path: Path) -> None:
+  db_path = tmp_path / "osm_roads.sqlite3"
+  with sqlite3.connect(db_path) as conn:
+    conn.execute("""
+      CREATE TABLE roads (
+        id INTEGER PRIMARY KEY,
+        osm_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        ref TEXT NOT NULL,
+        highway TEXT NOT NULL,
+        road_class TEXT NOT NULL,
+        oneway INTEGER NOT NULL,
+        lat1 REAL NOT NULL,
+        lon1 REAL NOT NULL,
+        lat2 REAL NOT NULL,
+        lon2 REAL NOT NULL,
+        bearing_deg REAL NOT NULL,
+        min_lat REAL NOT NULL,
+        max_lat REAL NOT NULL,
+        min_lon REAL NOT NULL,
+        max_lon REAL NOT NULL
+      )
+    """)
+    init_db(conn)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(roads)")}
+
+  assert {"tunnel", "layer", "covered", "bridge"}.issubset(columns)
 
 
 def test_find_current_road_returns_none_when_db_missing(tmp_path: Path) -> None:

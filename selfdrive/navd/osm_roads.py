@@ -31,6 +31,7 @@ MAJOR_HIGHWAYS = {
   "secondary_link",
 }
 DbSource = Path | sqlite3.Connection
+OSM_STRUCTURE_TAGS = ("tunnel", "layer", "covered", "bridge")
 
 ROAD_NAME_SUFFIXES = (
   "EXPRESSWAY",
@@ -56,6 +57,10 @@ class OSMRoadMatch:
   heading_diff_deg: float
   bearing_deg: float
   score: float
+  tunnel: str = ""
+  layer: str = ""
+  covered: str = ""
+  bridge: str = ""
 
   @property
   def display_name(self) -> str:
@@ -77,6 +82,10 @@ class OSMRoadSegment:
   lon2: float
   bearing_deg: float
   distance_m: float
+  tunnel: str = ""
+  layer: str = ""
+  covered: str = ""
+  bridge: str = ""
 
   @property
   def display_name(self) -> str:
@@ -288,7 +297,24 @@ def _row_to_segment(row) -> OSMRoadSegment:
     lon2=float(row["lon2"]),
     bearing_deg=float(row["bearing_deg"]),
     distance_m=float(row["distance_m"]) if "distance_m" in row.keys() else 0.0,
+    tunnel=_row_text(row, "tunnel"),
+    layer=_row_text(row, "layer"),
+    covered=_row_text(row, "covered"),
+    bridge=_row_text(row, "bridge"),
   )
+
+
+def _row_text(row, key: str) -> str:
+  if key not in row.keys():
+    return ""
+  return str(row[key] or "")
+
+
+def _ensure_road_tag_columns(conn: sqlite3.Connection) -> None:
+  columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(roads)")}
+  for tag in OSM_STRUCTURE_TAGS:
+    if tag not in columns:
+      conn.execute(f"ALTER TABLE roads ADD COLUMN {tag} TEXT NOT NULL DEFAULT ''")
 
 
 def init_db(conn: sqlite3.Connection) -> None:
@@ -315,9 +341,14 @@ def init_db(conn: sqlite3.Connection) -> None:
       min_lat REAL NOT NULL,
       max_lat REAL NOT NULL,
       min_lon REAL NOT NULL,
-      max_lon REAL NOT NULL
+      max_lon REAL NOT NULL,
+      tunnel TEXT NOT NULL DEFAULT '',
+      layer TEXT NOT NULL DEFAULT '',
+      covered TEXT NOT NULL DEFAULT '',
+      bridge TEXT NOT NULL DEFAULT ''
     )
   """)
+  _ensure_road_tag_columns(conn)
   conn.execute("""
     CREATE VIRTUAL TABLE IF NOT EXISTS roads_rtree
     USING rtree(id, min_lat, max_lat, min_lon, max_lon)
@@ -420,6 +451,10 @@ def insert_road_segments(
       max_lat,
       min_lon,
       max_lon,
+      str(row.get("tunnel", "") or ""),
+      str(row.get("layer", "") or ""),
+      str(row.get("covered", "") or ""),
+      str(row.get("bridge", "") or ""),
     ))
     if len(batch) >= batch_size:
       count += _flush_segments(conn, batch)
@@ -439,8 +474,9 @@ def _flush_segments(conn: sqlite3.Connection, batch: list[tuple[object, ...]]) -
     INSERT INTO roads(
       osm_id, name, ref, highway, road_class, oneway,
       lat1, lon1, lat2, lon2, bearing_deg,
-      min_lat, max_lat, min_lon, max_lon
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      min_lat, max_lat, min_lon, max_lon,
+      tunnel, layer, covered, bridge
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   """, batch)
   first_id = cursor.lastrowid - len(batch) + 1 if cursor.lastrowid else None
   if first_id is None:
@@ -555,8 +591,7 @@ def road_successors(db_path: DbSource = DEFAULT_OSM_ROADS_DB_PATH, road_id: int 
     if not _table_exists(conn, "roads") or not _table_exists(conn, "road_adjacency"):
       return []
     rows = conn.execute("""
-      SELECT roads.id, roads.osm_id, roads.name, roads.ref, roads.highway, roads.road_class, roads.oneway,
-             roads.lat1, roads.lon1, roads.lat2, roads.lon2, roads.bearing_deg,
+      SELECT roads.*,
              0.0 AS distance_m,
              road_adjacency.turn_angle_deg
       FROM road_adjacency
@@ -637,6 +672,10 @@ def find_current_road(
       heading_diff_deg=heading_diff,
       bearing_deg=float(row["bearing_deg"]),
       score=score,
+      tunnel=_row_text(row, "tunnel"),
+      layer=_row_text(row, "layer"),
+      covered=_row_text(row, "covered"),
+      bridge=_row_text(row, "bridge"),
     )
     if best is None or match.score < best.score:
       best = match
@@ -693,6 +732,10 @@ def nearby_road_segments(
       lon2=float(row["lon2"]),
       bearing_deg=float(row["bearing_deg"]),
       distance_m=distance_m,
+      tunnel=_row_text(row, "tunnel"),
+      layer=_row_text(row, "layer"),
+      covered=_row_text(row, "covered"),
+      bridge=_row_text(row, "bridge"),
     ))
 
   segments.sort(key=lambda segment: segment.distance_m)
@@ -761,6 +804,10 @@ def forward_road_segments(
       lon2=float(row["lon2"]),
       bearing_deg=float(row["bearing_deg"]),
       distance_m=distance_m,
+      tunnel=_row_text(row, "tunnel"),
+      layer=_row_text(row, "layer"),
+      covered=_row_text(row, "covered"),
+      bridge=_row_text(row, "bridge"),
     )))
 
   segments_with_sort_key.sort(key=lambda item: (item[0], item[1]))
