@@ -11,10 +11,13 @@
 #include <QTabWidget>
 #include <QObject>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QProcess>
 #include <QDir>
 #include <QDateTime>
 #include <QDebug>
+#include <QFile>
 #include <QFileInfo>
 #include <QtConcurrent>
 #include <QVariant>
@@ -836,6 +839,48 @@ static QString artifactState(const QFileInfo &onnx, const QFileInfo &pkl)
   return "ready";
 }
 
+static QString backendFromPkl(const QFileInfo &pkl)
+{
+  QFile file(pkl.filePath());
+  if (!file.open(QIODevice::ReadOnly)) return QString();
+
+  const QByteArray data = file.read(4096);
+  QString backend;
+  int bestPos = -1;
+  for (const QByteArray &candidate : {QByteArray("QCOM"), QByteArray("LLVM"), QByteArray("AMD"), QByteArray("CPU")}) {
+    const int pos = data.indexOf(candidate);
+    if (pos >= 0 && (bestPos < 0 || pos < bestPos)) {
+      bestPos = pos;
+      backend = QString::fromLatin1(candidate);
+    }
+  }
+  return backend;
+}
+
+static QString backendFromCompileInfo(const QDir &bundle)
+{
+  QFile file(bundle.filePath("compile_info.json"));
+  if (!file.open(QIODevice::ReadOnly)) return QString();
+
+  const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+  if (!doc.isObject()) return QString();
+  return doc.object().value("backend").toString();
+}
+
+static QString artifactBackend(const QDir &bundle, const QFileInfo &visionPkl, const QFileInfo &policyPkl)
+{
+  const QString infoBackend = backendFromCompileInfo(bundle);
+  if (!infoBackend.isEmpty()) return infoBackend;
+
+  const QString visionBackend = backendFromPkl(visionPkl);
+  const QString policyBackend = backendFromPkl(policyPkl);
+  if (!visionBackend.isEmpty() && visionBackend == policyBackend) return visionBackend;
+  if (!visionBackend.isEmpty() && !policyBackend.isEmpty()) return "mixed";
+  if (!visionBackend.isEmpty()) return visionBackend;
+  if (!policyBackend.isEmpty()) return policyBackend;
+  return "unknown";
+}
+
 static ModelCompileStatus getModelCompileStatus(const QString &modelName)
 {
   if (modelName.isEmpty() || modelName == "1.default") {
@@ -869,7 +914,7 @@ static ModelCompileStatus getModelCompileStatus(const QString &modelName)
     compiledAt = policyPkl.lastModified();
   }
 
-  return {state, formatModelTime(compiledAt), vision, policy, currentModelBackend()};
+  return {state, formatModelTime(compiledAt), vision, policy, artifactBackend(bundle, visionPkl, policyPkl)};
 }
 
 static QString modelStatusSummary(const QString &modelName)

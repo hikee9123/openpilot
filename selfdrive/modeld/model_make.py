@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import hashlib
+import json
 import os
 import shutil
 import sys
@@ -49,6 +50,7 @@ VISION_META = "driving_vision_metadata.pkl"
 POLICY_META = "driving_policy_metadata.pkl"
 VISION_PKL  = "driving_vision_tinygrad.pkl"
 POLICY_PKL  = "driving_policy_tinygrad.pkl"
+COMPILE_INFO = "compile_info.json"
 
 LEGACY_MODEL_SOURCES: Dict[str, Dict[str, Dict[str, Any]]] = {
   "7.MacroStiff_Model": {
@@ -135,6 +137,46 @@ def _parse_flags_to_env(flags: str) -> Dict[str, str]:
       if k:
         d[k] = v
   return d
+
+
+def _backend_from_flags(flags: str) -> str:
+  return _parse_flags_to_env(flags).get("DEV", "unknown")
+
+
+def _infer_backend_from_pkl(pkl_path: Path) -> str:
+  if not pkl_path.exists():
+    return "missing"
+
+  with pkl_path.open("rb") as f:
+    data = f.read(4096)
+  positions = []
+  for backend in ("QCOM", "LLVM", "AMD", "CPU"):
+    pos = data.find(backend.encode())
+    if pos >= 0:
+      positions.append((pos, backend))
+  if not positions:
+    return "unknown"
+  return min(positions)[1]
+
+
+def _write_compile_info(model_dir: Path, flags: str) -> None:
+  vision_backend = _infer_backend_from_pkl(model_dir / VISION_PKL)
+  policy_backend = _infer_backend_from_pkl(model_dir / POLICY_PKL)
+  if vision_backend == policy_backend:
+    backend = vision_backend
+  elif "missing" in (vision_backend, policy_backend) or "unknown" in (vision_backend, policy_backend):
+    backend = _backend_from_flags(flags)
+  else:
+    backend = "mixed"
+
+  info = {
+    "backend": backend,
+    "flags": flags,
+    "vision_backend": vision_backend,
+    "policy_backend": policy_backend,
+    "compiled_at": time.strftime("%Y-%m-%d %H:%M:%S %z"),
+  }
+  (model_dir / COMPILE_INFO).write_text(json.dumps(info, indent=2, sort_keys=True) + "\n")
 
 
 def _default_tg_flags() -> str:
@@ -387,6 +429,7 @@ def _resolve_onnx_only_paths(model_dir: Path) -> Dict[str, Path]:
     if _stale(pol_pkl, pol_onnx):
       _ensure_pkl_and_metadata(pol_onnx, pol_pkl, pol_meta)
 
+    _write_compile_info(model_dir, os.environ.get("TG_FLAGS", _default_tg_flags()))
 
     return {
       'vision_onnx': vis_onnx,
