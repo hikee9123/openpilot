@@ -386,6 +386,7 @@ private:
   std::map<std::string, CValueControl*> m_valueCtrl;
   void refreshModelStatus();
   void setModelCompileProgress(const QString &stage, int percent, const QString &detail);
+  bool isModelCompileActive() const;
   QString currentModel;
   ButtonControl *changeModelButton = nullptr;
   QFrame *modelStatusPanel = nullptr;
@@ -397,6 +398,10 @@ private:
   QProgressBar *modelProgressBar = nullptr;
   qint64 modelCompileStartedAt = 0;
   QProcess *modelProcess = nullptr;
+  QString modelCompilingName;
+  QString modelCompileStage;
+  QString modelCompileDetail;
+  int modelCompilePercent = 0;
 
 
 protected:

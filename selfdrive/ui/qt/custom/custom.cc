@@ -1040,10 +1040,12 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
     changeModelButton->setText(tr("WAIT"));
     changeModelButton->setDescription(selection);
     modelCompileStartedAt = QDateTime::currentMSecsSinceEpoch();
+    modelCompilingName = selection;
     if (modelDescriptionLabel) modelDescriptionLabel->setText(modelDescription(selection));
     setModelCompileProgress(tr("Preparing files"), 10, currentModelBackend());
 
     QProcess *proc = new QProcess(this);
+    modelProcess = proc;
     proc->setProgram(scriptPath);
     proc->setWorkingDirectory(modeldPath);
 
@@ -1079,17 +1081,27 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
     connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, [=](int code, QProcess::ExitStatus status) {
       qWarning() << "model_make.sh exit code =" << code << "status=" << status;
+      if (modelProcess == proc) modelProcess = nullptr;
       if (status == QProcess::NormalExit && code == 0) {
         currentModel = selection;
         changeModelButton->setTitle(selection);
         changeModelButton->setText(tr("CHANGE"));
         modelCompileStartedAt = 0;
+        modelCompilingName.clear();
+        modelCompileStage.clear();
+        modelCompileDetail.clear();
+        modelCompilePercent = 0;
         refreshModelStatus();
       } else {
         Params().put("ActiveModelName", prev);
         currentModel = QString::fromStdString(prev);
         changeModelButton->setTitle(tr("Failed"));
         changeModelButton->setText(tr("RETRY"));
+        modelCompileStartedAt = 0;
+        modelCompilingName.clear();
+        modelCompileStage.clear();
+        modelCompileDetail.clear();
+        modelCompilePercent = 0;
         if (modelStatusTitle && modelDescriptionLabel && modelCompiledAt && modelArtifactStatus && modelProgressBar && modelProgressDetail) {
           const ModelCompileStatus previousStatus = getModelCompileStatus(currentModel);
           modelStatusTitle->setText(tr("Compile failed"));
@@ -1103,6 +1115,10 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
       }
       changeModelButton->setEnabled(true);
       proc->deleteLater();
+    });
+
+    connect(proc, &QObject::destroyed, this, [this, proc]() {
+      if (modelProcess == proc) modelProcess = nullptr;
     });
 
     proc->start();
@@ -1139,6 +1155,13 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
 void ModelTab::refreshModelStatus()
 {
   if (!modelStatusTitle || !modelDescriptionLabel || !modelCompiledAt || !modelArtifactStatus || !modelProgressBar || !modelProgressDetail) return;
+  if (isModelCompileActive()) {
+    setModelCompileProgress(
+        modelCompileStage.isEmpty() ? tr("Compiling model") : modelCompileStage,
+        modelCompilePercent > 0 ? modelCompilePercent : 10,
+        modelCompileDetail.isEmpty() ? currentModelBackend() : modelCompileDetail);
+    return;
+  }
   const ModelCompileStatus status = getModelCompileStatus(currentModel);
   modelStatusTitle->setText(status.state == "Ready" ? status.state + " · " + status.backend : status.state);
   modelDescriptionLabel->setText(modelDescription(currentModel));
@@ -1152,13 +1175,23 @@ void ModelTab::setModelCompileProgress(const QString &stage, int percent, const 
 {
   if (!modelStatusTitle || !modelDescriptionLabel || !modelCompiledAt || !modelArtifactStatus || !modelProgressBar || !modelProgressDetail) return;
   const int boundedPercent = std::clamp(percent, 0, 100);
+  modelCompileStage = stage;
+  modelCompilePercent = boundedPercent;
+  modelCompileDetail = detail;
+  const QString displayModel = modelCompilingName.isEmpty() ? currentModel : modelCompilingName;
   modelStatusTitle->setText(tr("Compiling model"));
+  modelDescriptionLabel->setText(modelDescription(displayModel));
   modelCompiledAt->setText(QString("%1                                  %2%").arg(stage).arg(boundedPercent));
   modelProgressBar->setVisible(true);
   modelProgressBar->setValue(boundedPercent);
   modelProgressDetail->setVisible(true);
   modelProgressDetail->setText("Backend: " + detail + " · Elapsed: " + formatElapsed(modelCompileStartedAt));
   modelArtifactStatus->setText(QString());
+}
+
+bool ModelTab::isModelCompileActive() const
+{
+  return modelCompileStartedAt > 0 && modelProcess && modelProcess->state() != QProcess::NotRunning;
 }
 
 void ModelTab::showEvent(QShowEvent *event) { QWidget::showEvent(event); refreshModelStatus(); }

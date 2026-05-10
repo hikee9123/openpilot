@@ -6,6 +6,7 @@ import shutil
 import sys
 import time
 import subprocess
+import threading
 import urllib.request
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -210,8 +211,45 @@ def _sanitize_tinygrad_env(env: Dict[str, str]) -> None:
 def _run_subprocess(args: list[str], cwd: Path, extra_env: Dict[str, str] | None = None) -> subprocess.CompletedProcess:
   """shell=False + 리스트 인자 방식으로 안전 실행"""
   env = extra_env.copy() if extra_env is not None else os.environ.copy()
+  env.setdefault("PYTHONUNBUFFERED", "1")
   cloudlog.warning(f"[modeld.subprocess] cwd={cwd} args={args}")
-  return subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env, shell=False)
+  proc = subprocess.Popen(
+    args,
+    cwd=cwd,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
+    encoding="utf-8",
+    errors="replace",
+    env=env,
+    shell=False,
+    bufsize=1,
+  )
+
+  stdout_chunks: list[str] = []
+  stderr_chunks: list[str] = []
+
+  def forward_stream(src, dst, chunks: list[str]) -> None:
+    if src is None:
+      return
+    try:
+      for line in src:
+        chunks.append(line)
+        dst.write(line)
+        dst.flush()
+    finally:
+      src.close()
+
+  stdout_thread = threading.Thread(target=forward_stream, args=(proc.stdout, sys.stdout, stdout_chunks), daemon=True)
+  stderr_thread = threading.Thread(target=forward_stream, args=(proc.stderr, sys.stderr, stderr_chunks), daemon=True)
+  stdout_thread.start()
+  stderr_thread.start()
+
+  returncode = proc.wait()
+  stdout_thread.join()
+  stderr_thread.join()
+
+  return subprocess.CompletedProcess(args, returncode, "".join(stdout_chunks), "".join(stderr_chunks))
 
 
 def _comma_default_paths() -> Dict[str, Path]:
