@@ -1308,6 +1308,15 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
   osmSection->addWidget(osmEnable);
   toggles["OSMEnable"] = osmEnable;
 
+  auto *osmGpsSimulation = new ParamControl(
+      "OsmGpsSimulation",
+      tr("OSM GPS simulation"),
+      tr("Publish simulated GPS only in webcam mode for OSM road prediction testing."),
+      "../assets/offroad/icon_openpilot.png",
+      this);
+  osmSection->addWidget(osmGpsSimulation);
+  toggles["OsmGpsSimulation"] = osmGpsSimulation;
+
   auto *osmMinimapPosition = new ButtonParamControl(
       "OsmMinimapPosition",
       tr("OSM minimap position"),

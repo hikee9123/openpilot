@@ -58,6 +58,9 @@ def only_onroad(started: bool, params: Params, CP: car.CarParams) -> bool:
 def osm_enabled(started: bool, params: Params, CP: car.CarParams) -> bool:
   return params.get_bool("OSMEnable") and (started or WEBCAM)
 
+def osm_gps_simulation(started: bool, params: Params, CP: car.CarParams) -> bool:
+  return WEBCAM and params.get_bool("OSMEnable") and params.get_bool("OsmGpsSimulation")
+
 def only_offroad(started: bool, params: Params, CP: car.CarParams) -> bool:
   return not started
 
@@ -94,6 +97,7 @@ procs = [
   PythonProcess("calibrationd", "selfdrive.locationd.calibrationd", only_onroad),
   PythonProcess("torqued", "selfdrive.locationd.torqued", only_onroad),
   PythonProcess("navid", "selfdrive.navd.navid", osm_enabled),
+  PythonProcess("osm_gps_simd", "selfdrive.navd.osm_gps_sim", osm_gps_simulation),
   PythonProcess("controlsd", "selfdrive.controls.controlsd", and_(not_joystick, iscar)),
   PythonProcess("joystickd", "tools.joystick.joystickd", or_(joystick, notcar)),
   PythonProcess("selfdrived", "selfdrive.selfdrived.selfdrived", only_onroad),
