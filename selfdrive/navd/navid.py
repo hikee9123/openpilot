@@ -748,7 +748,26 @@ def _current_road_candidates_from_cache(cache: OsmRoadCache, gps, radius_m: floa
 
     name_bonus = -8.0 if road_name_matches(previous_name, segment.name, segment.ref) else 0.0
     highway_bonus = -4.0 if segment.highway in ("motorway", "trunk", "primary") else 0.0
-    score = distance_m + heading_diff * 0.8 + name_bonus + highway_bonus
+    access_penalty = 0.0
+    if str(getattr(segment, "service", "") or "").lower() in ("parking_aisle", "driveway"):
+      access_penalty += 25.0
+    if (
+      str(getattr(segment, "access", "") or "").lower() == "private" or
+      str(getattr(segment, "motor_vehicle", "") or "").lower() == "no" or
+      str(getattr(segment, "vehicle", "") or "").lower() == "no"
+    ):
+      access_penalty += 35.0
+    ramp_penalty = 8.0 if int(getattr(segment, "is_ramp", 0) or 0) and not road_name_matches(
+      previous_name,
+      segment.name,
+      segment.ref,
+      str(getattr(segment, "destination", "") or ""),
+      str(getattr(segment, "destination_ref", "") or ""),
+    ) else 0.0
+    confidence_penalty = float(getattr(segment, "gps_confidence_penalty", 0.0) or 0.0) * 15.0
+    confidence_penalty += (1.0 - float(getattr(segment, "map_confidence", 1.0) or 1.0)) * 12.0
+    priority_bonus = -min(100, max(0, int(getattr(segment, "road_priority", 0) or 0))) * 0.03
+    score = distance_m + heading_diff * 0.8 + name_bonus + highway_bonus + access_penalty + ramp_penalty + confidence_penalty + priority_bonus
     candidates.append(CurrentRoadCandidate(segment, segment.display_name, distance_m, heading_diff, score))
   return sorted(candidates, key=lambda candidate: candidate.score)[:OSM_CURRENT_ROAD_CANDIDATE_LIMIT]
 

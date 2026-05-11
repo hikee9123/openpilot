@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from contextlib import closing
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -179,7 +180,7 @@ def _validate_osm_db(db_path: Path) -> int:
   if count <= 0:
     raise RuntimeError(f"temporary DB has no road segments: {db_path}")
   try:
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
       for table in ("roads", "roads_rtree", "metadata"):
         row = conn.execute("SELECT 1 FROM sqlite_master WHERE name = ? LIMIT 1", (table,)).fetchone()
         if row is None:
