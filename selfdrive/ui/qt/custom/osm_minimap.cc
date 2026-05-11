@@ -11,7 +11,7 @@ namespace {
 
 constexpr double kMinMapRadiusM = 230.0;
 constexpr double kBaseMaxMapRadiusM = 1000.0;
-constexpr double kExtendedMaxMapRadiusM = 1400.0;
+constexpr double kExtendedMaxMapRadiusM = 1800.0;
 constexpr double kMinRadiusSpeedMps = 30.0 / 3.6;
 constexpr double kMaxRadiusSpeedMps = 60.0 / 3.6;
 constexpr double kRadiusAnimationAlpha = 0.08;
@@ -30,8 +30,35 @@ QPointF projectPoint(const QRectF &panel, double scale, double forward_m, double
   return {origin.x() + right_m * scale, origin.y() - forward_m * scale};
 }
 
-bool pointNearPanel(const QRectF &panel, const QPointF &point) {
-  return panel.adjusted(-30.0, -30.0, 30.0, 30.0).contains(point);
+bool clipLine(double p, double q, double &u1, double &u2) {
+  if (std::abs(p) < 1e-9) {
+    return q >= 0.0;
+  }
+  const double r = q / p;
+  if (p < 0.0) {
+    if (r > u2) return false;
+    u1 = std::max(u1, r);
+  } else {
+    if (r < u1) return false;
+    u2 = std::min(u2, r);
+  }
+  return true;
+}
+
+bool lineIntersectsRect(const QRectF &rect, const QPointF &a, const QPointF &b) {
+  double u1 = 0.0;
+  double u2 = 1.0;
+  const double dx = b.x() - a.x();
+  const double dy = b.y() - a.y();
+  return clipLine(-dx, a.x() - rect.left(), u1, u2)
+      && clipLine(dx, rect.right() - a.x(), u1, u2)
+      && clipLine(-dy, a.y() - rect.top(), u1, u2)
+      && clipLine(dy, rect.bottom() - a.y(), u1, u2);
+}
+
+bool lineNearPanel(const QRectF &panel, const QPointF &a, const QPointF &b) {
+  const QRectF expanded = panel.adjusted(-30.0, -30.0, 30.0, 30.0);
+  return expanded.contains(a) || expanded.contains(b) || lineIntersectsRect(expanded, a, b);
 }
 
 QString roadName(const OsmMinimapRoad &road) {
@@ -172,7 +199,7 @@ void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinima
 void OsmMinimapRenderer::drawRoad(QPainter &p, const QRectF &panel, double scale, const OsmMinimapRoad &road) {
   const QPointF a = projectPoint(panel, scale, road.x1, road.y1);
   const QPointF b = projectPoint(panel, scale, road.x2, road.y2);
-  if (!pointNearPanel(panel, a) && !pointNearPanel(panel, b)) return;
+  if (!lineNearPanel(panel, a, b)) return;
 
   const bool current = road.current;
   const bool predicted = road.predicted;

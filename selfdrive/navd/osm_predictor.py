@@ -31,11 +31,13 @@ MAX_GRAPH_ENDPOINT_ASSIST_M = 260.0
 MAX_ENDPOINT_ASSIST_GAP_M = 65.0
 BASE_GRAPH_SEGMENT_LIMIT = 40
 EXTENDED_GRAPH_SEGMENT_LIMIT = 80
+HIGH_SPEED_GRAPH_SEGMENT_LIMIT = 120
 PREDICTION_QUALITY_WINDOW = 24
 PREDICTION_QUALITY_MIN_SAMPLES = 8
 PREDICTION_QUALITY_GOOD_RATIO = 0.75
 CURVE_EXTENSION_MIN_TURN_DEG = 18.0
 CURVE_EXTENSION_MIN_SIDE_M = 140.0
+HIGH_SPEED_EXTENSION_MIN_MPS = 80.0 / 3.6
 RELAXED_LOOKUP_MIN_RADIUS_M = 85.0
 RELAXED_LOOKUP_MAX_RADIUS_M = 120.0
 RELAXED_LOOKUP_HEADING_DIFF_DEG = 85.0
@@ -95,6 +97,12 @@ def _format_rejects(rejects: dict[str, int]) -> str:
   if not rejects:
     return "none"
   return ", ".join(f"{reason}={count}" for reason, count in sorted(rejects.items()))
+
+
+def _graph_prediction_limit(high_quality: bool, speed_mps: float) -> int:
+  if high_quality and speed_mps >= HIGH_SPEED_EXTENSION_MIN_MPS:
+    return HIGH_SPEED_GRAPH_SEGMENT_LIMIT
+  return EXTENDED_GRAPH_SEGMENT_LIMIT if high_quality else BASE_GRAPH_SEGMENT_LIMIT
 
 
 class OSMRoadPredictor:
@@ -419,7 +427,8 @@ class OSMRoadPredictor:
     stop_reason = ""
     quality = self._prediction_quality()
     high_quality = self._good_prediction_quality()
-    graph_segment_limit = EXTENDED_GRAPH_SEGMENT_LIMIT if high_quality else BASE_GRAPH_SEGMENT_LIMIT
+    graph_segment_limit = _graph_prediction_limit(high_quality, gps.speed_mps)
+    high_speed_extension_allowed = high_quality and gps.speed_mps >= HIGH_SPEED_EXTENSION_MIN_MPS
     curve_turn_total_deg = 0.0
     max_route_side_m = 0.0
 
@@ -485,7 +494,7 @@ class OSMRoadPredictor:
           or max_route_side_m >= CURVE_EXTENSION_MIN_SIDE_M
         )
       )
-      if len(predicted) >= BASE_GRAPH_SEGMENT_LIMIT and not curve_extension_allowed:
+      if len(predicted) >= BASE_GRAPH_SEGMENT_LIMIT and not (curve_extension_allowed or high_speed_extension_allowed):
         stop_reason = "base_range"
         break
 
@@ -504,12 +513,17 @@ class OSMRoadPredictor:
       )
       return predicted[:80], False, graph_gap_assist, assist_road_ids, debug_text
 
-    range_mode = "curve_extended" if len(predicted) > BASE_GRAPH_SEGMENT_LIMIT else "base"
+    if len(predicted) <= BASE_GRAPH_SEGMENT_LIMIT:
+      range_mode = "base"
+    elif high_speed_extension_allowed:
+      range_mode = "speed_extended"
+    else:
+      range_mode = "curve_extended"
     debug_text = (
       f"current={current.display_name or '-'} road_id={current.road_id} "
       f"graph_count={len(predicted)} successors={total_successors} accepted={total_accepted} "
       f"skip_ahead={total_skip_ahead}/{skip_ahead_hits} endpoint_assist={endpoint_assist_hits} "
       f"quality={quality:.2f} range={range_mode} stop={stop_reason or '-'} "
-      f"curve_turn={curve_turn_total_deg:.1f} side={max_route_side_m:.1f}"
+      f"curve_turn={curve_turn_total_deg:.1f} side={max_route_side_m:.1f} speed={gps.speed_mps * 3.6:.1f}"
     )
-    return predicted[:80], True, endpoint_assist_hits > 0, assist_road_ids, debug_text
+    return predicted[:graph_segment_limit], True, endpoint_assist_hits > 0, assist_road_ids, debug_text
