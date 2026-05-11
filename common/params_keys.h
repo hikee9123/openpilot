@@ -136,6 +136,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"MapboxToken", {PERSISTENT, STRING}},
     {"OSMEnable", {PERSISTENT, BOOL}},
     {"OsmGpsSimulation", {PERSISTENT, BOOL}},
+    {"OsmPredictionLogging", {PERSISTENT, BOOL}},
     {"OsmMinimapPosition", {PERSISTENT, INT, "3"}},
     {"OsmRoadsUpdateStatus", {PERSISTENT, STRING}},
     {"OsmRoadsUpdateError", {PERSISTENT, STRING}},

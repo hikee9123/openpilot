@@ -331,6 +331,7 @@ def find_current_road(
   previous_name: str = "",
   previous_road_id: int | None = None,
   previous_osm_id: int | None = None,
+  max_heading_diff_deg: float = MAX_HEADING_DIFF_DEG,
 ) -> OSMRoadMatch | None:
   if not _db_source_exists(db_path):
     return None
@@ -365,7 +366,7 @@ def find_current_road(
     heading_diff = 0.0
     if heading_deg is not None:
       heading_diff = road_heading_diff_deg(float(row["bearing_deg"]), oneway, heading_deg)
-      if heading_diff > MAX_HEADING_DIFF_DEG:
+      if heading_diff > max_heading_diff_deg:
         continue
     name = str(row["name"] or "")
     ref = str(row["ref"] or "")

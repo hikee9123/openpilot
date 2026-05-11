@@ -1345,6 +1345,15 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
   osmSection->addWidget(osmGpsSimulation);
   toggles["OsmGpsSimulation"] = osmGpsSimulation;
 
+  auto *osmPredictionLogging = new ParamControl(
+      "OsmPredictionLogging",
+      tr("OSM prediction logging"),
+      tr("Create OSM route prediction trace logs for validation. Logs are written under the navd logs directory only while this is enabled."),
+      "../assets/offroad/icon_openpilot.png",
+      this);
+  osmSection->addWidget(osmPredictionLogging);
+  toggles["OsmPredictionLogging"] = osmPredictionLogging;
+
   auto *osmMinimapPosition = new ButtonParamControl(
       "OsmMinimapPosition",
       tr("OSM minimap position"),
