@@ -20,6 +20,7 @@ from openpilot.selfdrive.navd.paths import DEFAULT_NAVD_LOG_DIR
 HISTORY_SEGMENT_LIMIT = 40
 OSM_TRACE_LOG_MAX_BYTES = 10 * 1024 * 1024
 OSM_TRACE_LOG_PATH = DEFAULT_NAVD_LOG_DIR / "osm_prediction_trace.csv"
+OSM_FAILURE_LOG_PATH = DEFAULT_NAVD_LOG_DIR / "osm_prediction_failures.csv"
 OSM_TRACE_FIELDS = (
   "wall_time",
   "lat",
@@ -102,20 +103,12 @@ def _road_ids(roads: list[OSMRoadSegment], limit: int = 80) -> str:
   return " ".join(str(road.road_id) for road in roads[:limit])
 
 
-class OsmPredictionTraceWriter:
+class CsvLogWriter:
   def __init__(self, path: Path) -> None:
     self.path = path
-    self.enabled = False
     self._file = None
     self._writer: csv.DictWriter | None = None
     self._last_error_t = 0.0
-
-  def set_enabled(self, enabled: bool) -> None:
-    if self.enabled == enabled:
-      return
-    self.enabled = enabled
-    if not enabled:
-      self.close()
 
   def close(self) -> None:
     if self._file is not None:
@@ -146,40 +139,67 @@ class OsmPredictionTraceWriter:
     except OSError as exc:
       now = time.monotonic()
       if now - self._last_error_t > 30.0:
-        cloudlog.warning("osm_prediction_trace open failed: %s", exc)
+        cloudlog.warning("navd csv log open failed path=%s error=%s", self.path, exc)
         self._last_error_t = now
       self.close()
       return False
 
-  def log(self, prediction: RoadPrediction) -> None:
-    if not self.enabled or not self._open() or self._writer is None or self._file is None:
+  def write(self, row: dict) -> None:
+    if not self._open() or self._writer is None or self._file is None:
       return
 
-    current = prediction.current
     try:
-      self._writer.writerow({
-        "wall_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-        "lat": f"{prediction.gps.lat:.7f}",
-        "lon": f"{prediction.gps.lon:.7f}",
-        "bearing_deg": f"{prediction.gps.bearing_deg:.1f}",
-        "speed_mps": f"{prediction.gps.speed_mps:.2f}",
-        "mode": _prediction_mode(prediction),
-        "current_road_id": "" if current is None else current.road_id,
-        "current_name": "" if current is None else current.display_name,
-        "current_distance_m": "" if current is None else f"{current.distance_m:.1f}",
-        "current_heading_diff_deg": "" if current is None else f"{current.heading_diff_deg:.1f}",
-        "predicted_road_ids": _road_ids(prediction.predicted),
-        "assist_road_ids": " ".join(str(road_id) for road_id in sorted(prediction.assist_road_ids)),
-        "nearby_road_ids": _road_ids(prediction.nearby, limit=40),
-        "debug": prediction.debug_text,
-      })
+      self._writer.writerow(row)
       self._file.flush()
     except OSError as exc:
       now = time.monotonic()
       if now - self._last_error_t > 30.0:
-        cloudlog.warning("osm_prediction_trace write failed: %s", exc)
+        cloudlog.warning("navd csv log write failed path=%s error=%s", self.path, exc)
         self._last_error_t = now
       self.close()
+
+
+class OsmPredictionLogWriter:
+  def __init__(self, trace_path: Path, failure_path: Path) -> None:
+    self.enabled = False
+    self.trace_log = CsvLogWriter(trace_path)
+    self.failure_log = CsvLogWriter(failure_path)
+
+  def set_enabled(self, enabled: bool) -> None:
+    if self.enabled == enabled:
+      return
+    self.enabled = enabled
+    if not enabled:
+      self.close()
+
+  def close(self) -> None:
+    self.trace_log.close()
+    self.failure_log.close()
+
+  def log(self, prediction: RoadPrediction) -> None:
+    if not self.enabled:
+      return
+
+    current = prediction.current
+    row = {
+      "wall_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+      "lat": f"{prediction.gps.lat:.7f}",
+      "lon": f"{prediction.gps.lon:.7f}",
+      "bearing_deg": f"{prediction.gps.bearing_deg:.1f}",
+      "speed_mps": f"{prediction.gps.speed_mps:.2f}",
+      "mode": _prediction_mode(prediction),
+      "current_road_id": "" if current is None else current.road_id,
+      "current_name": "" if current is None else current.display_name,
+      "current_distance_m": "" if current is None else f"{current.distance_m:.1f}",
+      "current_heading_diff_deg": "" if current is None else f"{current.heading_diff_deg:.1f}",
+      "predicted_road_ids": _road_ids(prediction.predicted),
+      "assist_road_ids": " ".join(str(road_id) for road_id in sorted(prediction.assist_road_ids)),
+      "nearby_road_ids": _road_ids(prediction.nearby, limit=40),
+      "debug": prediction.debug_text,
+    }
+    self.trace_log.write(row)
+    if not prediction.predicted_from_graph:
+      self.failure_log.write(row)
 
 
 def main() -> None:
@@ -195,15 +215,16 @@ def main() -> None:
   last_prediction_debug = ""
   last_prediction_debug_t = 0.0
   history_segments: OrderedDict[int, OSMRoadSegment] = OrderedDict()
-  trace_writer = OsmPredictionTraceWriter(OSM_TRACE_LOG_PATH)
+  log_writer = OsmPredictionLogWriter(OSM_TRACE_LOG_PATH, OSM_FAILURE_LOG_PATH)
 
   try:
     while True:
       sm.update(0)
 
       osm_enabled = params.get_bool("OSMEnable")
-      osm_logging_enabled = osm_enabled and params.get_bool("OsmPredictionLogging")
-      trace_writer.set_enabled(osm_logging_enabled)
+      nav_logging_enabled = params.get_bool("NavdLogging")
+      osm_logging_enabled = osm_enabled and nav_logging_enabled and params.get_bool("OsmPredictionLogging")
+      log_writer.set_enabled(osm_logging_enabled)
 
       if not osm_enabled:
         if last_available:
@@ -222,7 +243,7 @@ def main() -> None:
           last_overlay = None
           history_segments.clear()
         now = time.monotonic()
-        if now - last_log_t > 30.0:
+        if nav_logging_enabled and now - last_log_t > 30.0:
           cloudlog.info("navid waiting for valid GPS and OSM roads DB")
           last_log_t = now
         rk.keep_time()
@@ -231,7 +252,7 @@ def main() -> None:
       prediction = predictor.update(gps)
       now = time.monotonic()
       if prediction is not None:
-        trace_writer.log(prediction)
+        log_writer.log(prediction)
         if osm_logging_enabled and prediction.debug_text:
           prediction_debug = f"{_prediction_mode(prediction)} {prediction.debug_text}"
           log_interval_s = 30.0 if prediction.predicted_from_graph else 5.0
@@ -256,7 +277,7 @@ def main() -> None:
 
       rk.keep_time()
   finally:
-    trace_writer.close()
+    log_writer.close()
     predictor.close()
 
 

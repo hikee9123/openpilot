@@ -132,12 +132,20 @@ static QString osmRoadsNavdTmpRoot(bool ensure_dir = false) {
   return navdTmpRoot;
 }
 
+static QString osmRoadsNavdLogRoot(bool ensure_dir = false) {
+  const QString navdLogRoot = QDir(osmRoadsNavdRoot()).absoluteFilePath("logs");
+  if (ensure_dir) {
+    QDir().mkpath(navdLogRoot);
+  }
+  return navdLogRoot;
+}
+
 static QString osmRoadsInstalledDbPath() {
   return QDir(QDir(osmRoadsNavdRoot()).absoluteFilePath("db")).absoluteFilePath("osm_roads_kr.sqlite3");
 }
 
 static QString osmRoadsInstallLogPath(bool ensure_dir = false) {
-  return QDir(osmRoadsNavdTmpRoot(ensure_dir)).absoluteFilePath("openpilot_osm_roads_install.log");
+  return QDir(osmRoadsNavdLogRoot(ensure_dir)).absoluteFilePath("osm_roads_install.log");
 }
 
 static QString osmRoadsTmpRepoPath() {
@@ -1331,6 +1339,15 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
   osmSection->addWidget(osmEnable);
   toggles["OSMEnable"] = osmEnable;
 
+  auto *navdLogging = new ParamControl(
+      "NavdLogging",
+      tr("Navigation logging"),
+      tr("Record navd and OSM diagnostic logs under the navd logs directory."),
+      "../assets/offroad/icon_openpilot.png",
+      this);
+  osmSection->addWidget(navdLogging);
+  toggles["NavdLogging"] = navdLogging;
+
   auto *osmGpsSimulation = new ParamControl(
       "OsmGpsSimulation",
       tr("OSM GPS simulation"),
@@ -1348,7 +1365,7 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
   auto *osmPredictionLogging = new ParamControl(
       "OsmPredictionLogging",
       tr("OSM prediction logging"),
-      tr("Create OSM route prediction trace logs for validation. Logs are written under the navd logs directory only while this is enabled."),
+      tr("Create OSM route prediction trace and failure logs for validation. Requires Navigation logging and writes under the navd logs directory."),
       "../assets/offroad/icon_openpilot.png",
       this);
   osmSection->addWidget(osmPredictionLogging);
@@ -1393,15 +1410,21 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
     QProcess *proc = new QProcess(this);
     const QString repoRoot = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../..");
     const QString canonicalRepoRoot = QDir(repoRoot).canonicalPath();
-    const QString logPath = osmRoadsInstallLogPath(true);
-    QFile::remove(logPath);
-    QFile logFile(logPath);
-    if (logFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-      logFile.close();
+    const bool navLogsEnabled = p.getBool("NavdLogging");
+    const QString logPath = osmRoadsInstallLogPath(navLogsEnabled);
+    if (navLogsEnabled) {
+      QFile::remove(logPath);
+      QFile logFile(logPath);
+      if (logFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        logFile.close();
+      }
     }
     resetOsmRoadsLogReplay(true);
-    const QString installCommand = QString("cd %1 && python3 tools/scripts/install_osm_roads_db_from_git.py --require-road-graph 2>&1 | tee %2")
-        .arg(shellQuote(canonicalRepoRoot), shellQuote(logPath));
+    const QString installCommand = navLogsEnabled
+        ? QString("cd %1 && python3 tools/scripts/install_osm_roads_db_from_git.py --require-road-graph 2>&1 | tee %2")
+              .arg(shellQuote(canonicalRepoRoot), shellQuote(logPath))
+        : QString("cd %1 && python3 tools/scripts/install_osm_roads_db_from_git.py --require-road-graph >/dev/null 2>&1")
+              .arg(shellQuote(canonicalRepoRoot));
     const QString tmuxCommand = QString("command -v tmux >/dev/null && "
                                         "(tmux has-session -t osm_db_install 2>/dev/null || "
                                         "tmux new-session -d -s osm_db_install %1)")
@@ -1458,6 +1481,11 @@ bool NavigationTab::osmRoadsInstallRunning()
 
 void NavigationTab::skipOsmRoadsExistingLog()
 {
+  if (!params.getBool("NavdLogging")) {
+    osmRoadsLogReadOffset = -1;
+    osmRoadsLastLoggedDownloadBytes = -1;
+    return;
+  }
   QFile logFile(osmRoadsInstallLogPath(false));
   osmRoadsLogReadOffset = logFile.exists() ? logFile.size() : 0;
   osmRoadsLastLoggedDownloadBytes = -1;
@@ -1471,6 +1499,9 @@ void NavigationTab::resetOsmRoadsLogReplay(bool fromBeginning)
 
 void NavigationTab::emitOsmRoadsInstallLog()
 {
+  if (!params.getBool("NavdLogging")) {
+    return;
+  }
   const QString logPath = osmRoadsInstallLogPath(true);
   QFile logFile(logPath);
   if (!logFile.exists() && logFile.open(QIODevice::WriteOnly)) {
@@ -1525,7 +1556,8 @@ void NavigationTab::refreshOsmRoadsStatus()
   const int segmentCount = QString::fromStdString(params.get("OsmRoadsSegmentCount")).toInt(&countOk);
   const QString installedDbDetail = osmRoadsFileDetail("local DB", osmRoadsInstalledDbPath());
   const QString tmpDbDetail = osmRoadsFileDetail("tmp DB", osmRoadsTmpDbPath());
-  const QString logFileDetail = osmRoadsFileDetail("log", osmRoadsInstallLogPath());
+  const bool navLogsEnabled = params.getBool("NavdLogging");
+  const QString logFileDetail = navLogsEnabled ? osmRoadsFileDetail("log", osmRoadsInstallLogPath()) : tr("navd log disabled");
   bool running = status == "running";
   if (running && !osmRoadsInstallSessionActive()) {
     running = false;
@@ -1582,7 +1614,11 @@ void NavigationTab::refreshOsmRoadsStatus()
       details.append(installedDbDetail);
     }
     details.append(tr("tmux a -t osm_db_install"));
-    details.append(QString("tail -f %1").arg(osmRoadsInstallLogPath()));
+    if (navLogsEnabled) {
+      details.append(QString("tail -f %1").arg(osmRoadsInstallLogPath()));
+    } else {
+      details.append(tr("navd log disabled"));
+    }
     osmRoadsDetailLabel->setText(details.join(" | "));
     return;
   }
