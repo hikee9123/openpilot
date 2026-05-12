@@ -58,6 +58,8 @@ PREDICTION_MATCH_MIN_SPEED_MPS = 5.0
 CURVE_EXTENSION_MIN_TURN_DEG = 18.0
 CURVE_EXTENSION_MIN_SIDE_M = 140.0
 HIGH_SPEED_EXTENSION_MIN_MPS = 80.0 / 3.6
+DEBUG_SELECTED_LIMIT = 6
+DEBUG_CANDIDATE_LIMIT = 3
 LOW_SPEED_HEADING_IGNORE_MPS = 2.0
 LOW_SPEED_LOOKUP_RADIUS_M = 95.0
 LOW_SPEED_PREVIOUS_HOLD_MPS = 3.0
@@ -211,6 +213,30 @@ def _metadata_score_adjustment(current_road: OSMRoadSegment | None, road: OSMRoa
 
   adjustment += (1.0 - _clamp(road.map_confidence, 0.0, 1.0)) * LOW_CONFIDENCE_PENALTY
   return adjustment
+
+
+def _candidate_debug(candidate: _SuccessorCandidate) -> str:
+  road = candidate.road
+  transition = candidate.transition
+  if transition is None:
+    transition_text = "cost=- pref=- conf=- turn=-"
+  else:
+    transition_text = (
+      f"cost={transition.transition_cost:.1f} pref={transition.preferred_transition_score:.2f} "
+      f"conf={transition.connectivity_confidence:.2f} turn={transition.turn_angle_deg:.1f}"
+    )
+  ramp = road.ramp_type or ("ramp" if road.is_ramp else "-")
+  continuity = road.continuity_class or "-"
+  return (
+    f"{road.road_id}:score={candidate.score:.1f} {transition_text} "
+    f"ramp={ramp} cont={continuity} layer={road.layer_int}"
+  )
+
+
+def _candidate_list_debug(candidates: list[_SuccessorCandidate], limit: int = DEBUG_CANDIDATE_LIMIT) -> str:
+  if not candidates:
+    return "-"
+  return "|".join(_candidate_debug(candidate) for candidate in candidates[:max(0, limit)])
 
 
 def _point_to_segment_distance_m(gps: GPSFix, road: OSMRoadSegment) -> float:
@@ -649,6 +675,8 @@ class OSMRoadPredictor:
     endpoint_assist_hits = 0
     rejects: dict[str, int] = {}
     reject_samples: list[str] = []
+    selected_samples: list[str] = []
+    candidate_samples: list[str] = []
     stop_reason = ""
     quality = self._prediction_quality()
     match_quality = self._prediction_match_quality()
@@ -721,10 +749,14 @@ class OSMRoadPredictor:
         stop_reason = "no_candidates"
         break
       candidates.sort(key=lambda item: (item.score, _transition_sort_cost(item), item.heading_diff_deg, item.forward_m))
+      if len(candidate_samples) < DEBUG_CANDIDATE_LIMIT:
+        candidate_samples.append(_candidate_list_debug(candidates))
       best_candidate = candidates[0]
       best = best_candidate.road
       total_accepted += len(candidates)
       predicted.append(best)
+      if len(selected_samples) < DEBUG_SELECTED_LIMIT:
+        selected_samples.append(_candidate_debug(best_candidate))
       visited.add(best.road_id)
       previous_bearing = bearing
       road_id = best.road_id
@@ -755,6 +787,7 @@ class OSMRoadPredictor:
         f"successors={total_successors} accepted={total_accepted} skip_ahead={total_skip_ahead}/{skip_ahead_hits} "
         f"endpoint_assist={endpoint_assist_hits} stop={stop_reason or '-'} "
         f"rejects={_format_rejects(rejects)} samples={';'.join(reject_samples) or '-'} "
+        f"candidates={';'.join(candidate_samples) or '-'} selected={';'.join(selected_samples) or '-'} "
         f"current_meta={current_road.continuity_class if current_road is not None else '-'} "
         f"quality={quality:.2f} match={match_quality:.2f}/{len(self._prediction_match_samples)} "
         f"fallback_count={len(predicted)}"
@@ -772,6 +805,7 @@ class OSMRoadPredictor:
       f"graph_count={len(predicted)} successors={total_successors} accepted={total_accepted} "
       f"skip_ahead={total_skip_ahead}/{skip_ahead_hits} endpoint_assist={endpoint_assist_hits} "
       f"quality={quality:.2f} match={match_quality:.2f}/{len(self._prediction_match_samples)} range={range_mode} stop={stop_reason or '-'} "
+      f"selected={';'.join(selected_samples) or '-'} candidates={';'.join(candidate_samples) or '-'} "
       f"current_meta={current_road.continuity_class if current_road is not None else '-'} "
       f"curve_turn={curve_turn_total_deg:.1f} side={max_route_side_m:.1f} speed={gps.speed_mps * 3.6:.1f}"
     )
