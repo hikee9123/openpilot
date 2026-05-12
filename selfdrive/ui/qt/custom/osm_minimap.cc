@@ -12,6 +12,7 @@ namespace {
 constexpr double kMinMapRadiusM = 230.0;
 constexpr double kBaseMaxMapRadiusM = 1000.0;
 constexpr double kExtendedMaxMapRadiusM = 1800.0;
+constexpr double kDebugMaxMapRadiusM = 3000.0;
 constexpr double kMinRadiusSpeedMps = 30.0 / 3.6;
 constexpr double kMaxRadiusSpeedMps = 60.0 / 3.6;
 constexpr double kRadiusAnimationAlpha = 0.08;
@@ -24,9 +25,18 @@ constexpr int kTopLeft = 0;
 constexpr int kTopRight = 1;
 constexpr int kBottomLeft = 2;
 constexpr int kBottomRight = 3;
+constexpr int kCenter = 4;
 
-QPointF projectPoint(const QRectF &panel, double scale, double forward_m, double right_m) {
-  const QPointF origin(panel.center().x(), panel.bottom() - 58.0);
+bool isCenterPosition(int position) {
+  return position == kCenter;
+}
+
+QPointF egoPoint(const QRectF &panel, bool centered) {
+  return centered ? panel.center() : QPointF(panel.center().x(), panel.bottom() - 58.0);
+}
+
+QPointF projectPoint(const QRectF &panel, double scale, double forward_m, double right_m, bool centered) {
+  const QPointF origin = egoPoint(panel, centered);
   return {origin.x() + right_m * scale, origin.y() - forward_m * scale};
 }
 
@@ -82,9 +92,28 @@ double extendedRouteRadiusM(const OsmMinimapData &data) {
   return std::clamp(route_radius_m, kMinMapRadiusM, kExtendedMaxMapRadiusM);
 }
 
+double debugFitRadiusM(const OsmMinimapData &data) {
+  double max_forward_m = kMinMapRadiusM;
+  double max_side_m = kMinMapRadiusM;
+  for (const OsmMinimapRoad &road : data.roads) {
+    max_forward_m = std::max({max_forward_m, std::abs(static_cast<double>(road.x1)), std::abs(static_cast<double>(road.x2))});
+    max_side_m = std::max({max_side_m, std::abs(static_cast<double>(road.y1)), std::abs(static_cast<double>(road.y2))});
+  }
+  return std::clamp(std::max(max_forward_m * 1.15, max_side_m * 1.25), kMinMapRadiusM, kDebugMaxMapRadiusM);
+}
+
 }  // namespace
 
 QRectF OsmMinimapRenderer::panelRect(const QRect &surface, int position) const {
+  if (isCenterPosition(position)) {
+    const int panel_h = std::clamp(static_cast<int>(surface.height() * 0.68), 520, 760);
+    const int panel_w = panel_h;
+    return QRectF(surface.left() + (surface.width() - panel_w) / 2.0,
+                  surface.top() + (surface.height() - panel_h) / 2.0,
+                  panel_w,
+                  panel_h);
+  }
+
   const int panel_h = std::clamp(surface.height() / 4, 250, 330);
   const int panel_w = panel_h;
   const int right = surface.left() + surface.width();
@@ -103,7 +132,11 @@ QRectF OsmMinimapRenderer::panelRect(const QRect &surface, int position) const {
   }
 }
 
-double OsmMinimapRenderer::targetMapRadiusM(float speed_mps, const OsmMinimapData &data) const {
+double OsmMinimapRenderer::targetMapRadiusM(float speed_mps, const OsmMinimapData &data, int position) const {
+  if (isCenterPosition(position)) {
+    return debugFitRadiusM(data);
+  }
+
   double speed_radius_m = kMinMapRadiusM;
   if (!std::isfinite(speed_mps)) {
     return std::max(speed_radius_m, extendedRouteRadiusM(data));
@@ -146,9 +179,14 @@ void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinima
   }
 
   const QRectF panel = panelRect(surface, position);
-  const double target_radius_m = targetMapRadiusM(speed_mps, data);
-  animated_map_radius_m += (target_radius_m - animated_map_radius_m) * kRadiusAnimationAlpha;
-  animated_map_radius_m = std::clamp(animated_map_radius_m, kMinMapRadiusM, kExtendedMaxMapRadiusM);
+  const bool centered = isCenterPosition(position);
+  const double target_radius_m = targetMapRadiusM(speed_mps, data, position);
+  if (centered || animated_map_radius_m > kExtendedMaxMapRadiusM) {
+    animated_map_radius_m = target_radius_m;
+  } else {
+    animated_map_radius_m += (target_radius_m - animated_map_radius_m) * kRadiusAnimationAlpha;
+  }
+  animated_map_radius_m = std::clamp(animated_map_radius_m, kMinMapRadiusM, centered ? kDebugMaxMapRadiusM : kExtendedMaxMapRadiusM);
   const double scale = std::min(panel.width(), panel.height()) / (2.0 * animated_map_radius_m);
 
   p.save();
@@ -162,23 +200,23 @@ void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinima
   p.setClipPath(clip_path);
 
   p.setPen(QPen(QColor(255, 255, 255, 42), 1));
-  p.drawLine(QPointF(panel.center().x(), panel.top() + 40), QPointF(panel.center().x(), panel.bottom() - 24));
-  p.drawLine(QPointF(panel.left() + 18, panel.bottom() - 58), QPointF(panel.right() - 18, panel.bottom() - 58));
+  const QPointF ego = egoPoint(panel, centered);
+  p.drawLine(QPointF(ego.x(), panel.top() + 40), QPointF(ego.x(), panel.bottom() - 24));
+  p.drawLine(QPointF(panel.left() + 18, ego.y()), QPointF(panel.right() - 18, ego.y()));
 
   for (const OsmMinimapRoad &road : data.roads) {
-    if (!road.history && !road.predicted && !road.current) drawRoad(p, panel, scale, road);
+    if (!road.history && !road.predicted && !road.current) drawRoad(p, panel, scale, road, centered);
   }
   for (const OsmMinimapRoad &road : data.roads) {
-    if (road.history && !road.predicted && !road.current) drawRoad(p, panel, scale, road);
+    if (road.history && !road.predicted && !road.current) drawRoad(p, panel, scale, road, centered);
   }
   for (const OsmMinimapRoad &road : data.roads) {
-    if (road.predicted && !road.current) drawRoad(p, panel, scale, road);
+    if (road.predicted && !road.current) drawRoad(p, panel, scale, road, centered);
   }
   for (const OsmMinimapRoad &road : data.roads) {
-    if (road.current) drawRoad(p, panel, scale, road);
+    if (road.current) drawRoad(p, panel, scale, road, centered);
   }
 
-  const QPointF ego(panel.center().x(), panel.bottom() - 58.0);
   QPainterPath ego_path;
   ego_path.moveTo(ego.x(), ego.y() - 15);
   ego_path.lineTo(ego.x() + 11, ego.y() + 13);
@@ -196,9 +234,9 @@ void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinima
   p.restore();
 }
 
-void OsmMinimapRenderer::drawRoad(QPainter &p, const QRectF &panel, double scale, const OsmMinimapRoad &road) {
-  const QPointF a = projectPoint(panel, scale, road.x1, road.y1);
-  const QPointF b = projectPoint(panel, scale, road.x2, road.y2);
+void OsmMinimapRenderer::drawRoad(QPainter &p, const QRectF &panel, double scale, const OsmMinimapRoad &road, bool centered) {
+  const QPointF a = projectPoint(panel, scale, road.x1, road.y1, centered);
+  const QPointF b = projectPoint(panel, scale, road.x2, road.y2, centered);
   if (!lineNearPanel(panel, a, b)) return;
 
   const bool current = road.current;

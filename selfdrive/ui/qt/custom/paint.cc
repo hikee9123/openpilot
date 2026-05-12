@@ -147,7 +147,7 @@ void OnPaint::updateState(const UIState &s)
       sm2.update(0);
   if ((sm1.frame % UI_FREQ) == 0) {
     osm_enabled = params.getBool("OSMEnable");
-    osm_minimap_position = std::clamp(get_param("OsmMinimapPosition"), 0, 3);
+    osm_minimap_position = std::clamp(get_param("OsmMinimapPosition"), 0, 4);
   }
 
   // 1.
