@@ -51,6 +51,17 @@ def _env_float(name: str, default: float) -> float:
     return default
 
 
+def _param_float(params: Params, name: str, default: float) -> float:
+  value = params.get(name)
+  if value is None:
+    return default
+  try:
+    return float(value)
+  except ValueError:
+    cloudlog.warning("invalid %s=%r, using %.6f", name, value, default)
+    return default
+
+
 def _advance_position(lat: float, lon: float, bearing_deg: float, distance_m: float) -> tuple[float, float]:
   bearing_rad = math.radians(bearing_deg)
   north_m = math.cos(bearing_rad) * distance_m
@@ -147,7 +158,9 @@ def main() -> None:
   start_lon = _env_float("OSM_GPS_SIM_LON", DEFAULT_ROUTE[0][1])
   altitude = _env_float("OSM_GPS_SIM_ALT", 50.0)
   bearing_deg = _env_float("OSM_GPS_SIM_BEARING", _bearing_between(*DEFAULT_ROUTE[0], *DEFAULT_ROUTE[1])) % 360.0
-  speed_kph = max(0.0, _env_float("OSM_GPS_SIM_SPEED", 60.0))
+  speed_kph = max(0.0, _env_float("OSM_GPS_SIM_SPEED", 60.0) if os.getenv("OSM_GPS_SIM_SPEED") is not None
+                  else _param_float(params, "OsmGpsSimSpeedKph", 60.0))
+  params.put("OsmGpsSimSpeedKph", int(round(speed_kph)))
   speed = speed_kph / 3.6
   loop_distance_m = max(0.0, _env_float("OSM_GPS_SIM_LOOP_M", 0.0 if use_default_route else 800.0))
 
@@ -158,6 +171,7 @@ def main() -> None:
   traveled_m = 0.0
   last_t = time.monotonic()
   last_log_t = 0.0
+  last_speed_kph = speed_kph
 
   cloudlog.info("osm_gps_simd started lat=%.7f lon=%.7f bearing=%.1f speed=%.1f km/h",
                 start_lat, start_lon, bearing_deg, speed_kph)
@@ -175,6 +189,11 @@ def main() -> None:
       rk.keep_time()
       continue
 
+    speed_kph = max(0.0, min(_param_float(params, "OsmGpsSimSpeedKph", speed_kph), 250.0))
+    if abs(speed_kph - last_speed_kph) >= 0.5:
+      cloudlog.info("osm_gps_simd speed changed to %.1f km/h", speed_kph)
+      last_speed_kph = speed_kph
+    speed = speed_kph / 3.6
     move_m = speed * dt
     if use_default_route:
       lat, lon, bearing_deg, route_index, route_progress_m = _advance_route(DEFAULT_ROUTE, route_index, route_progress_m, move_m)

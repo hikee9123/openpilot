@@ -78,7 +78,9 @@ private:
   bool osm_enabled = false;
   int osm_minimap_position = 3;
   int osm_debug_map_zoom = 0;
+  int osm_gps_sim_speed_kph = 60;
   bool osm_debug_zoom_pressed = false;
+  bool osm_debug_speed_pressed = false;
   bool osm_debug_zoom_controls_enabled = false;
 
   struct _PARAM_

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include <QPainterPath>
 
@@ -34,24 +35,44 @@ bool isCenterPosition(int position) {
   return position == kCenter;
 }
 
-double debugZoomFactor(int debug_zoom) {
+double debugRadiusM(int debug_zoom) {
   switch (std::clamp(debug_zoom, kDebugZoomMin, kDebugZoomMax)) {
     case 1:
-      return 1.5;
+      return 2000.0;
     case 2:
-      return 2.0;
+      return 1000.0;
     case 3:
-      return 3.0;
+      return 500.0;
     case 4:
-      return 4.0;
+      return 250.0;
     default:
-      return 1.0;
+      return 0.0;
   }
 }
 
-QString debugZoomLabel(int debug_zoom) {
-  const double zoom = debugZoomFactor(debug_zoom);
-  return zoom <= 1.0 ? QStringLiteral("FIT") : QStringLiteral("%1x").arg(zoom, 0, 'g', 2);
+QString debugDistanceLabel(int debug_zoom) {
+  switch (std::clamp(debug_zoom, kDebugZoomMin, kDebugZoomMax)) {
+    case 1:
+      return QStringLiteral("2km");
+    case 2:
+      return QStringLiteral("1km");
+    case 3:
+      return QStringLiteral("500m");
+    case 4:
+      return QStringLiteral("250m");
+    default:
+      return QStringLiteral("FIT");
+  }
+}
+
+QString predictionDistanceLabel(float distance_m) {
+  if (!std::isfinite(distance_m) || distance_m <= 0.0f) {
+    return QStringLiteral("Pred --");
+  }
+  if (distance_m >= 1000.0f) {
+    return QStringLiteral("Pred %1km").arg(distance_m / 1000.0f, 0, 'f', 1);
+  }
+  return QStringLiteral("Pred %1m").arg(static_cast<int>(std::round(distance_m)));
 }
 
 QPointF egoPoint(const QRectF &panel, bool centered) {
@@ -93,6 +114,39 @@ bool lineIntersectsRect(const QRectF &rect, const QPointF &a, const QPointF &b) 
 bool lineNearPanel(const QRectF &panel, const QPointF &a, const QPointF &b) {
   const QRectF expanded = panel.adjusted(-30.0, -30.0, 30.0, 30.0);
   return expanded.contains(a) || expanded.contains(b) || lineIntersectsRect(expanded, a, b);
+}
+
+void drawAssistConnector(QPainter &p, const QRectF &panel, double scale,
+                         const OsmMinimapRoad &from, const OsmMinimapRoad &to, bool centered) {
+  const QPointF from_points[] = {
+    projectPoint(panel, scale, from.x1, from.y1, centered),
+    projectPoint(panel, scale, from.x2, from.y2, centered),
+  };
+  const QPointF to_points[] = {
+    projectPoint(panel, scale, to.x1, to.y1, centered),
+    projectPoint(panel, scale, to.x2, to.y2, centered),
+  };
+
+  QPointF best_from = from_points[0];
+  QPointF best_to = to_points[0];
+  double best_distance_sq = std::numeric_limits<double>::max();
+  for (const QPointF &a : from_points) {
+    for (const QPointF &b : to_points) {
+      const double dx = a.x() - b.x();
+      const double dy = a.y() - b.y();
+      const double distance_sq = dx * dx + dy * dy;
+      if (distance_sq < best_distance_sq) {
+        best_distance_sq = distance_sq;
+        best_from = a;
+        best_to = b;
+      }
+    }
+  }
+  if (!lineNearPanel(panel, best_from, best_to)) return;
+
+  QPen pen(QColor(205, 205, 205, 150), 3, Qt::DashLine, Qt::RoundCap, Qt::RoundJoin);
+  p.setPen(pen);
+  p.drawLine(best_from, best_to);
 }
 
 QString roadName(const OsmMinimapRoad &road) {
@@ -178,11 +232,19 @@ QRectF OsmMinimapRenderer::panelRect(const QRect &surface, int position) const {
 }
 
 QRectF OsmMinimapRenderer::debugZoomOutRect(const QRectF &panel) const {
-  return QRectF(panel.right() - 158.0, panel.top() + 12.0, 48.0, 48.0);
+  return QRectF(panel.right() - 188.0, panel.top() + 12.0, 48.0, 48.0);
 }
 
 QRectF OsmMinimapRenderer::debugZoomInRect(const QRectF &panel) const {
   return QRectF(panel.right() - 58.0, panel.top() + 12.0, 48.0, 48.0);
+}
+
+QRectF OsmMinimapRenderer::debugSpeedDownRect(const QRectF &panel) const {
+  return QRectF(panel.right() - 238.0, panel.top() + 66.0, 48.0, 48.0);
+}
+
+QRectF OsmMinimapRenderer::debugSpeedUpRect(const QRectF &panel) const {
+  return QRectF(panel.right() - 58.0, panel.top() + 66.0, 48.0, 48.0);
 }
 
 bool OsmMinimapRenderer::debugZoomControlAt(const QRect &surface, int position, const QPoint &pt,
@@ -202,6 +264,28 @@ bool OsmMinimapRenderer::debugZoomControlAt(const QRect &surface, int position, 
   }
   if (debugZoomInRect(panel).contains(pt)) {
     delta = 1;
+    return true;
+  }
+  return false;
+}
+
+bool OsmMinimapRenderer::debugSpeedControlAt(const QRect &surface, int position, const QPoint &pt,
+                                             bool debug_zoom_controls, int &delta) const {
+  delta = 0;
+  if (!debug_zoom_controls || !isCenterPosition(position)) {
+    return false;
+  }
+
+  const QRectF panel = panelRect(surface, position);
+  if (!panel.contains(pt)) {
+    return false;
+  }
+  if (debugSpeedDownRect(panel).contains(pt)) {
+    delta = -10;
+    return true;
+  }
+  if (debugSpeedUpRect(panel).contains(pt)) {
+    delta = 10;
     return true;
   }
   return false;
@@ -241,8 +325,9 @@ void OsmMinimapRenderer::drawStatus(QPainter &p, const QRect &surface, const QSt
   p.restore();
 }
 
-void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinimapData &data, bool enabled, int position,
-                              float speed_mps, int debug_zoom, bool debug_zoom_controls) {
+void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinimapData &data, bool enabled,
+                              int position, float speed_mps, int debug_zoom, int sim_speed_kph,
+                              bool debug_zoom_controls) {
   if (!enabled) return;
   if (!data.available) {
     drawStatus(p, surface, QStringLiteral("Waiting for GPS"), position);
@@ -258,7 +343,10 @@ void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinima
   const bool centered = isCenterPosition(position);
   double target_radius_m = targetMapRadiusM(speed_mps, data, position, panel);
   if (centered) {
-    target_radius_m /= debugZoomFactor(debug_zoom);
+    const double debug_radius_m = debugRadiusM(debug_zoom);
+    if (debug_radius_m > 0.0) {
+      target_radius_m = debug_radius_m;
+    }
   }
   if (centered || animated_map_radius_m > kExtendedMaxMapRadiusM) {
     animated_map_radius_m = target_radius_m;
@@ -283,6 +371,15 @@ void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinima
   const QPointF ego = egoPoint(panel, centered);
   p.drawLine(QPointF(ego.x(), panel.top() + 40), QPointF(ego.x(), panel.bottom() - 24));
   p.drawLine(QPointF(panel.left() + 18, ego.y()), QPointF(panel.right() - 18, ego.y()));
+
+  const OsmMinimapRoad *previous_predicted = nullptr;
+  for (const OsmMinimapRoad &road : data.roads) {
+    if (!road.predicted) continue;
+    if (previous_predicted != nullptr && (previous_predicted->assist || road.assist)) {
+      drawAssistConnector(p, panel, scale, *previous_predicted, road, centered);
+    }
+    previous_predicted = &road;
+  }
 
   for (const OsmMinimapRoad &road : data.roads) {
     if (!road.history && !road.predicted && !road.current) drawRoad(p, panel, scale, road, centered);
@@ -311,9 +408,49 @@ void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinima
   p.setFont(InterFont(24, QFont::DemiBold));
   p.setPen(QColor(245, 245, 245, 220));
   p.drawText(panel.adjusted(14, 8, -14, -panel.height() + 42), Qt::AlignLeft | Qt::AlignVCenter, title);
+  if (centered) {
+    drawDebugPredictionDistance(p, panel, data);
+  }
   if (centered && debug_zoom_controls) {
     drawDebugZoomControls(p, panel, debug_zoom);
+    drawDebugSpeedControls(p, panel, sim_speed_kph);
   }
+  p.restore();
+}
+
+void OsmMinimapRenderer::drawDebugPredictionDistance(QPainter &p, const QRectF &panel, const OsmMinimapData &data) {
+  const QRectF label_rect(panel.left() + 14.0, panel.top() + 42.0, 170.0, 28.0);
+
+  p.save();
+  p.setClipping(false);
+  p.setRenderHint(QPainter::Antialiasing, true);
+  p.setFont(InterFont(18, QFont::DemiBold));
+  p.setPen(QColor(245, 245, 245, 210));
+  p.drawText(label_rect, Qt::AlignLeft | Qt::AlignVCenter, predictionDistanceLabel(data.prediction_distance_m));
+  p.restore();
+}
+
+void OsmMinimapRenderer::drawDebugSpeedControls(QPainter &p, const QRectF &panel, int sim_speed_kph) {
+  const QRectF minus = debugSpeedDownRect(panel);
+  const QRectF plus = debugSpeedUpRect(panel);
+  const QRectF label(minus.right() + 4.0, minus.top(), plus.left() - minus.right() - 8.0, minus.height());
+
+  p.save();
+  p.setClipping(false);
+  p.setRenderHint(QPainter::Antialiasing, true);
+  p.setFont(InterFont(25, QFont::DemiBold));
+  p.setPen(QPen(QColor(255, 255, 255, 68), 2));
+  p.setBrush(QColor(0, 0, 0, 185));
+  p.drawRoundedRect(minus, 12, 12);
+  p.drawRoundedRect(plus, 12, 12);
+
+  p.setPen(QColor(245, 245, 245, 235));
+  p.drawText(minus, Qt::AlignCenter, QStringLiteral("-"));
+  p.drawText(plus, Qt::AlignCenter, QStringLiteral("+"));
+
+  p.setFont(InterFont(17, QFont::DemiBold));
+  p.setPen(QColor(245, 245, 245, 215));
+  p.drawText(label, Qt::AlignCenter, QStringLiteral("%1km/h").arg(std::clamp(sim_speed_kph, 0, 250)));
   p.restore();
 }
 
@@ -337,7 +474,7 @@ void OsmMinimapRenderer::drawDebugZoomControls(QPainter &p, const QRectF &panel,
 
   p.setFont(InterFont(19, QFont::DemiBold));
   p.setPen(QColor(245, 245, 245, 215));
-  p.drawText(label, Qt::AlignCenter, debugZoomLabel(debug_zoom));
+  p.drawText(label, Qt::AlignCenter, debugDistanceLabel(debug_zoom));
   p.restore();
 }
 
@@ -359,7 +496,7 @@ void OsmMinimapRenderer::drawRoad(QPainter &p, const QRectF &panel, double scale
   }
   if (predicted) {
     if (assist) {
-      color = QColor(190, 120, 255, 220);
+      color = QColor(205, 205, 205, 180);
     } else {
       color = fallback ? QColor(255, 190, 64, 210) : QColor(64, 196, 255, 210);
     }
@@ -370,7 +507,8 @@ void OsmMinimapRenderer::drawRoad(QPainter &p, const QRectF &panel, double scale
     width = 7;
   }
 
-  p.setPen(QPen(color, width, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+  QPen pen(color, width, assist ? Qt::DashLine : Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+  p.setPen(pen);
   p.drawLine(a, b);
 
   const QString name = roadName(road);

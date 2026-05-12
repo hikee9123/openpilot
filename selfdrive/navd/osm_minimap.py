@@ -25,9 +25,13 @@ def _segment_to_overlay(segment: OSMRoadSegment, prediction: RoadPrediction, cur
   }
 
 
-def build_minimap_overlay(prediction: RoadPrediction | None, history_segments: list[OSMRoadSegment] | None = None, max_segments: int = 220) -> tuple[str, float, list[dict]]:
+def _prediction_distance_m(prediction: RoadPrediction) -> float:
+  return sum(max(0.0, segment.segment_length or segment.distance_m or 0.0) for segment in prediction.predicted)
+
+
+def build_minimap_overlay(prediction: RoadPrediction | None, history_segments: list[OSMRoadSegment] | None = None, max_segments: int = 220) -> tuple[str, float, float, list[dict]]:
   if prediction is None:
-    return "", 0.0, []
+    return "", 0.0, 0.0, []
 
   current_id = prediction.current.road_id if prediction.current is not None else None
   predicted_ids = {segment.road_id for segment in prediction.predicted}
@@ -47,10 +51,10 @@ def build_minimap_overlay(prediction: RoadPrediction | None, history_segments: l
     merged.setdefault(segment.road_id, segment)
 
   if not merged:
-    return prediction.current.display_name if prediction.current is not None else "", round(prediction.gps.bearing_deg, 1), []
+    return prediction.current.display_name if prediction.current is not None else "", round(prediction.gps.bearing_deg, 1), _prediction_distance_m(prediction), []
 
   roads = [
     _segment_to_overlay(segment, prediction, current_id, predicted_ids, history_ids, assist_ids)
     for segment in list(merged.values())[:max_segments]
   ]
-  return prediction.current.display_name if prediction.current is not None else "", round(prediction.gps.bearing_deg, 1), roads
+  return prediction.current.display_name if prediction.current is not None else "", round(prediction.gps.bearing_deg, 1), _prediction_distance_m(prediction), roads

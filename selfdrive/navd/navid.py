@@ -58,7 +58,8 @@ def _select_gps(sm: messaging.SubMaster) -> GPSFix | None:
   return None
 
 
-def _send_overlay(pm: messaging.PubMaster, available: bool, road_name: str = "", bearing: float = 0.0, roads: list[dict] | None = None) -> None:
+def _send_overlay(pm: messaging.PubMaster, available: bool, road_name: str = "", bearing: float = 0.0,
+                  prediction_distance_m: float = 0.0, roads: list[dict] | None = None) -> None:
   msg = messaging.new_message("naviCustom")
   nav = msg.naviCustom.naviData
   nav.active = 1 if available else 0
@@ -66,6 +67,7 @@ def _send_overlay(pm: messaging.PubMaster, available: bool, road_name: str = "",
   overlay = nav.init("osmRoadOverlay")
   overlay.road = road_name
   overlay.bearing = bearing
+  overlay.predictionDistanceM = prediction_distance_m
   road_items = overlay.init("roads", len(roads or []))
   for i, road in enumerate(roads or []):
     road_items[i].roadId = road["roadId"]
@@ -267,10 +269,10 @@ def main() -> None:
         history_segments[current_segment.road_id] = current_segment
         while len(history_segments) > HISTORY_SEGMENT_LIMIT:
           history_segments.popitem(last=False)
-      road_name, bearing, roads = build_minimap_overlay(prediction, list(history_segments.values()))
-      overlay_key = (road_name, bearing, tuple(tuple(sorted(road.items())) for road in roads))
+      road_name, bearing, prediction_distance_m, roads = build_minimap_overlay(prediction, list(history_segments.values()))
+      overlay_key = (road_name, bearing, round(prediction_distance_m, 1), tuple(tuple(sorted(road.items())) for road in roads))
       if not last_available or overlay_key != last_overlay or now - last_send_t > 2.5:
-        _send_overlay(pm, True, road_name, bearing, roads)
+        _send_overlay(pm, True, road_name, bearing, prediction_distance_m, roads)
         last_available = True
         last_overlay = overlay_key
         last_send_t = now

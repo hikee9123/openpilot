@@ -44,6 +44,12 @@ MAX_GRAPH_SIDE_OFFSET_M = 260.0
 MAX_GRAPH_SKIP_AHEAD_SEGMENTS = 5
 MAX_GRAPH_ENDPOINT_ASSIST_M = 420.0
 MAX_ENDPOINT_ASSIST_GAP_M = 100.0
+MAX_ENDPOINT_ASSIST_RATIO_FOR_EXTENSION = 0.30
+MAX_CONSECUTIVE_ENDPOINT_ASSIST = 2
+MAX_STRONG_CONSECUTIVE_ENDPOINT_ASSIST = 4
+STRONG_ENDPOINT_ASSIST_HEADING_DIFF_DEG = 25.0
+STRONG_ENDPOINT_ASSIST_LAYER_DELTA = 1
+ENDPOINT_ASSIST_BLOCKED_RAMP_TYPES = {"loop"}
 BASE_GRAPH_SEGMENT_LIMIT = 40
 EXTENDED_GRAPH_SEGMENT_LIMIT = 80
 HIGH_SPEED_GRAPH_SEGMENT_LIMIT = 120
@@ -170,6 +176,34 @@ def _same_destination_metadata(current_road: OSMRoadSegment | None, road: OSMRoa
     _same_nonempty(current_road.destination_ref, road.destination_ref)
     or _same_nonempty(current_road.destination, road.destination)
   )
+
+
+def _endpoint_assist_candidate_allowed(from_road: OSMRoadSegment, road: OSMRoadSegment) -> bool:
+  if road.ramp_type in ENDPOINT_ASSIST_BLOCKED_RAMP_TYPES:
+    return False
+  if road.is_ramp and not from_road.is_ramp:
+    return False
+  same_identity = (
+    _same_display_name(from_road.display_name, road.display_name)
+    or (from_road.osm_id > 0 and from_road.osm_id == road.osm_id)
+  )
+  if not (same_identity or _same_route_metadata(from_road, road) or _same_destination_metadata(from_road, road)):
+    return False
+  return True
+
+
+def _strong_endpoint_assist_candidate(from_road: OSMRoadSegment, road: OSMRoadSegment, heading_diff_deg: float) -> bool:
+  if not _endpoint_assist_candidate_allowed(from_road, road):
+    return False
+  if heading_diff_deg > STRONG_ENDPOINT_ASSIST_HEADING_DIFF_DEG:
+    return False
+  if abs(from_road.layer_int - road.layer_int) > STRONG_ENDPOINT_ASSIST_LAYER_DELTA:
+    return False
+  same_identity = (
+    _same_display_name(from_road.display_name, road.display_name)
+    or (from_road.osm_id > 0 and from_road.osm_id == road.osm_id)
+  )
+  return same_identity or _same_route_metadata(from_road, road)
 
 
 def _metadata_score_adjustment(current_road: OSMRoadSegment | None, road: OSMRoadSegment,
@@ -591,6 +625,9 @@ class OSMRoadPredictor:
                                 current_name: str, current_osm_id: int,
                                 road: OSMRoadSegment,
                                 current_road: OSMRoadSegment | None = None) -> _SuccessorCandidate | None:
+    if road.ramp_type in ENDPOINT_ASSIST_BLOCKED_RAMP_TYPES:
+      return None
+
     x1, y1 = latlon_to_car_space_m(end_lat, end_lon, reference_bearing_deg, road.lat1, road.lon1)
     x2, y2 = latlon_to_car_space_m(end_lat, end_lon, reference_bearing_deg, road.lat2, road.lon2)
     endpoint_gap_m = min(math.hypot(x1, y1), math.hypot(x2, y2))
@@ -634,6 +671,8 @@ class OSMRoadPredictor:
     for candidate_road in candidates:
       if candidate_road.road_id in visited or candidate_road.road_id == road_id:
         continue
+      if not _endpoint_assist_candidate_allowed(road, candidate_road):
+        continue
       candidate, reject_reason = self._score_successor(gps, reference_bearing_deg, current_name,
                                                         current_osm_id, candidate_road,
                                                         current_road=current_road)
@@ -673,6 +712,8 @@ class OSMRoadPredictor:
     total_skip_ahead = 0
     skip_ahead_hits = 0
     endpoint_assist_hits = 0
+    consecutive_endpoint_assist = 0
+    consecutive_strong_endpoint_assist = 0
     rejects: dict[str, int] = {}
     reject_samples: list[str] = []
     selected_samples: list[str] = []
@@ -735,16 +776,6 @@ class OSMRoadPredictor:
           rejects[reject_reason] = rejects.get(reject_reason, 0) + 1
           if len(reject_samples) < 3:
             reject_samples.append(f"{road.road_id}:{road.display_name or '-'}:{reject_reason}")
-      if not candidates and not endpoint_assist_attempted:
-        assist_candidate = self._endpoint_assist_successor(conn, gps, bearing, current.display_name,
-                                                           current.osm_id, road_id, visited,
-                                                           current_road=score_context_road)
-        if assist_candidate is not None:
-          candidates.append(assist_candidate)
-          assist_road_ids.add(assist_candidate.road.road_id)
-          endpoint_assist_hits += 1
-          if len(reject_samples) < 3:
-            reject_samples.append(f"{road_id}->{assist_candidate.road.road_id}:endpoint_assist_after_reject")
       if not candidates:
         stop_reason = "no_candidates"
         break
@@ -753,8 +784,18 @@ class OSMRoadPredictor:
         candidate_samples.append(_candidate_list_debug(candidates))
       best_candidate = candidates[0]
       best = best_candidate.road
+      previous_context_road = score_context_road
       total_accepted += len(candidates)
       predicted.append(best)
+      if best.road_id in assist_road_ids:
+        consecutive_endpoint_assist += 1
+        if previous_context_road is not None and _strong_endpoint_assist_candidate(previous_context_road, best, best_candidate.heading_diff_deg):
+          consecutive_strong_endpoint_assist += 1
+        else:
+          consecutive_strong_endpoint_assist = 0
+      else:
+        consecutive_endpoint_assist = 0
+        consecutive_strong_endpoint_assist = 0
       if len(selected_samples) < DEBUG_SELECTED_LIMIT:
         selected_samples.append(_candidate_debug(best_candidate))
       visited.add(best.road_id)
@@ -766,15 +807,27 @@ class OSMRoadPredictor:
       _, best_y1 = latlon_to_car_space_m(gps.lat, gps.lon, gps.bearing_deg, best.lat1, best.lon1)
       _, best_y2 = latlon_to_car_space_m(gps.lat, gps.lon, gps.bearing_deg, best.lat2, best.lon2)
       max_route_side_m = max(max_route_side_m, abs(best_y1), abs(best_y2))
+      assist_ratio = endpoint_assist_hits / max(1, len(predicted))
+      assist_extension_ok = assist_ratio <= MAX_ENDPOINT_ASSIST_RATIO_FOR_EXTENSION
       curve_extension_allowed = (
         extension_quality_ok
+        and assist_extension_ok
         and (
           curve_turn_total_deg >= CURVE_EXTENSION_MIN_TURN_DEG
           or max_route_side_m >= CURVE_EXTENSION_MIN_SIDE_M
         )
       )
-      if len(predicted) >= BASE_GRAPH_SEGMENT_LIMIT and not (curve_extension_allowed or high_speed_extension_allowed):
-        stop_reason = "base_range"
+      high_speed_extension_active = high_speed_extension_allowed and assist_extension_ok
+      assist_chain_limit = (
+        MAX_STRONG_CONSECUTIVE_ENDPOINT_ASSIST
+        if consecutive_endpoint_assist == consecutive_strong_endpoint_assist
+        else MAX_CONSECUTIVE_ENDPOINT_ASSIST
+      )
+      if consecutive_endpoint_assist >= assist_chain_limit:
+        stop_reason = "assist_chain"
+        break
+      if len(predicted) >= BASE_GRAPH_SEGMENT_LIMIT and not (curve_extension_allowed or high_speed_extension_active):
+        stop_reason = "assist_uncertain" if not assist_extension_ok else "base_range"
         break
 
     if not predicted:
@@ -785,7 +838,7 @@ class OSMRoadPredictor:
       debug_text = (
         f"current={current.display_name or '-'} road_id={current.road_id} "
         f"successors={total_successors} accepted={total_accepted} skip_ahead={total_skip_ahead}/{skip_ahead_hits} "
-        f"endpoint_assist={endpoint_assist_hits} stop={stop_reason or '-'} "
+        f"endpoint_assist={endpoint_assist_hits} assist_ratio={endpoint_assist_hits / max(1, len(predicted)):.2f} stop={stop_reason or '-'} "
         f"rejects={_format_rejects(rejects)} samples={';'.join(reject_samples) or '-'} "
         f"candidates={';'.join(candidate_samples) or '-'} selected={';'.join(selected_samples) or '-'} "
         f"current_meta={current_road.continuity_class if current_road is not None else '-'} "
@@ -803,7 +856,7 @@ class OSMRoadPredictor:
     debug_text = (
       f"current={current.display_name or '-'} road_id={current.road_id} "
       f"graph_count={len(predicted)} successors={total_successors} accepted={total_accepted} "
-      f"skip_ahead={total_skip_ahead}/{skip_ahead_hits} endpoint_assist={endpoint_assist_hits} "
+      f"skip_ahead={total_skip_ahead}/{skip_ahead_hits} endpoint_assist={endpoint_assist_hits} assist_ratio={endpoint_assist_hits / max(1, len(predicted)):.2f} "
       f"quality={quality:.2f} match={match_quality:.2f}/{len(self._prediction_match_samples)} range={range_mode} stop={stop_reason or '-'} "
       f"selected={';'.join(selected_samples) or '-'} candidates={';'.join(candidate_samples) or '-'} "
       f"current_meta={current_road.continuity_class if current_road is not None else '-'} "

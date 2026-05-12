@@ -45,6 +45,7 @@ struct NaviCustom @0xf35cc4560bbf6ec2 {
             road @0 :Text;
             bearing @1 :Float32;
             roads @2 :List(OsmRoad);
+            predictionDistanceM @3 :Float32;
         }
 
         struct OsmRoad {

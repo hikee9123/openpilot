@@ -151,6 +151,7 @@ void OnPaint::updateState(const UIState &s)
     osm_enabled = params.getBool("OSMEnable");
     osm_minimap_position = std::clamp(get_param("OsmMinimapPosition"), 0, 4);
     osm_debug_map_zoom = std::clamp(get_param("OsmDebugMapZoom"), 0, 4);
+    osm_gps_sim_speed_kph = std::clamp(get_param("OsmGpsSimSpeedKph"), 0, 250);
     osm_debug_zoom_controls_enabled = std::getenv("USE_WEBCAM") != nullptr || util::getenv("CAM_SIM", "") == "webcam";
   }
 
@@ -209,6 +210,7 @@ void OnPaint::updateState(const UIState &s)
     m_nda.osmRoadOverlay.available = true;
     m_nda.osmRoadOverlay.road = QString::fromUtf8(overlay.getRoad().cStr());
     m_nda.osmRoadOverlay.bearing = overlay.getBearing();
+    m_nda.osmRoadOverlay.prediction_distance_m = overlay.getPredictionDistanceM();
     m_nda.osmRoadOverlay.roads.reserve(roads.size());
     for (auto road : roads) {
       m_nda.osmRoadOverlay.roads.push_back({
@@ -380,7 +382,8 @@ void OnPaint::drawLead(QPainter &p, const cereal::RadarState::LeadData::Reader &
 void OnPaint::drawHud(QPainter &p)
 {
   osm_minimap.draw(p, QRect(0, 0, state->fb_w, state->fb_h), m_nda.osmRoadOverlay, osm_enabled,
-                   osm_minimap_position, m_param.vEgo, osm_debug_map_zoom, osm_debug_zoom_controls_enabled);
+                   osm_minimap_position, m_param.vEgo, osm_debug_map_zoom, osm_gps_sim_speed_kph,
+                   osm_debug_zoom_controls_enabled);
 
   if( !is_debug && !m_param.ui.getKegman() ) return;
 
@@ -416,23 +419,39 @@ bool OnPaint::handleMousePress(const QPoint &pt, const QRect &surface)
   int delta = 0;
   osm_debug_zoom_pressed = osm_minimap.debugZoomControlAt(surface, osm_minimap_position, pt,
                                                          osm_debug_zoom_controls_enabled, delta);
-  return osm_debug_zoom_pressed;
+  osm_debug_speed_pressed = !osm_debug_zoom_pressed
+                         && osm_minimap.debugSpeedControlAt(surface, osm_minimap_position, pt,
+                                                            osm_debug_zoom_controls_enabled, delta);
+  return osm_debug_zoom_pressed || osm_debug_speed_pressed;
 }
 
 bool OnPaint::handleMouseRelease(const QPoint &pt, const QRect &surface)
 {
   int delta = 0;
-  const bool hit = osm_minimap.debugZoomControlAt(surface, osm_minimap_position, pt,
-                                                 osm_debug_zoom_controls_enabled, delta);
-  const bool handled = osm_debug_zoom_pressed || hit;
-  osm_debug_zoom_pressed = false;
-  if (!hit || delta == 0) {
-    return handled;
+  const bool zoom_hit = osm_minimap.debugZoomControlAt(surface, osm_minimap_position, pt,
+                                                      osm_debug_zoom_controls_enabled, delta);
+  const bool zoom_handled = osm_debug_zoom_pressed || zoom_hit;
+  if (zoom_hit && delta != 0) {
+    osm_debug_map_zoom = std::clamp(osm_debug_map_zoom + delta, 0, 4);
+    params.put("OsmDebugMapZoom", std::to_string(osm_debug_map_zoom));
+    osm_debug_zoom_pressed = false;
+    osm_debug_speed_pressed = false;
+    return true;
   }
 
-  osm_debug_map_zoom = std::clamp(osm_debug_map_zoom + delta, 0, 4);
-  params.put("OsmDebugMapZoom", std::to_string(osm_debug_map_zoom));
-  return true;
+  delta = 0;
+  const bool speed_hit = osm_minimap.debugSpeedControlAt(surface, osm_minimap_position, pt,
+                                                        osm_debug_zoom_controls_enabled, delta);
+  const bool speed_handled = osm_debug_speed_pressed || speed_hit;
+  osm_debug_zoom_pressed = false;
+  osm_debug_speed_pressed = false;
+  if (speed_hit && delta != 0) {
+    osm_gps_sim_speed_kph = std::clamp(osm_gps_sim_speed_kph + delta, 0, 250);
+    params.put("OsmGpsSimSpeedKph", std::to_string(osm_gps_sim_speed_kph));
+    return true;
+  }
+
+  return zoom_handled || speed_handled;
 }
 
 
