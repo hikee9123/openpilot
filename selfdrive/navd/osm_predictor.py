@@ -12,6 +12,7 @@ from openpilot.selfdrive.navd.osm_roads import (
   DEFAULT_OSM_ROADS_DB_PATH,
   OSMRoadMatch,
   OSMRoadSegment,
+  OSMRoadTransition,
   angle_diff_deg,
   connect_readonly_db,
   database_segment_count,
@@ -24,6 +25,10 @@ from openpilot.selfdrive.navd.osm_roads import (
 )
 
 MAX_GRAPH_HEADING_DIFF_DEG = 70.0
+MAX_GRAPH_TURN_ANGLE_DEG = 75.0
+PREFERRED_GRAPH_TURN_ANGLE_DEG = 135.0
+PREFERRED_TRANSITION_SCORE_THRESHOLD = 0.65
+PREFERRED_TRANSITION_COST_LIMIT = 90.0
 MIN_GRAPH_SIDE_OFFSET_M = 80.0
 MAX_GRAPH_SIDE_OFFSET_M = 260.0
 MAX_GRAPH_SKIP_AHEAD_SEGMENTS = 5
@@ -86,6 +91,7 @@ class _SuccessorCandidate:
   forward_m: float
   road: OSMRoadSegment
   driving_bearing_deg: float
+  transition: OSMRoadTransition | None = None
 
 
 @dataclass(frozen=True)
@@ -109,6 +115,22 @@ def _same_road_identity(current_name: str, current_osm_id: int, road: OSMRoadSeg
 
 def _trusted_link_successor(road: OSMRoadSegment) -> bool:
   return road.highway in LINK_HIGHWAYS
+
+
+def _transition_allowed_for_graph(transition: OSMRoadTransition) -> bool:
+  if transition.turn_angle_deg <= MAX_GRAPH_TURN_ANGLE_DEG:
+    return True
+  return (
+    transition.turn_angle_deg <= PREFERRED_GRAPH_TURN_ANGLE_DEG
+    and transition.preferred_transition_score >= PREFERRED_TRANSITION_SCORE_THRESHOLD
+    and transition.transition_cost <= PREFERRED_TRANSITION_COST_LIMIT
+  )
+
+
+def _transition_sort_cost(candidate: _SuccessorCandidate) -> float:
+  if candidate.transition is None:
+    return 0.0
+  return max(0.0, candidate.transition.transition_cost)
 
 
 def _point_to_segment_distance_m(gps: GPSFix, road: OSMRoadSegment) -> float:
@@ -166,7 +188,7 @@ class OSMRoadPredictor:
     self._last_gps: GPSFix | None = None
     self._last_prediction: RoadPrediction | None = None
     self._last_update_t = 0.0
-    self._successor_cache: dict[int, list[OSMRoadSegment]] = {}
+    self._successor_cache: dict[int, list[OSMRoadTransition]] = {}
     self._prediction_quality_samples: list[bool] = []
     self._prediction_match_samples: list[bool] = []
     self._pending_prediction_matches: list[_PendingPredictionMatch] = []
@@ -368,11 +390,11 @@ class OSMRoadPredictor:
     self._last_update_t = now
     return result
 
-  def _successors(self, conn: sqlite3.Connection, road_id: int) -> list[OSMRoadSegment]:
+  def _successors(self, conn: sqlite3.Connection, road_id: int) -> list[OSMRoadTransition]:
     cached = self._successor_cache.get(road_id)
     if cached is not None:
       return cached
-    successors = [transition.road for transition in road_successors(conn, road_id, limit=8) if transition.turn_angle_deg <= 75.0]
+    successors = [transition for transition in road_successors(conn, road_id, limit=12) if _transition_allowed_for_graph(transition)]
     self._successor_cache[road_id] = successors
     return successors
 
@@ -406,7 +428,8 @@ class OSMRoadPredictor:
 
   def _score_successor(self, gps: GPSFix, reference_bearing_deg: float, current_name: str,
                        current_osm_id: int, road: OSMRoadSegment,
-                       trusted_successor: bool = False) -> tuple[_SuccessorCandidate | None, str]:
+                       trusted_successor: bool = False,
+                       transition: OSMRoadTransition | None = None) -> tuple[_SuccessorCandidate | None, str]:
     x1, y1 = latlon_to_car_space_m(gps.lat, gps.lon, gps.bearing_deg, road.lat1, road.lon1)
     x2, y2 = latlon_to_car_space_m(gps.lat, gps.lon, gps.bearing_deg, road.lat2, road.lon2)
     same_identity = _same_road_identity(current_name, current_osm_id, road)
@@ -437,7 +460,7 @@ class OSMRoadPredictor:
     same_osm_bonus = -8.0 if current_osm_id > 0 and road.osm_id == current_osm_id else 0.0
     trusted_bonus = -6.0 if trust_geometry else 0.0
     score = heading_diff * 3.0 + side_offset_m * 0.35 + score_forward_m * 0.02 + same_name_bonus + same_osm_bonus + trusted_bonus
-    return _SuccessorCandidate(score, heading_diff, forward_m, road, road_bearing), ""
+    return _SuccessorCandidate(score, heading_diff, forward_m, road, road_bearing, transition), ""
 
   def _skip_ahead_successor(self, conn: sqlite3.Connection, gps: GPSFix, reference_bearing_deg: float,
                             current_name: str, current_osm_id: int, start_road: OSMRoadSegment,
@@ -452,7 +475,8 @@ class OSMRoadPredictor:
     while frontier and skipped < MAX_GRAPH_SKIP_AHEAD_SEGMENTS:
       road = frontier.pop(0)
       skipped += 1
-      for next_road in self._successors(conn, road.road_id):
+      for next_transition in self._successors(conn, road.road_id):
+        next_road = next_transition.road
         if next_road.road_id in seen:
           continue
         seen.add(next_road.road_id)
@@ -460,7 +484,8 @@ class OSMRoadPredictor:
           continue
         candidate, reject_reason = self._score_successor(gps, reference_bearing_deg, current_name,
                                                           current_osm_id, next_road,
-                                                          trusted_successor=True)
+                                                          trusted_successor=True,
+                                                          transition=next_transition)
         if candidate is not None:
           return candidate, skipped
         if reject_reason == "behind":
@@ -575,13 +600,15 @@ class OSMRoadPredictor:
           endpoint_assist_hits += 1
           if len(reject_samples) < 3:
             reject_samples.append(f"{road_id}->{assist_candidate.road.road_id}:endpoint_assist")
-      for road in successors:
+      for transition in successors:
+        road = transition.road
         if road.road_id in visited:
           rejects["visited"] = rejects.get("visited", 0) + 1
           continue
         candidate, reject_reason = self._score_successor(gps, bearing, current.display_name,
                                                           current.osm_id, road,
-                                                          trusted_successor=True)
+                                                          trusted_successor=True,
+                                                          transition=transition)
         if candidate is not None:
           candidates.append(candidate)
         elif reject_reason == "behind":
@@ -613,7 +640,7 @@ class OSMRoadPredictor:
       if not candidates:
         stop_reason = "no_candidates"
         break
-      candidates.sort(key=lambda item: (item.score, item.heading_diff_deg, item.forward_m))
+      candidates.sort(key=lambda item: (item.score, _transition_sort_cost(item), item.heading_diff_deg, item.forward_m))
       best_candidate = candidates[0]
       best = best_candidate.road
       total_accepted += len(candidates)

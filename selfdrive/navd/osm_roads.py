@@ -76,6 +76,14 @@ class OSMRoadSegment:
 class OSMRoadTransition:
   road: OSMRoadSegment
   turn_angle_deg: float
+  blocked_transition: int = 0
+  transition_cost: float = 0.0
+  transition_probability: float = 0.0
+  preferred_transition_score: float = 0.0
+  flow_probability: float = 0.0
+  connectivity_confidence: float = 1.0
+  preferred_successor_id: int = 0
+  secondary_successor_id: int = 0
 
 
 def normalize_road_name(value: str) -> str:
@@ -310,31 +318,67 @@ def road_successors(db_path: DbSource = DEFAULT_OSM_ROADS_DB_PATH, road_id: int 
 
     order_terms = []
     if "transition_cost" in adjacency_columns:
-      order_terms.append("road_adjacency.transition_cost ASC")
+      order_terms.append("COALESCE(road_adjacency.transition_cost, road_adjacency.turn_angle_deg) ASC")
     if "preferred_transition_score" in adjacency_columns:
-      order_terms.append("road_adjacency.preferred_transition_score DESC")
+      order_terms.append("COALESCE(road_adjacency.preferred_transition_score, 0.0) DESC")
     if "connectivity_confidence" in adjacency_columns:
-      order_terms.append("road_adjacency.connectivity_confidence DESC")
+      order_terms.append("COALESCE(road_adjacency.connectivity_confidence, 1.0) DESC")
     order_terms.extend(("road_adjacency.turn_angle_deg ASC", "roads.id ASC"))
+
+    transition_columns = {
+      "blocked_transition": "0",
+      "transition_cost": "road_adjacency.turn_angle_deg",
+      "transition_probability": "0.0",
+      "preferred_transition_score": "0.0",
+      "flow_probability": "0.0",
+      "connectivity_confidence": "1.0",
+      "preferred_successor_id": "0",
+      "secondary_successor_id": "0",
+    }
+    transition_select = []
+    for column, default in transition_columns.items():
+      if column in adjacency_columns:
+        transition_select.append(f"COALESCE(road_adjacency.{column}, {default}) AS {column}")
+      else:
+        transition_select.append(f"{default} AS {column}")
 
     rows = conn.execute("""
       SELECT roads.id, roads.osm_id, roads.name, roads.ref, roads.highway, roads.road_class, roads.oneway,
              roads.lat1, roads.lon1, roads.lat2, roads.lon2, roads.bearing_deg,
              0.0 AS distance_m,
-             road_adjacency.turn_angle_deg
+             road_adjacency.turn_angle_deg,
+             {transition_select}
       FROM road_adjacency
       JOIN roads ON roads.id = road_adjacency.to_road_id
       WHERE road_adjacency.from_road_id = ?
         {blocked_filter}
       ORDER BY {order_clause}
       LIMIT ?
-    """.format(blocked_filter=blocked_filter, order_clause=", ".join(order_terms)), (road_id, max(0, limit))).fetchall()
+    """.format(
+      blocked_filter=blocked_filter,
+      order_clause=", ".join(order_terms),
+      transition_select=", ".join(transition_select),
+    ), (road_id, max(0, limit))).fetchall()
   except sqlite3.Error:
     return []
   finally:
     if close_conn is not None:
       close_conn.close()
-  return [OSMRoadTransition(_row_to_segment(row), float(row["turn_angle_deg"])) for row in rows]
+  return [
+    OSMRoadTransition(
+      road=_row_to_segment(row),
+      turn_angle_deg=float(row["turn_angle_deg"]),
+      blocked_transition=int(row["blocked_transition"]),
+      transition_cost=float(row["transition_cost"]),
+      transition_probability=float(row["transition_probability"]),
+      preferred_transition_score=float(row["preferred_transition_score"]),
+      flow_probability=float(row["flow_probability"]),
+      connectivity_confidence=float(row["connectivity_confidence"]),
+      preferred_successor_id=int(row["preferred_successor_id"]),
+      secondary_successor_id=int(row["secondary_successor_id"]),
+    )
+    for row in rows
+  ]
 
 
 def find_current_road(
