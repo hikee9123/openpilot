@@ -32,7 +32,8 @@ bool isCenterPosition(int position) {
 }
 
 QPointF egoPoint(const QRectF &panel, bool centered) {
-  return centered ? panel.center() : QPointF(panel.center().x(), panel.bottom() - 58.0);
+  const double bottom_margin = centered ? 86.0 : 58.0;
+  return QPointF(panel.center().x(), panel.bottom() - bottom_margin);
 }
 
 QPointF projectPoint(const QRectF &panel, double scale, double forward_m, double right_m, bool centered) {
@@ -107,9 +108,9 @@ double debugFitRadiusM(const OsmMinimapData &data) {
 QRectF OsmMinimapRenderer::panelRect(const QRect &surface, int position) const {
   if (isCenterPosition(position)) {
     const int panel_h = std::clamp(static_cast<int>(surface.height() * 0.68), 520, 760);
-    const int panel_w = panel_h;
-    return QRectF(surface.left() + (surface.width() - panel_w) / 2.0,
-                  surface.top() + (surface.height() - panel_h) / 2.0,
+    const int panel_w = panel_h * 0.7;
+    return QRectF(surface.left() + 250, // + (surface.width() - panel_w) / 2.0,
+                  surface.top() + 50,//(surface.height() - panel_h) / 2.0 + 80,
                   panel_w,
                   panel_h);
   }
