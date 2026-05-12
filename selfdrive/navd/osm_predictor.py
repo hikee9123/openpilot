@@ -21,6 +21,7 @@ from openpilot.selfdrive.navd.osm_roads import (
   forward_road_segments,
   latlon_to_car_space_m,
   nearby_road_segments,
+  row_to_segment,
   road_successors,
 )
 
@@ -401,8 +402,7 @@ class OSMRoadPredictor:
   def _road_segment(self, conn: sqlite3.Connection, road_id: int) -> OSMRoadSegment | None:
     try:
       row = conn.execute("""
-        SELECT id, osm_id, name, ref, highway, road_class, oneway,
-               lat1, lon1, lat2, lon2, bearing_deg, 0.0 AS distance_m
+        SELECT roads.*, 0.0 AS distance_m
         FROM roads
         WHERE id = ?
       """, (road_id,)).fetchone()
@@ -410,21 +410,7 @@ class OSMRoadPredictor:
       return None
     if row is None:
       return None
-    return OSMRoadSegment(
-      road_id=int(row["id"]),
-      osm_id=int(row["osm_id"]),
-      name=str(row["name"] or ""),
-      ref=str(row["ref"] or ""),
-      highway=str(row["highway"] or ""),
-      road_class=str(row["road_class"] or ""),
-      oneway=int(row["oneway"]),
-      lat1=float(row["lat1"]),
-      lon1=float(row["lon1"]),
-      lat2=float(row["lat2"]),
-      lon2=float(row["lon2"]),
-      bearing_deg=float(row["bearing_deg"]),
-      distance_m=float(row["distance_m"]),
-    )
+    return row_to_segment(row)
 
   def _score_successor(self, gps: GPSFix, reference_bearing_deg: float, current_name: str,
                        current_osm_id: int, road: OSMRoadSegment,

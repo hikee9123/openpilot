@@ -66,6 +66,31 @@ class OSMRoadSegment:
   lon2: float
   bearing_deg: float
   distance_m: float
+  tunnel: str = ""
+  layer: str = ""
+  covered: str = ""
+  bridge: str = ""
+  destination: str = ""
+  destination_ref: str = ""
+  route_ref: str = ""
+  int_ref: str = ""
+  access: str = ""
+  motor_vehicle: str = ""
+  vehicle: str = ""
+  service: str = ""
+  layer_int: int = 0
+  is_ramp: int = 0
+  road_priority: int = 0
+  route_level: int = 0
+  ramp_type: str = ""
+  segment_length: float = 0.0
+  geometry_polyline: str = ""
+  continuity_hint: float = 0.0
+  continuity_class: str = ""
+  main_flow_bias: float = 0.0
+  ramp_bias: float = 0.0
+  exit_bias: float = 0.0
+  map_confidence: float = 1.0
 
   @property
   def display_name(self) -> str:
@@ -258,22 +283,83 @@ def _connect_read_db(db_source: DbSource):
   return conn, conn
 
 
+def _row_has_key(row, key: str) -> bool:
+  try:
+    return key in row.keys()
+  except AttributeError:
+    return key in row
+
+
+def _row_value(row, key: str, default=None):
+  if not _row_has_key(row, key):
+    return default
+  value = row[key]
+  return default if value is None else value
+
+
+def _row_text(row, key: str, default: str = "") -> str:
+  return str(_row_value(row, key, default) or default)
+
+
+def _row_int(row, key: str, default: int = 0) -> int:
+  try:
+    return int(_row_value(row, key, default))
+  except (TypeError, ValueError):
+    return default
+
+
+def _row_float(row, key: str, default: float = 0.0) -> float:
+  try:
+    return float(_row_value(row, key, default))
+  except (TypeError, ValueError):
+    return default
+
+
 def _row_to_segment(row) -> OSMRoadSegment:
   return OSMRoadSegment(
-    road_id=int(row["id"]),
-    osm_id=int(row["osm_id"]),
-    name=str(row["name"] or ""),
-    ref=str(row["ref"] or ""),
-    highway=str(row["highway"] or ""),
-    road_class=str(row["road_class"] or ""),
-    oneway=int(row["oneway"]),
-    lat1=float(row["lat1"]),
-    lon1=float(row["lon1"]),
-    lat2=float(row["lat2"]),
-    lon2=float(row["lon2"]),
-    bearing_deg=float(row["bearing_deg"]),
-    distance_m=float(row["distance_m"]) if "distance_m" in row.keys() else 0.0,
+    road_id=_row_int(row, "id"),
+    osm_id=_row_int(row, "osm_id"),
+    name=_row_text(row, "name"),
+    ref=_row_text(row, "ref"),
+    highway=_row_text(row, "highway"),
+    road_class=_row_text(row, "road_class"),
+    oneway=_row_int(row, "oneway"),
+    lat1=_row_float(row, "lat1"),
+    lon1=_row_float(row, "lon1"),
+    lat2=_row_float(row, "lat2"),
+    lon2=_row_float(row, "lon2"),
+    bearing_deg=_row_float(row, "bearing_deg"),
+    distance_m=_row_float(row, "distance_m"),
+    tunnel=_row_text(row, "tunnel"),
+    layer=_row_text(row, "layer"),
+    covered=_row_text(row, "covered"),
+    bridge=_row_text(row, "bridge"),
+    destination=_row_text(row, "destination"),
+    destination_ref=_row_text(row, "destination_ref"),
+    route_ref=_row_text(row, "route_ref"),
+    int_ref=_row_text(row, "int_ref"),
+    access=_row_text(row, "access"),
+    motor_vehicle=_row_text(row, "motor_vehicle"),
+    vehicle=_row_text(row, "vehicle"),
+    service=_row_text(row, "service"),
+    layer_int=_row_int(row, "layer_int"),
+    is_ramp=_row_int(row, "is_ramp"),
+    road_priority=_row_int(row, "road_priority"),
+    route_level=_row_int(row, "route_level"),
+    ramp_type=_row_text(row, "ramp_type"),
+    segment_length=_row_float(row, "segment_length"),
+    geometry_polyline=_row_text(row, "geometry_polyline"),
+    continuity_hint=_row_float(row, "continuity_hint"),
+    continuity_class=_row_text(row, "continuity_class"),
+    main_flow_bias=_row_float(row, "main_flow_bias"),
+    ramp_bias=_row_float(row, "ramp_bias"),
+    exit_bias=_row_float(row, "exit_bias"),
+    map_confidence=_row_float(row, "map_confidence", 1.0),
   )
+
+
+def row_to_segment(row) -> OSMRoadSegment:
+  return _row_to_segment(row)
 
 
 def _metadata_value(db_path: Path, key: str) -> str:
@@ -343,8 +429,7 @@ def road_successors(db_path: DbSource = DEFAULT_OSM_ROADS_DB_PATH, road_id: int 
         transition_select.append(f"{default} AS {column}")
 
     rows = conn.execute("""
-      SELECT roads.id, roads.osm_id, roads.name, roads.ref, roads.highway, roads.road_class, roads.oneway,
-             roads.lat1, roads.lon1, roads.lat2, roads.lon2, roads.bearing_deg,
+      SELECT roads.*,
              0.0 AS distance_m,
              road_adjacency.turn_angle_deg,
              {transition_select}
