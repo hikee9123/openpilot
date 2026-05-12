@@ -12,7 +12,8 @@ namespace {
 constexpr double kMinMapRadiusM = 230.0;
 constexpr double kBaseMaxMapRadiusM = 1000.0;
 constexpr double kExtendedMaxMapRadiusM = 1800.0;
-constexpr double kDebugMaxMapRadiusM = 3000.0;
+constexpr double kDebugMinMapRadiusM = 80.0;
+constexpr double kDebugMaxMapRadiusM = 2500.0;
 constexpr double kMinRadiusSpeedMps = 30.0 / 3.6;
 constexpr double kMaxRadiusSpeedMps = 60.0 / 3.6;
 constexpr double kRadiusAnimationAlpha = 0.08;
@@ -93,14 +94,35 @@ double extendedRouteRadiusM(const OsmMinimapData &data) {
   return std::clamp(route_radius_m, kMinMapRadiusM, kExtendedMaxMapRadiusM);
 }
 
-double debugFitRadiusM(const OsmMinimapData &data) {
-  double max_forward_m = kMinMapRadiusM;
-  double max_side_m = kMinMapRadiusM;
+double debugFitRadiusM(const OsmMinimapData &data, const QRectF &panel) {
+  double max_forward_m = 0.0;
+  double max_backward_m = 0.0;
+  double max_left_m = 0.0;
+  double max_right_m = 0.0;
   for (const OsmMinimapRoad &road : data.roads) {
-    max_forward_m = std::max({max_forward_m, std::abs(static_cast<double>(road.x1)), std::abs(static_cast<double>(road.x2))});
-    max_side_m = std::max({max_side_m, std::abs(static_cast<double>(road.y1)), std::abs(static_cast<double>(road.y2))});
+    for (const double forward_m : {static_cast<double>(road.x1), static_cast<double>(road.x2)}) {
+      max_forward_m = std::max(max_forward_m, forward_m);
+      max_backward_m = std::max(max_backward_m, -forward_m);
+    }
+    for (const double right_m : {static_cast<double>(road.y1), static_cast<double>(road.y2)}) {
+      max_right_m = std::max(max_right_m, right_m);
+      max_left_m = std::max(max_left_m, -right_m);
+    }
   }
-  return std::clamp(std::max(max_forward_m * 1.15, max_side_m * 1.25), kMinMapRadiusM, kDebugMaxMapRadiusM);
+
+  const QPointF ego = egoPoint(panel, true);
+  const double min_panel_px = std::min(panel.width(), panel.height());
+  auto fitRadius = [min_panel_px](double meters, double pixels) {
+    return pixels > 1.0 ? meters * min_panel_px / (2.0 * pixels) : kDebugMaxMapRadiusM;
+  };
+
+  const double radius_m = std::max({
+    fitRadius(max_forward_m, ego.y() - (panel.top() + 48.0)),
+    fitRadius(max_backward_m, panel.bottom() - 24.0 - ego.y()),
+    fitRadius(max_left_m, ego.x() - (panel.left() + 18.0)),
+    fitRadius(max_right_m, panel.right() - 18.0 - ego.x()),
+  });
+  return std::clamp(radius_m * 1.05, kDebugMinMapRadiusM, kDebugMaxMapRadiusM);
 }
 
 }  // namespace
@@ -133,9 +155,9 @@ QRectF OsmMinimapRenderer::panelRect(const QRect &surface, int position) const {
   }
 }
 
-double OsmMinimapRenderer::targetMapRadiusM(float speed_mps, const OsmMinimapData &data, int position) const {
+double OsmMinimapRenderer::targetMapRadiusM(float speed_mps, const OsmMinimapData &data, int position, const QRectF &panel) const {
   if (isCenterPosition(position)) {
-    return debugFitRadiusM(data);
+    return debugFitRadiusM(data, panel);
   }
 
   double speed_radius_m = kMinMapRadiusM;
@@ -181,13 +203,14 @@ void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinima
 
   const QRectF panel = panelRect(surface, position);
   const bool centered = isCenterPosition(position);
-  const double target_radius_m = targetMapRadiusM(speed_mps, data, position);
+  const double target_radius_m = targetMapRadiusM(speed_mps, data, position, panel);
   if (centered || animated_map_radius_m > kExtendedMaxMapRadiusM) {
     animated_map_radius_m = target_radius_m;
   } else {
     animated_map_radius_m += (target_radius_m - animated_map_radius_m) * kRadiusAnimationAlpha;
   }
-  animated_map_radius_m = std::clamp(animated_map_radius_m, kMinMapRadiusM, centered ? kDebugMaxMapRadiusM : kExtendedMaxMapRadiusM);
+  animated_map_radius_m = std::clamp(animated_map_radius_m, centered ? kDebugMinMapRadiusM : kMinMapRadiusM,
+                                     centered ? kDebugMaxMapRadiusM : kExtendedMaxMapRadiusM);
   const double scale = std::min(panel.width(), panel.height()) / (2.0 * animated_map_radius_m);
 
   p.save();

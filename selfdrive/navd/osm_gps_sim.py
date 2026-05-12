@@ -147,7 +147,8 @@ def main() -> None:
   start_lon = _env_float("OSM_GPS_SIM_LON", DEFAULT_ROUTE[0][1])
   altitude = _env_float("OSM_GPS_SIM_ALT", 50.0)
   bearing_deg = _env_float("OSM_GPS_SIM_BEARING", _bearing_between(*DEFAULT_ROUTE[0], *DEFAULT_ROUTE[1])) % 360.0
-  speed = max(0.0, _env_float("OSM_GPS_SIM_SPEED", 10.0))
+  speed_kph = max(0.0, _env_float("OSM_GPS_SIM_SPEED", 60.0))
+  speed = speed_kph / 3.6
   loop_distance_m = max(0.0, _env_float("OSM_GPS_SIM_LOOP_M", 0.0 if use_default_route else 800.0))
 
   lat = start_lat
@@ -158,8 +159,8 @@ def main() -> None:
   last_t = time.monotonic()
   last_log_t = 0.0
 
-  cloudlog.info("osm_gps_simd started lat=%.7f lon=%.7f bearing=%.1f speed=%.1f",
-                start_lat, start_lon, bearing_deg, speed)
+  cloudlog.info("osm_gps_simd started lat=%.7f lon=%.7f bearing=%.1f speed=%.1f km/h",
+                start_lat, start_lon, bearing_deg, speed_kph)
 
   while True:
     now = time.monotonic()

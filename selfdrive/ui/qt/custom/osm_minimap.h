@@ -44,7 +44,7 @@ private:
   double animated_map_radius_m = 230.0;
 
   QRectF panelRect(const QRect &surface, int position) const;
-  double targetMapRadiusM(float speed_mps, const OsmMinimapData &data, int position) const;
+  double targetMapRadiusM(float speed_mps, const OsmMinimapData &data, int position, const QRectF &panel) const;
   void drawStatus(QPainter &p, const QRect &surface, const QString &status, int position);
   void drawRoad(QPainter &p, const QRectF &panel, double scale, const OsmMinimapRoad &road, bool centered);
 };
