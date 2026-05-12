@@ -303,6 +303,20 @@ def road_successors(db_path: DbSource = DEFAULT_OSM_ROADS_DB_PATH, road_id: int 
   try:
     if not _table_exists(conn, "roads") or not _table_exists(conn, "road_adjacency"):
       return []
+    adjacency_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(road_adjacency)")}
+    blocked_filter = ""
+    if "blocked_transition" in adjacency_columns:
+      blocked_filter = "AND COALESCE(road_adjacency.blocked_transition, 0) = 0"
+
+    order_terms = []
+    if "transition_cost" in adjacency_columns:
+      order_terms.append("road_adjacency.transition_cost ASC")
+    if "preferred_transition_score" in adjacency_columns:
+      order_terms.append("road_adjacency.preferred_transition_score DESC")
+    if "connectivity_confidence" in adjacency_columns:
+      order_terms.append("road_adjacency.connectivity_confidence DESC")
+    order_terms.extend(("road_adjacency.turn_angle_deg ASC", "roads.id ASC"))
+
     rows = conn.execute("""
       SELECT roads.id, roads.osm_id, roads.name, roads.ref, roads.highway, roads.road_class, roads.oneway,
              roads.lat1, roads.lon1, roads.lat2, roads.lon2, roads.bearing_deg,
@@ -311,9 +325,10 @@ def road_successors(db_path: DbSource = DEFAULT_OSM_ROADS_DB_PATH, road_id: int 
       FROM road_adjacency
       JOIN roads ON roads.id = road_adjacency.to_road_id
       WHERE road_adjacency.from_road_id = ?
-      ORDER BY road_adjacency.turn_angle_deg ASC, roads.id ASC
+        {blocked_filter}
+      ORDER BY {order_clause}
       LIMIT ?
-    """, (road_id, max(0, limit))).fetchall()
+    """.format(blocked_filter=blocked_filter, order_clause=", ".join(order_terms)), (road_id, max(0, limit))).fetchall()
   except sqlite3.Error:
     return []
   finally:
