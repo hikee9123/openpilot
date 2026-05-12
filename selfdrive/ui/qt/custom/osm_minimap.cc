@@ -24,6 +24,8 @@ constexpr int kHudGap = 24;
 constexpr int kButtonSize = 192;
 constexpr int kDebugZoomMin = 0;
 constexpr int kDebugZoomMax = 4;
+constexpr double kAssistConnectorMinPx = 4.0;
+constexpr double kAssistConnectorMaxPx = 180.0;
 
 constexpr int kTopLeft = 0;
 constexpr int kTopRight = 1;
@@ -142,7 +144,11 @@ void drawAssistConnector(QPainter &p, const QRectF &panel, double scale,
       }
     }
   }
-  if (!lineNearPanel(panel, best_from, best_to)) return;
+  if (best_distance_sq < kAssistConnectorMinPx * kAssistConnectorMinPx ||
+      best_distance_sq > kAssistConnectorMaxPx * kAssistConnectorMaxPx ||
+      !lineNearPanel(panel, best_from, best_to)) {
+    return;
+  }
 
   QPen pen(QColor(205, 205, 205, 150), 3, Qt::DashLine, Qt::RoundCap, Qt::RoundJoin);
   p.setPen(pen);
@@ -270,9 +276,9 @@ bool OsmMinimapRenderer::debugZoomControlAt(const QRect &surface, int position, 
 }
 
 bool OsmMinimapRenderer::debugSpeedControlAt(const QRect &surface, int position, const QPoint &pt,
-                                             bool debug_zoom_controls, int &delta) const {
+                                             bool debug_speed_controls, int &delta) const {
   delta = 0;
-  if (!debug_zoom_controls || !isCenterPosition(position)) {
+  if (!debug_speed_controls || !isCenterPosition(position)) {
     return false;
   }
 
@@ -327,7 +333,7 @@ void OsmMinimapRenderer::drawStatus(QPainter &p, const QRect &surface, const QSt
 
 void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinimapData &data, bool enabled,
                               int position, float speed_mps, int debug_zoom, int sim_speed_kph,
-                              bool debug_zoom_controls) {
+                              bool debug_zoom_controls, bool debug_speed_controls) {
   if (!enabled) return;
   if (!data.available) {
     drawStatus(p, surface, QStringLiteral("Waiting for GPS"), position);
@@ -413,6 +419,8 @@ void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinima
   }
   if (centered && debug_zoom_controls) {
     drawDebugZoomControls(p, panel, debug_zoom);
+  }
+  if (centered && debug_speed_controls) {
     drawDebugSpeedControls(p, panel, sim_speed_kph);
   }
   p.restore();
@@ -487,7 +495,6 @@ void OsmMinimapRenderer::drawRoad(QPainter &p, const QRectF &panel, double scale
   const bool predicted = road.predicted;
   const bool history = road.history;
   const bool fallback = road.fallback;
-  const bool assist = road.assist;
   QColor color(210, 210, 210, 100);
   int width = 3;
   if (history) {
@@ -495,11 +502,7 @@ void OsmMinimapRenderer::drawRoad(QPainter &p, const QRectF &panel, double scale
     width = 4;
   }
   if (predicted) {
-    if (assist) {
-      color = QColor(205, 205, 205, 180);
-    } else {
-      color = fallback ? QColor(255, 190, 64, 210) : QColor(64, 196, 255, 210);
-    }
+    color = fallback ? QColor(255, 190, 64, 210) : QColor(64, 196, 255, 210);
     width = 5;
   }
   if (current) {
@@ -507,7 +510,7 @@ void OsmMinimapRenderer::drawRoad(QPainter &p, const QRectF &panel, double scale
     width = 7;
   }
 
-  QPen pen(color, width, assist ? Qt::DashLine : Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+  QPen pen(color, width, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
   p.setPen(pen);
   p.drawLine(a, b);
 

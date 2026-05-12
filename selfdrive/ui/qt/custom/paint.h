@@ -82,6 +82,7 @@ private:
   bool osm_debug_zoom_pressed = false;
   bool osm_debug_speed_pressed = false;
   bool osm_debug_zoom_controls_enabled = false;
+  bool osm_debug_speed_controls_enabled = false;
 
   struct _PARAM_
   {

@@ -152,7 +152,9 @@ void OnPaint::updateState(const UIState &s)
     osm_minimap_position = std::clamp(get_param("OsmMinimapPosition"), 0, 4);
     osm_debug_map_zoom = std::clamp(get_param("OsmDebugMapZoom"), 0, 4);
     osm_gps_sim_speed_kph = std::clamp(get_param("OsmGpsSimSpeedKph"), 0, 250);
-    osm_debug_zoom_controls_enabled = std::getenv("USE_WEBCAM") != nullptr || util::getenv("CAM_SIM", "") == "webcam";
+    const bool webcam_or_cam_sim = std::getenv("USE_WEBCAM") != nullptr || util::getenv("CAM_SIM", "") == "webcam";
+    osm_debug_zoom_controls_enabled = true;
+    osm_debug_speed_controls_enabled = webcam_or_cam_sim || params.getBool("OsmGpsSimulation");
   }
 
   // 1.
@@ -383,7 +385,7 @@ void OnPaint::drawHud(QPainter &p)
 {
   osm_minimap.draw(p, QRect(0, 0, state->fb_w, state->fb_h), m_nda.osmRoadOverlay, osm_enabled,
                    osm_minimap_position, m_param.vEgo, osm_debug_map_zoom, osm_gps_sim_speed_kph,
-                   osm_debug_zoom_controls_enabled);
+                   osm_debug_zoom_controls_enabled, osm_debug_speed_controls_enabled);
 
   if( !is_debug && !m_param.ui.getKegman() ) return;
 
@@ -421,7 +423,7 @@ bool OnPaint::handleMousePress(const QPoint &pt, const QRect &surface)
                                                          osm_debug_zoom_controls_enabled, delta);
   osm_debug_speed_pressed = !osm_debug_zoom_pressed
                          && osm_minimap.debugSpeedControlAt(surface, osm_minimap_position, pt,
-                                                            osm_debug_zoom_controls_enabled, delta);
+                                                            osm_debug_speed_controls_enabled, delta);
   return osm_debug_zoom_pressed || osm_debug_speed_pressed;
 }
 
@@ -441,7 +443,7 @@ bool OnPaint::handleMouseRelease(const QPoint &pt, const QRect &surface)
 
   delta = 0;
   const bool speed_hit = osm_minimap.debugSpeedControlAt(surface, osm_minimap_position, pt,
-                                                        osm_debug_zoom_controls_enabled, delta);
+                                                        osm_debug_speed_controls_enabled, delta);
   const bool speed_handled = osm_debug_speed_pressed || speed_hit;
   osm_debug_zoom_pressed = false;
   osm_debug_speed_pressed = false;
