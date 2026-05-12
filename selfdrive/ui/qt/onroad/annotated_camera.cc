@@ -1,6 +1,7 @@
 
 #include "selfdrive/ui/qt/onroad/annotated_camera.h"
 
+#include <QMouseEvent>
 #include <QPainter>
 #include <algorithm>
 #include <cstdlib>
@@ -26,6 +27,23 @@ void AnnotatedCameraWidget::updateState(const UIState &s) {
   // update engageability/experimental mode button
   experimental_btn->updateState(s);
   dmon.updateState(s);
+}
+
+void AnnotatedCameraWidget::mousePressEvent(QMouseEvent *event) {
+  if (hud.handleMousePress(event->pos(), rect())) {
+    event->accept();
+    return;
+  }
+  event->ignore();
+}
+
+void AnnotatedCameraWidget::mouseReleaseEvent(QMouseEvent *event) {
+  if (hud.handleMouseRelease(event->pos(), rect())) {
+    event->accept();
+    update();
+    return;
+  }
+  CameraWidget::mouseReleaseEvent(event);
 }
 
 void AnnotatedCameraWidget::initializeGL() {

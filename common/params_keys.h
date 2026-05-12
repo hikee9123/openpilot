@@ -139,6 +139,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"OsmGpsSimulation", {PERSISTENT, BOOL}},
     {"OsmPredictionLogging", {PERSISTENT, BOOL}},
     {"OsmMinimapPosition", {PERSISTENT, INT, "3"}},
+    {"OsmDebugMapZoom", {PERSISTENT, INT, "0"}},
     {"OsmRoadsUpdateStatus", {PERSISTENT, STRING}},
     {"OsmRoadsUpdateError", {PERSISTENT, STRING}},
     {"OsmRoadsSegmentCount", {PERSISTENT, INT}},

@@ -11,6 +11,8 @@ public:
   HudRenderer();
   void updateState(const UIState &s);
   void draw(QPainter &p, const QRect &surface_rect);
+  bool handleMousePress(const QPoint &pt, const QRect &surface_rect);
+  bool handleMouseRelease(const QPoint &pt, const QRect &surface_rect);
 
 private:
   void drawSetSpeed(QPainter &p, const QRect &surface_rect);

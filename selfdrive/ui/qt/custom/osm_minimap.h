@@ -5,6 +5,7 @@
 
 #include <QString>
 #include <QPainter>
+#include <QPoint>
 #include <QRect>
 
 struct OsmMinimapRoad {
@@ -38,13 +39,18 @@ struct OsmMinimapData {
 
 class OsmMinimapRenderer {
 public:
-  void draw(QPainter &p, const QRect &surface, const OsmMinimapData &data, bool enabled, int position, float speed_mps);
+  void draw(QPainter &p, const QRect &surface, const OsmMinimapData &data, bool enabled, int position,
+            float speed_mps, int debug_zoom, bool debug_zoom_controls);
+  bool debugZoomControlAt(const QRect &surface, int position, const QPoint &pt, bool debug_zoom_controls, int &delta) const;
 
 private:
   double animated_map_radius_m = 230.0;
 
   QRectF panelRect(const QRect &surface, int position) const;
+  QRectF debugZoomInRect(const QRectF &panel) const;
+  QRectF debugZoomOutRect(const QRectF &panel) const;
   double targetMapRadiusM(float speed_mps, const OsmMinimapData &data, int position, const QRectF &panel) const;
   void drawStatus(QPainter &p, const QRect &surface, const QString &status, int position);
+  void drawDebugZoomControls(QPainter &p, const QRectF &panel, int debug_zoom);
   void drawRoad(QPainter &p, const QRectF &panel, double scale, const OsmMinimapRoad &road, bool centered);
 };

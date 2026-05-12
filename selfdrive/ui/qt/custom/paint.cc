@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 #include <QDebug>
 #include <QPaintEvent>
@@ -10,6 +11,7 @@
 #include <QPen>
 
 
+#include "common/util.h"
 #include "selfdrive/ui/qt/util.h"
 
 
@@ -148,6 +150,8 @@ void OnPaint::updateState(const UIState &s)
   if ((sm1.frame % UI_FREQ) == 0) {
     osm_enabled = params.getBool("OSMEnable");
     osm_minimap_position = std::clamp(get_param("OsmMinimapPosition"), 0, 4);
+    osm_debug_map_zoom = std::clamp(get_param("OsmDebugMapZoom"), 0, 4);
+    osm_debug_zoom_controls_enabled = std::getenv("USE_WEBCAM") != nullptr || util::getenv("CAM_SIM", "") == "webcam";
   }
 
   // 1.
@@ -375,7 +379,8 @@ void OnPaint::drawLead(QPainter &p, const cereal::RadarState::LeadData::Reader &
 
 void OnPaint::drawHud(QPainter &p)
 {
-  osm_minimap.draw(p, QRect(0, 0, state->fb_w, state->fb_h), m_nda.osmRoadOverlay, osm_enabled, osm_minimap_position, m_param.vEgo);
+  osm_minimap.draw(p, QRect(0, 0, state->fb_w, state->fb_h), m_nda.osmRoadOverlay, osm_enabled,
+                   osm_minimap_position, m_param.vEgo, osm_debug_map_zoom, osm_debug_zoom_controls_enabled);
 
   if( !is_debug && !m_param.ui.getKegman() ) return;
 
@@ -404,6 +409,30 @@ void OnPaint::drawHud(QPainter &p)
   {
      bb_ui_draw_UI( p );
   }
+}
+
+bool OnPaint::handleMousePress(const QPoint &pt, const QRect &surface)
+{
+  int delta = 0;
+  osm_debug_zoom_pressed = osm_minimap.debugZoomControlAt(surface, osm_minimap_position, pt,
+                                                         osm_debug_zoom_controls_enabled, delta);
+  return osm_debug_zoom_pressed;
+}
+
+bool OnPaint::handleMouseRelease(const QPoint &pt, const QRect &surface)
+{
+  int delta = 0;
+  const bool hit = osm_minimap.debugZoomControlAt(surface, osm_minimap_position, pt,
+                                                 osm_debug_zoom_controls_enabled, delta);
+  const bool handled = osm_debug_zoom_pressed || hit;
+  osm_debug_zoom_pressed = false;
+  if (!hit || delta == 0) {
+    return handled;
+  }
+
+  osm_debug_map_zoom = std::clamp(osm_debug_map_zoom + delta, 0, 4);
+  params.put("OsmDebugMapZoom", std::to_string(osm_debug_map_zoom));
+  return true;
 }
 
 

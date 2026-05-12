@@ -43,6 +43,8 @@ public:
   explicit OnPaint();
   void    updateState(const UIState &s);
   void    drawHud(QPainter &p);
+  bool    handleMousePress(const QPoint &pt, const QRect &surface);
+  bool    handleMouseRelease(const QPoint &pt, const QRect &surface);
   void    drawSpeed(QPainter &p, int x, QString speedStr, QString speedUnit );
   void    drawLead(QPainter &p, const cereal::RadarState::LeadData::Reader &lead_data, const QPointF &vd, int w, int h );
 
@@ -75,6 +77,9 @@ private:
   Params params;
   bool osm_enabled = false;
   int osm_minimap_position = 3;
+  int osm_debug_map_zoom = 0;
+  bool osm_debug_zoom_pressed = false;
+  bool osm_debug_zoom_controls_enabled = false;
 
   struct _PARAM_
   {

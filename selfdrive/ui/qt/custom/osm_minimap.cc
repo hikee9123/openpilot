@@ -21,6 +21,8 @@ constexpr int kExtendedPredictionSegmentThreshold = 40;
 constexpr int kHudMargin = 30;
 constexpr int kHudGap = 24;
 constexpr int kButtonSize = 192;
+constexpr int kDebugZoomMin = 0;
+constexpr int kDebugZoomMax = 4;
 
 constexpr int kTopLeft = 0;
 constexpr int kTopRight = 1;
@@ -30,6 +32,26 @@ constexpr int kCenter = 4;
 
 bool isCenterPosition(int position) {
   return position == kCenter;
+}
+
+double debugZoomFactor(int debug_zoom) {
+  switch (std::clamp(debug_zoom, kDebugZoomMin, kDebugZoomMax)) {
+    case 1:
+      return 1.5;
+    case 2:
+      return 2.0;
+    case 3:
+      return 3.0;
+    case 4:
+      return 4.0;
+    default:
+      return 1.0;
+  }
+}
+
+QString debugZoomLabel(int debug_zoom) {
+  const double zoom = debugZoomFactor(debug_zoom);
+  return zoom <= 1.0 ? QStringLiteral("FIT") : QStringLiteral("%1x").arg(zoom, 0, 'g', 2);
 }
 
 QPointF egoPoint(const QRectF &panel, bool centered) {
@@ -155,6 +177,36 @@ QRectF OsmMinimapRenderer::panelRect(const QRect &surface, int position) const {
   }
 }
 
+QRectF OsmMinimapRenderer::debugZoomOutRect(const QRectF &panel) const {
+  return QRectF(panel.right() - 158.0, panel.top() + 12.0, 48.0, 48.0);
+}
+
+QRectF OsmMinimapRenderer::debugZoomInRect(const QRectF &panel) const {
+  return QRectF(panel.right() - 58.0, panel.top() + 12.0, 48.0, 48.0);
+}
+
+bool OsmMinimapRenderer::debugZoomControlAt(const QRect &surface, int position, const QPoint &pt,
+                                            bool debug_zoom_controls, int &delta) const {
+  delta = 0;
+  if (!debug_zoom_controls || !isCenterPosition(position)) {
+    return false;
+  }
+
+  const QRectF panel = panelRect(surface, position);
+  if (!panel.contains(pt)) {
+    return false;
+  }
+  if (debugZoomOutRect(panel).contains(pt)) {
+    delta = -1;
+    return true;
+  }
+  if (debugZoomInRect(panel).contains(pt)) {
+    delta = 1;
+    return true;
+  }
+  return false;
+}
+
 double OsmMinimapRenderer::targetMapRadiusM(float speed_mps, const OsmMinimapData &data, int position, const QRectF &panel) const {
   if (isCenterPosition(position)) {
     return debugFitRadiusM(data, panel);
@@ -189,7 +241,8 @@ void OsmMinimapRenderer::drawStatus(QPainter &p, const QRect &surface, const QSt
   p.restore();
 }
 
-void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinimapData &data, bool enabled, int position, float speed_mps) {
+void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinimapData &data, bool enabled, int position,
+                              float speed_mps, int debug_zoom, bool debug_zoom_controls) {
   if (!enabled) return;
   if (!data.available) {
     drawStatus(p, surface, QStringLiteral("Waiting for GPS"), position);
@@ -203,7 +256,10 @@ void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinima
 
   const QRectF panel = panelRect(surface, position);
   const bool centered = isCenterPosition(position);
-  const double target_radius_m = targetMapRadiusM(speed_mps, data, position, panel);
+  double target_radius_m = targetMapRadiusM(speed_mps, data, position, panel);
+  if (centered) {
+    target_radius_m /= debugZoomFactor(debug_zoom);
+  }
   if (centered || animated_map_radius_m > kExtendedMaxMapRadiusM) {
     animated_map_radius_m = target_radius_m;
   } else {
@@ -255,6 +311,33 @@ void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinima
   p.setFont(InterFont(24, QFont::DemiBold));
   p.setPen(QColor(245, 245, 245, 220));
   p.drawText(panel.adjusted(14, 8, -14, -panel.height() + 42), Qt::AlignLeft | Qt::AlignVCenter, title);
+  if (centered && debug_zoom_controls) {
+    drawDebugZoomControls(p, panel, debug_zoom);
+  }
+  p.restore();
+}
+
+void OsmMinimapRenderer::drawDebugZoomControls(QPainter &p, const QRectF &panel, int debug_zoom) {
+  const QRectF minus = debugZoomOutRect(panel);
+  const QRectF plus = debugZoomInRect(panel);
+  const QRectF label(minus.right() + 4.0, minus.top(), plus.left() - minus.right() - 8.0, minus.height());
+
+  p.save();
+  p.setClipping(false);
+  p.setRenderHint(QPainter::Antialiasing, true);
+  p.setFont(InterFont(25, QFont::DemiBold));
+  p.setPen(QPen(QColor(255, 255, 255, 68), 2));
+  p.setBrush(QColor(0, 0, 0, 185));
+  p.drawRoundedRect(minus, 12, 12);
+  p.drawRoundedRect(plus, 12, 12);
+
+  p.setPen(QColor(245, 245, 245, 235));
+  p.drawText(minus, Qt::AlignCenter, QStringLiteral("-"));
+  p.drawText(plus, Qt::AlignCenter, QStringLiteral("+"));
+
+  p.setFont(InterFont(19, QFont::DemiBold));
+  p.setPen(QColor(245, 245, 245, 215));
+  p.drawText(label, Qt::AlignCenter, debugZoomLabel(debug_zoom));
   p.restore();
 }
 

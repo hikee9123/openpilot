@@ -27,6 +27,8 @@ private:
   bool wide_cam_requested = false;
 
 protected:
+  void mousePressEvent(QMouseEvent *event) override;
+  void mouseReleaseEvent(QMouseEvent *event) override;
   void paintGL() override;
   void initializeGL() override;
   void showEvent(QShowEvent *event) override;

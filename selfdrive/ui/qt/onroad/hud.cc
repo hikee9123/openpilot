@@ -76,6 +76,14 @@ void HudRenderer::draw(QPainter &p, const QRect &surface_rect) {
   p.restore();
 }
 
+bool HudRenderer::handleMousePress(const QPoint &pt, const QRect &surface_rect) {
+  return m_pPaint && m_pPaint->handleMousePress(pt, surface_rect);
+}
+
+bool HudRenderer::handleMouseRelease(const QPoint &pt, const QRect &surface_rect) {
+  return m_pPaint && m_pPaint->handleMouseRelease(pt, surface_rect);
+}
+
 void HudRenderer::drawSetSpeed(QPainter &p, const QRect &surface_rect) {
   // Draw outer box + border to contain set speed
   const QSize default_size = {172, 204};
