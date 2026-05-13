@@ -72,6 +72,7 @@ HIGH_SPEED_TARGET_PREDICTION_DISTANCE_M = 2000.0
 SHORT_GRAPH_EXTENSION_SEGMENT_LIMIT = 80
 SHORT_GRAPH_FORWARD_ASSIST_M = 700.0
 MAX_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE = 0.30
+MAX_VERIFIED_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE = 0.45
 DEBUG_SELECTED_LIMIT = 6
 DEBUG_CANDIDATE_LIMIT = 3
 LOW_SPEED_HEADING_IGNORE_MPS = 2.0
@@ -1027,16 +1028,23 @@ class OSMRoadPredictor:
     else:
       range_mode = "curve_extended"
     final_assist_ratio = endpoint_assist_hits / max(1, len(predicted))
+    assist_ratio_confident = final_assist_ratio <= MAX_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE
+    verified_assist_ratio_confident = (
+      match_good
+      and final_assist_ratio <= MAX_VERIFIED_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE
+    )
     graph_confident = (
       fallback_fill_count == 0
       and predicted_distance_m >= target_distance_m
-      and final_assist_ratio <= MAX_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE
+      and (assist_ratio_confident or verified_assist_ratio_confident)
     )
     confidence_reason = "-"
     if fallback_fill_count > 0:
       confidence_reason = "fallback_fill"
     elif predicted_distance_m < target_distance_m:
       confidence_reason = "short_prediction"
+    elif verified_assist_ratio_confident and not assist_ratio_confident:
+      confidence_reason = "assist_verified"
     elif final_assist_ratio > MAX_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE:
       confidence_reason = "assist_uncertain"
     debug_text = (
