@@ -20,6 +20,7 @@ from openpilot.selfdrive.navd.paths import DEFAULT_NAVD_LOG_DIR
 HISTORY_SEGMENT_LIMIT = 40
 OSM_TRACE_LOG_MAX_BYTES = 10 * 1024 * 1024
 OSM_LOG_MIN_SPEED_MPS = 1.0
+OSM_LOG_REPEAT_SKIP_AFTER = 2
 OSM_TRACE_LOG_PATH = DEFAULT_NAVD_LOG_DIR / "osm_prediction_trace.csv"
 OSM_FAILURE_LOG_PATH = DEFAULT_NAVD_LOG_DIR / "osm_prediction_failures.csv"
 OSM_TRACE_FIELDS = (
@@ -29,6 +30,7 @@ OSM_TRACE_FIELDS = (
   "bearing_deg",
   "speed_mps",
   "mode",
+  "failure_reason",
   "current_road_id",
   "current_name",
   "current_distance_m",
@@ -106,6 +108,37 @@ def _road_ids(roads: list[OSMRoadSegment], limit: int = 80) -> str:
   return " ".join(str(road.road_id) for road in roads[:limit])
 
 
+def _prediction_distance_m(prediction: RoadPrediction) -> float:
+  return sum(max(0.0, road.segment_length) for road in prediction.predicted)
+
+
+def _target_prediction_distance_m(speed_mps: float) -> float:
+  if speed_mps >= 20.0:
+    return 2000.0
+  if speed_mps >= 10.0:
+    return 1500.0
+  return 1000.0
+
+
+def _prediction_failure_reason(prediction: RoadPrediction) -> str:
+  predicted_len_m = _prediction_distance_m(prediction)
+  target_len_m = _target_prediction_distance_m(prediction.gps.speed_mps)
+  short = predicted_len_m < target_len_m
+  if prediction.current is None:
+    return "current_none_short" if short else "current_none_len_ok"
+  if prediction.predicted_from_graph and not short:
+    return ""
+  if "confidence=assist_uncertain" in prediction.debug_text:
+    return "assist_uncertain"
+  if "confidence=fallback_fill" in prediction.debug_text:
+    return "fallback_fill_short" if short else "fallback_fill_len_ok"
+  if "confidence=short_prediction" in prediction.debug_text or short:
+    return "graph_short"
+  if "stop=no_candidates" in prediction.debug_text:
+    return "graph_no_candidates_short" if short else "graph_no_candidates_len_ok"
+  return "fallback_short" if short else "fallback_len_ok"
+
+
 def _prediction_log_allowed(prediction: RoadPrediction) -> bool:
   # GPS can report small non-zero speeds while the car is stationary.
   return prediction.gps.speed_mps >= OSM_LOG_MIN_SPEED_MPS
@@ -132,12 +165,26 @@ class CsvLogWriter:
       rotated_path.unlink()
     self.path.replace(rotated_path)
 
+  def _rotate_if_header_changed(self) -> None:
+    if not self.path.exists() or self.path.stat().st_size == 0:
+      return
+    try:
+      with self.path.open("r", encoding="utf-8", newline="") as f:
+        header = f.readline().strip()
+    except OSError:
+      return
+    if header == ",".join(OSM_TRACE_FIELDS):
+      return
+    rotated_path = self.path.with_suffix(self.path.suffix + f".schema.{int(time.time())}")
+    self.path.replace(rotated_path)
+
   def _open(self) -> bool:
     if self._file is not None and self._writer is not None:
       return True
     try:
       self.path.parent.mkdir(parents=True, exist_ok=True)
       self._rotate_if_needed()
+      self._rotate_if_header_changed()
       write_header = not self.path.exists() or self.path.stat().st_size == 0
       self._file = self.path.open("a", newline="", encoding="utf-8")
       self._writer = csv.DictWriter(self._file, fieldnames=OSM_TRACE_FIELDS)
@@ -172,6 +219,8 @@ class OsmPredictionLogWriter:
     self.enabled = False
     self.trace_log = CsvLogWriter(trace_path)
     self.failure_log = CsvLogWriter(failure_path)
+    self._last_row_key: tuple | None = None
+    self._repeat_count = 0
 
   def set_enabled(self, enabled: bool) -> None:
     if self.enabled == enabled:
@@ -183,12 +232,33 @@ class OsmPredictionLogWriter:
   def close(self) -> None:
     self.trace_log.close()
     self.failure_log.close()
+    self._last_row_key = None
+    self._repeat_count = 0
+
+  def _repeated_row(self, row: dict) -> bool:
+    row_key = (
+      row["lat"],
+      row["lon"],
+      row["bearing_deg"],
+      row["speed_mps"],
+      row["mode"],
+      row["failure_reason"],
+      row["current_road_id"],
+      row["predicted_road_ids"],
+    )
+    if row_key == self._last_row_key:
+      self._repeat_count += 1
+    else:
+      self._last_row_key = row_key
+      self._repeat_count = 1
+    return self._repeat_count > OSM_LOG_REPEAT_SKIP_AFTER
 
   def log(self, prediction: RoadPrediction) -> None:
     if not self.enabled or not _prediction_log_allowed(prediction):
       return
 
     current = prediction.current
+    failure_reason = _prediction_failure_reason(prediction)
     row = {
       "wall_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
       "lat": f"{prediction.gps.lat:.7f}",
@@ -196,6 +266,7 @@ class OsmPredictionLogWriter:
       "bearing_deg": f"{prediction.gps.bearing_deg:.1f}",
       "speed_mps": f"{prediction.gps.speed_mps:.2f}",
       "mode": _prediction_mode(prediction),
+      "failure_reason": failure_reason,
       "current_road_id": "" if current is None else current.road_id,
       "current_name": "" if current is None else current.display_name,
       "current_distance_m": "" if current is None else f"{current.distance_m:.1f}",
@@ -205,8 +276,11 @@ class OsmPredictionLogWriter:
       "nearby_road_ids": _road_ids(prediction.nearby, limit=40),
       "debug": prediction.debug_text,
     }
+    if self._repeated_row(row):
+      return
+
     self.trace_log.write(row)
-    if not prediction.predicted_from_graph:
+    if failure_reason:
       self.failure_log.write(row)
 
 

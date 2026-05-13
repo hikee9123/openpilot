@@ -71,6 +71,7 @@ MED_SPEED_TARGET_PREDICTION_DISTANCE_M = 1500.0
 HIGH_SPEED_TARGET_PREDICTION_DISTANCE_M = 2000.0
 SHORT_GRAPH_EXTENSION_SEGMENT_LIMIT = 80
 SHORT_GRAPH_FORWARD_ASSIST_M = 700.0
+MAX_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE = 0.30
 DEBUG_SELECTED_LIMIT = 6
 DEBUG_CANDIDATE_LIMIT = 3
 LOW_SPEED_HEADING_IGNORE_MPS = 2.0
@@ -80,6 +81,8 @@ LOW_SPEED_PREVIOUS_HOLD_RADIUS_M = 110.0
 RELAXED_LOOKUP_MIN_RADIUS_M = 85.0
 RELAXED_LOOKUP_MAX_RADIUS_M = 120.0
 RELAXED_LOOKUP_HEADING_DIFF_DEG = 85.0
+RELAXED_LOOKUP_MAX_DISTANCE_M = 80.0
+RELAXED_LOOKUP_MAX_SCORE = 105.0
 TRUSTED_SUCCESSOR_BACKTRACK_M = -45.0
 STRONG_SUCCESSOR_BACKTRACK_M = -85.0
 TRUSTED_SUCCESSOR_SIDE_MULTIPLIER = 2.4
@@ -510,9 +513,14 @@ class OSMRoadPredictor:
     relaxed_radius = min(RELAXED_LOOKUP_MAX_RADIUS_M, max(RELAXED_LOOKUP_MIN_RADIUS_M, self.lookup_radius_m * 1.8))
     if relaxed_radius <= self.lookup_radius_m:
       return None
-    return find_current_road(conn, gps.lat, gps.lon, gps.bearing_deg, relaxed_radius,
-                             previous_name, previous_road_id, previous_osm_id,
-                             max_heading_diff_deg=RELAXED_LOOKUP_HEADING_DIFF_DEG)
+    relaxed = find_current_road(conn, gps.lat, gps.lon, gps.bearing_deg, relaxed_radius,
+                                previous_name, previous_road_id, previous_osm_id,
+                                max_heading_diff_deg=RELAXED_LOOKUP_HEADING_DIFF_DEG)
+    if relaxed is None:
+      return None
+    if relaxed.distance_m > RELAXED_LOOKUP_MAX_DISTANCE_M or relaxed.score > RELAXED_LOOKUP_MAX_SCORE:
+      return None
+    return relaxed
 
   def _previous_current_hold_match(self, conn: sqlite3.Connection, gps: GPSFix, road_id: int) -> OSMRoadMatch | None:
     road = self._road_segment(conn, road_id)
@@ -802,11 +810,35 @@ class OSMRoadPredictor:
 
     return added, endpoint_hits, forward_hits
 
+  def _fallback_prediction(self, conn: sqlite3.Connection, gps: GPSFix, target_distance_m: float) -> list[OSMRoadSegment]:
+    return forward_road_segments(
+      conn, gps.lat, gps.lon, gps.bearing_deg,
+      forward_start_m=5.0,
+      forward_end_m=max(self.forward_distance_m, target_distance_m),
+      limit=SHORT_GRAPH_EXTENSION_SEGMENT_LIMIT,
+    )
+
+  def _fill_short_prediction_with_fallback(self, conn: sqlite3.Connection, gps: GPSFix,
+                                           predicted: list[OSMRoadSegment], visited: set[int],
+                                           target_distance_m: float,
+                                           predicted_distance_m: float) -> tuple[list[OSMRoadSegment], float]:
+    added: list[OSMRoadSegment] = []
+    fill_visited = set(visited)
+    for road in self._fallback_prediction(conn, gps, target_distance_m):
+      if road.road_id in fill_visited:
+        continue
+      added.append(road)
+      fill_visited.add(road.road_id)
+      predicted_distance_m += max(0.0, road.segment_length)
+      if predicted_distance_m >= target_distance_m or len(predicted) + len(added) >= SHORT_GRAPH_EXTENSION_SEGMENT_LIMIT:
+        break
+    return added, predicted_distance_m
+
   def _predict_forward(self, conn: sqlite3.Connection, gps: GPSFix, current: OSMRoadMatch | None) -> tuple[list[OSMRoadSegment], bool, bool, set[int], str]:
+    target_distance_m = _target_prediction_distance_m(gps.speed_mps)
     if current is None:
-      predicted = forward_road_segments(conn, gps.lat, gps.lon, gps.bearing_deg, forward_start_m=5.0, forward_end_m=self.forward_distance_m, limit=60)
+      predicted = self._fallback_prediction(conn, gps, target_distance_m)
       predicted_distance_m = _prediction_distance_m(predicted)
-      target_distance_m = _target_prediction_distance_m(gps.speed_mps)
       return predicted, False, False, set(), (
         f"current=none quality={self._prediction_quality():.2f} "
         f"match={self._prediction_match_quality():.2f}/{len(self._prediction_match_samples)} "
@@ -845,6 +877,7 @@ class OSMRoadPredictor:
     short_extension_count = 0
     short_extension_endpoint_hits = 0
     short_extension_forward_hits = 0
+    fallback_fill_count = 0
 
     for _ in range(graph_segment_limit):
       candidates: list[_SuccessorCandidate] = []
@@ -947,9 +980,8 @@ class OSMRoadPredictor:
         break
 
     if not predicted:
-      predicted = forward_road_segments(conn, gps.lat, gps.lon, gps.bearing_deg, forward_start_m=5.0, forward_end_m=self.forward_distance_m, limit=60)
+      predicted = self._fallback_prediction(conn, gps, target_distance_m)
       predicted_distance_m = _prediction_distance_m(predicted)
-      target_distance_m = _target_prediction_distance_m(gps.speed_mps)
       graph_gap_assist = total_successors == 0
       if graph_gap_assist:
         assist_road_ids = {segment.road_id for segment in predicted}
@@ -965,7 +997,6 @@ class OSMRoadPredictor:
       )
       return predicted[:80], False, graph_gap_assist, assist_road_ids, debug_text
 
-    target_distance_m = _target_prediction_distance_m(gps.speed_mps)
     predicted_distance_m = _prediction_distance_m(predicted)
     if predicted_distance_m < target_distance_m and stop_reason == "no_candidates":
       extension, short_extension_endpoint_hits, short_extension_forward_hits = self._extend_short_prediction(
@@ -976,8 +1007,18 @@ class OSMRoadPredictor:
         predicted.extend(extension)
         short_extension_count = len(extension)
         assist_road_ids.update(road.road_id for road in extension)
+        visited.update(road.road_id for road in extension)
         endpoint_assist_hits += short_extension_endpoint_hits
         predicted_distance_m = _prediction_distance_m(predicted)
+
+    if predicted_distance_m < target_distance_m:
+      fallback_fill, predicted_distance_m = self._fill_short_prediction_with_fallback(
+        conn, gps, predicted, visited, target_distance_m, predicted_distance_m,
+      )
+      if fallback_fill:
+        predicted.extend(fallback_fill)
+        fallback_fill_count = len(fallback_fill)
+        assist_road_ids.update(road.road_id for road in fallback_fill)
 
     if len(predicted) <= BASE_GRAPH_SEGMENT_LIMIT:
       range_mode = "base"
@@ -985,15 +1026,33 @@ class OSMRoadPredictor:
       range_mode = "speed_extended"
     else:
       range_mode = "curve_extended"
+    final_assist_ratio = endpoint_assist_hits / max(1, len(predicted))
+    graph_confident = (
+      fallback_fill_count == 0
+      and predicted_distance_m >= target_distance_m
+      and final_assist_ratio <= MAX_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE
+    )
+    confidence_reason = "-"
+    if fallback_fill_count > 0:
+      confidence_reason = "fallback_fill"
+    elif predicted_distance_m < target_distance_m:
+      confidence_reason = "short_prediction"
+    elif final_assist_ratio > MAX_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE:
+      confidence_reason = "assist_uncertain"
     debug_text = (
       f"current={current.display_name or '-'} road_id={current.road_id} "
       f"graph_count={len(predicted)} successors={total_successors} accepted={total_accepted} "
-      f"skip_ahead={total_skip_ahead}/{skip_ahead_hits} endpoint_assist={endpoint_assist_hits} assist_ratio={endpoint_assist_hits / max(1, len(predicted)):.2f} "
+      f"skip_ahead={total_skip_ahead}/{skip_ahead_hits} endpoint_assist={endpoint_assist_hits} assist_ratio={final_assist_ratio:.2f} "
       f"quality={quality:.2f} match={match_quality:.2f}/{len(self._prediction_match_samples)} range={range_mode} stop={stop_reason or '-'} "
       f"predicted_len={predicted_distance_m:.1f} target_len={target_distance_m:.0f} short={int(predicted_distance_m < target_distance_m)} "
       f"short_extend={short_extension_count}/{short_extension_endpoint_hits}/{short_extension_forward_hits} "
+      f"fallback_fill={fallback_fill_count} confidence={confidence_reason} "
       f"selected={';'.join(selected_samples) or '-'} candidates={';'.join(candidate_samples) or '-'} "
       f"current_meta={current_road.continuity_class if current_road is not None else '-'} "
       f"curve_turn={curve_turn_total_deg:.1f} side={max_route_side_m:.1f} speed={gps.speed_mps * 3.6:.1f}"
     )
-    return predicted[:max(graph_segment_limit, SHORT_GRAPH_EXTENSION_SEGMENT_LIMIT if short_extension_count else graph_segment_limit)], True, endpoint_assist_hits > 0 or short_extension_count > 0, assist_road_ids, debug_text
+    result_limit = max(
+      graph_segment_limit,
+      SHORT_GRAPH_EXTENSION_SEGMENT_LIMIT if short_extension_count or fallback_fill_count else graph_segment_limit,
+    )
+    return predicted[:result_limit], graph_confident, endpoint_assist_hits > 0 or short_extension_count > 0 or fallback_fill_count > 0, assist_road_ids, debug_text
