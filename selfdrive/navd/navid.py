@@ -19,6 +19,7 @@ from openpilot.selfdrive.navd.paths import DEFAULT_NAVD_LOG_DIR
 
 HISTORY_SEGMENT_LIMIT = 40
 OSM_TRACE_LOG_MAX_BYTES = 10 * 1024 * 1024
+OSM_LOG_MIN_SPEED_MPS = 1.0
 OSM_TRACE_LOG_PATH = DEFAULT_NAVD_LOG_DIR / "osm_prediction_trace.csv"
 OSM_FAILURE_LOG_PATH = DEFAULT_NAVD_LOG_DIR / "osm_prediction_failures.csv"
 OSM_TRACE_FIELDS = (
@@ -105,6 +106,11 @@ def _road_ids(roads: list[OSMRoadSegment], limit: int = 80) -> str:
   return " ".join(str(road.road_id) for road in roads[:limit])
 
 
+def _prediction_log_allowed(prediction: RoadPrediction) -> bool:
+  # GPS can report small non-zero speeds while the car is stationary.
+  return prediction.gps.speed_mps >= OSM_LOG_MIN_SPEED_MPS
+
+
 class CsvLogWriter:
   def __init__(self, path: Path) -> None:
     self.path = path
@@ -179,7 +185,7 @@ class OsmPredictionLogWriter:
     self.failure_log.close()
 
   def log(self, prediction: RoadPrediction) -> None:
-    if not self.enabled:
+    if not self.enabled or not _prediction_log_allowed(prediction):
       return
 
     current = prediction.current
@@ -255,7 +261,7 @@ def main() -> None:
       now = time.monotonic()
       if prediction is not None:
         log_writer.log(prediction)
-        if osm_logging_enabled and prediction.debug_text:
+        if osm_logging_enabled and _prediction_log_allowed(prediction) and prediction.debug_text:
           prediction_debug = f"{_prediction_mode(prediction)} {prediction.debug_text}"
           log_interval_s = 30.0 if prediction.predicted_from_graph else 5.0
           if prediction_debug != last_prediction_debug or now - last_prediction_debug_t > log_interval_s:
