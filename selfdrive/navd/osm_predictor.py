@@ -38,10 +38,6 @@ DESTINATION_CONTINUITY_BONUS = 8.0
 SAME_NAME_SUCCESSOR_BONUS = 20.0
 SAME_OSM_SUCCESSOR_BONUS = 14.0
 SAME_IDENTITY_ENDPOINT_BONUS = 8.0
-ELEVATED_STRAIGHT_ENDPOINT_BONUS = 18.0
-ELEVATED_STRAIGHT_ENDPOINT_MAX_GAP_M = 35.0
-ELEVATED_STRAIGHT_ENDPOINT_MAX_HEADING_DEG = 28.0
-ELEVATED_STRAIGHT_ENDPOINT_MAX_LAYER_DELTA = 1
 INTERSECTION_STRAIGHT_MAX_TURN_DEG = 25.0
 INTERSECTION_RIGHT_MAX_TURN_DEG = 120.0
 INTERSECTION_STRAIGHT_BONUS = 8.0
@@ -255,35 +251,6 @@ def _endpoint_assist_candidate_allowed(from_road: OSMRoadSegment, road: OSMRoadS
   if not (same_identity or _same_route_metadata(from_road, road) or _same_destination_metadata(from_road, road)):
     return False
   return True
-
-
-def _elevated_straight_endpoint_allowed(from_road: OSMRoadSegment, road: OSMRoadSegment,
-                                        endpoint_gap_m: float, heading_diff_deg: float) -> bool:
-  if endpoint_gap_m > ELEVATED_STRAIGHT_ENDPOINT_MAX_GAP_M:
-    return False
-  if heading_diff_deg > ELEVATED_STRAIGHT_ENDPOINT_MAX_HEADING_DEG:
-    return False
-  if road.is_ramp or from_road.is_ramp:
-    return False
-  if from_road.highway not in MAJOR_FLOW_HIGHWAYS or road.highway not in MAJOR_FLOW_HIGHWAYS:
-    return False
-  if abs(from_road.layer_int - road.layer_int) > ELEVATED_STRAIGHT_ENDPOINT_MAX_LAYER_DELTA:
-    return False
-  elevated_flow = (
-    bool(from_road.bridge)
-    or bool(road.bridge)
-    or from_road.layer_int > 0
-    or road.layer_int > 0
-    or from_road.continuity_class == "elevated"
-    or road.continuity_class == "elevated"
-  )
-  if not elevated_flow:
-    return False
-  return (
-    _same_display_name(from_road.display_name, road.display_name)
-    or from_road.main_flow_bias > 0.5
-    or road.main_flow_bias > 0.5
-  )
 
 
 def _strong_endpoint_assist_candidate(from_road: OSMRoadSegment, road: OSMRoadSegment, heading_diff_deg: float) -> bool:
@@ -965,8 +932,6 @@ class OSMRoadPredictor:
     score += same_name_bonus + same_osm_bonus + trusted_bonus
     if same_identity:
       score -= SAME_IDENTITY_ENDPOINT_BONUS
-    if current_road is not None and _elevated_straight_endpoint_allowed(current_road, road, endpoint_gap_m, heading_diff):
-      score -= ELEVATED_STRAIGHT_ENDPOINT_BONUS
     score += _intersection_direction_adjustment(reference_bearing_deg, road_bearing)
     score += _metadata_score_adjustment(current_road, road, None)
     return _SuccessorCandidate(score, heading_diff, forward_m, road, road_bearing)
@@ -992,17 +957,11 @@ class OSMRoadPredictor:
     for candidate_road in candidates:
       if candidate_road.road_id in visited or candidate_road.road_id == road_id:
         continue
+      if not _endpoint_assist_candidate_allowed(road, candidate_road):
+        continue
       endpoint_gap_m, candidate_end_lat, candidate_end_lon = self._candidate_endpoint(
         end_lat, end_lon, reference_bearing_deg, candidate_road
       )
-      candidate_bearing = driving_bearing_for_oneway(candidate_road.bearing_deg, candidate_road.oneway, reference_bearing_deg)
-      candidate_heading_diff = angle_diff_deg(reference_bearing_deg, candidate_bearing)
-      endpoint_allowed = _endpoint_assist_candidate_allowed(road, candidate_road)
-      elevated_straight_allowed = _elevated_straight_endpoint_allowed(
-        road, candidate_road, endpoint_gap_m, candidate_heading_diff
-      )
-      if not (endpoint_allowed or elevated_straight_allowed):
-        continue
       if self._assist_crosses_blocking_road(end_lat, end_lon, candidate_end_lat, candidate_end_lon,
                                             endpoint_gap_m, road, candidate_road, candidates):
         continue
