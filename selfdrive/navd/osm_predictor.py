@@ -35,6 +35,15 @@ PREFERRED_TRANSITION_BONUS = 16.0
 CONTINUITY_HINT_BONUS = 14.0
 ROUTE_CONTINUITY_BONUS = 10.0
 DESTINATION_CONTINUITY_BONUS = 8.0
+SAME_NAME_SUCCESSOR_BONUS = 20.0
+SAME_OSM_SUCCESSOR_BONUS = 14.0
+SAME_IDENTITY_ENDPOINT_BONUS = 8.0
+INTERSECTION_STRAIGHT_MAX_TURN_DEG = 25.0
+INTERSECTION_RIGHT_MAX_TURN_DEG = 120.0
+INTERSECTION_STRAIGHT_BONUS = 8.0
+INTERSECTION_RIGHT_PENALTY = 3.0
+INTERSECTION_LEFT_PENALTY = 8.0
+INTERSECTION_UTURN_PENALTY = 18.0
 RAMP_OVERSELECT_PENALTY = 10.0
 RAMP_CONTINUITY_BONUS = 6.0
 LAYER_MISMATCH_PENALTY = 18.0
@@ -156,6 +165,22 @@ def _same_road_identity(current_name: str, current_osm_id: int, road: OSMRoadSeg
 
 def _same_segment_identity(left: OSMRoadSegment, right: OSMRoadSegment) -> bool:
   return _same_display_name(left.display_name, right.display_name) or (left.osm_id > 0 and left.osm_id == right.osm_id)
+
+
+def _signed_angle_diff_deg(reference_deg: float, candidate_deg: float) -> float:
+  return (candidate_deg - reference_deg + 180.0) % 360.0 - 180.0
+
+
+def _intersection_direction_adjustment(reference_bearing_deg: float, road_bearing_deg: float) -> float:
+  signed_turn_deg = _signed_angle_diff_deg(reference_bearing_deg, road_bearing_deg)
+  abs_turn_deg = abs(signed_turn_deg)
+  if abs_turn_deg <= INTERSECTION_STRAIGHT_MAX_TURN_DEG:
+    return -INTERSECTION_STRAIGHT_BONUS
+  if signed_turn_deg > 0.0 and abs_turn_deg <= INTERSECTION_RIGHT_MAX_TURN_DEG:
+    return INTERSECTION_RIGHT_PENALTY
+  if signed_turn_deg < 0.0 and abs_turn_deg <= INTERSECTION_RIGHT_MAX_TURN_DEG:
+    return INTERSECTION_LEFT_PENALTY
+  return INTERSECTION_UTURN_PENALTY
 
 
 def _same_match_identity(left: OSMRoadMatch, right: OSMRoadMatch) -> bool:
@@ -839,10 +864,11 @@ class OSMRoadPredictor:
     if heading_diff > MAX_GRAPH_HEADING_DIFF_DEG:
       return None, "heading_diff"
 
-    same_name_bonus = -12.0 if _same_display_name(current_name, road.display_name) else 0.0
-    same_osm_bonus = -8.0 if current_osm_id > 0 and road.osm_id == current_osm_id else 0.0
+    same_name_bonus = -SAME_NAME_SUCCESSOR_BONUS if _same_display_name(current_name, road.display_name) else 0.0
+    same_osm_bonus = -SAME_OSM_SUCCESSOR_BONUS if current_osm_id > 0 and road.osm_id == current_osm_id else 0.0
     trusted_bonus = -6.0 if trust_geometry else 0.0
     score = heading_diff * 3.0 + side_offset_m * 0.35 + score_forward_m * 0.02 + same_name_bonus + same_osm_bonus + trusted_bonus
+    score += _intersection_direction_adjustment(reference_bearing_deg, road_bearing)
     score += _metadata_score_adjustment(current_road, road, transition)
     return _SuccessorCandidate(score, heading_diff, forward_m, road, road_bearing, transition), ""
 
@@ -898,12 +924,15 @@ class OSMRoadPredictor:
 
     side_offset_m = min(abs(y1), abs(y2))
     same_identity = _same_road_identity(current_name, current_osm_id, road)
-    same_name_bonus = -12.0 if _same_display_name(current_name, road.display_name) else 0.0
-    same_osm_bonus = -8.0 if current_osm_id > 0 and road.osm_id == current_osm_id else 0.0
+    same_name_bonus = -SAME_NAME_SUCCESSOR_BONUS if _same_display_name(current_name, road.display_name) else 0.0
+    same_osm_bonus = -SAME_OSM_SUCCESSOR_BONUS if current_osm_id > 0 and road.osm_id == current_osm_id else 0.0
     trusted_bonus = -6.0 if same_identity or _trusted_link_successor(road) else 0.0
     forward_m = max(0.0, min(max(x1, x2), MAX_GRAPH_ENDPOINT_ASSIST_M))
     score = heading_diff * 3.0 + endpoint_gap_m * 0.7 + side_offset_m * 0.2 + forward_m * 0.02
     score += same_name_bonus + same_osm_bonus + trusted_bonus
+    if same_identity:
+      score -= SAME_IDENTITY_ENDPOINT_BONUS
+    score += _intersection_direction_adjustment(reference_bearing_deg, road_bearing)
     score += _metadata_score_adjustment(current_road, road, None)
     return _SuccessorCandidate(score, heading_diff, forward_m, road, road_bearing)
 
