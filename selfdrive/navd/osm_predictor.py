@@ -44,6 +44,8 @@ MAX_GRAPH_SIDE_OFFSET_M = 260.0
 MAX_GRAPH_SKIP_AHEAD_SEGMENTS = 5
 MAX_GRAPH_ENDPOINT_ASSIST_M = 420.0
 MAX_ENDPOINT_ASSIST_GAP_M = 100.0
+MAX_ENDPOINT_ASSIST_BLOCKING_GAP_M = 18.0
+BLOCKING_CROSSING_HIGHWAYS = {"motorway", "trunk", "primary", "secondary"}
 MAX_ENDPOINT_ASSIST_RATIO_FOR_EXTENSION = 0.30
 MAX_CONSECUTIVE_ENDPOINT_ASSIST = 2
 MAX_STRONG_CONSECUTIVE_ENDPOINT_ASSIST = 4
@@ -84,6 +86,10 @@ RELAXED_LOOKUP_MAX_RADIUS_M = 120.0
 RELAXED_LOOKUP_HEADING_DIFF_DEG = 85.0
 RELAXED_LOOKUP_MAX_DISTANCE_M = 80.0
 RELAXED_LOOKUP_MAX_SCORE = 105.0
+PREVIOUS_PREDICTION_HOLD_MAX_AGE_S = 8.0
+PREVIOUS_PREDICTION_MIN_TAIL_DISTANCE_M = 100.0
+PREVIOUS_PREDICTION_MIN_TAIL_SEGMENTS = 3
+PREVIOUS_PREDICTION_SCORE_MARGIN = 0.15
 TRUSTED_SUCCESSOR_BACKTRACK_M = -45.0
 STRONG_SUCCESSOR_BACKTRACK_M = -85.0
 TRUSTED_SUCCESSOR_SIDE_MULTIPLIER = 2.4
@@ -147,6 +153,10 @@ def _same_road_identity(current_name: str, current_osm_id: int, road: OSMRoadSeg
   return _same_display_name(current_name, road.display_name) or (current_osm_id > 0 and road.osm_id == current_osm_id)
 
 
+def _same_segment_identity(left: OSMRoadSegment, right: OSMRoadSegment) -> bool:
+  return _same_display_name(left.display_name, right.display_name) or (left.osm_id > 0 and left.osm_id == right.osm_id)
+
+
 def _trusted_link_successor(road: OSMRoadSegment) -> bool:
   return road.highway in LINK_HIGHWAYS
 
@@ -199,10 +209,7 @@ def _endpoint_assist_candidate_allowed(from_road: OSMRoadSegment, road: OSMRoadS
     return False
   if road.is_ramp and not from_road.is_ramp:
     return False
-  same_identity = (
-    _same_display_name(from_road.display_name, road.display_name)
-    or (from_road.osm_id > 0 and from_road.osm_id == road.osm_id)
-  )
+  same_identity = _same_segment_identity(from_road, road)
   if not (same_identity or _same_route_metadata(from_road, road) or _same_destination_metadata(from_road, road)):
     return False
   return True
@@ -215,10 +222,7 @@ def _strong_endpoint_assist_candidate(from_road: OSMRoadSegment, road: OSMRoadSe
     return False
   if abs(from_road.layer_int - road.layer_int) > STRONG_ENDPOINT_ASSIST_LAYER_DELTA:
     return False
-  same_identity = (
-    _same_display_name(from_road.display_name, road.display_name)
-    or (from_road.osm_id > 0 and from_road.osm_id == road.osm_id)
-  )
+  same_identity = _same_segment_identity(from_road, road)
   return same_identity or _same_route_metadata(from_road, road)
 
 
@@ -301,6 +305,40 @@ def _point_to_segment_distance_m(gps: GPSFix, road: OSMRoadSegment) -> float:
   return math.hypot(x1 + t * dx, y1 + t * dy)
 
 
+def _point_to_segment_distance_xy(px: float, py: float, x1: float, y1: float, x2: float, y2: float) -> float:
+  dx = x2 - x1
+  dy = y2 - y1
+  length_sq = dx * dx + dy * dy
+  if length_sq <= 0.0:
+    return math.hypot(px - x1, py - y1)
+  t = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / length_sq))
+  return math.hypot(px - (x1 + t * dx), py - (y1 + t * dy))
+
+
+def _segments_intersect(ax1: float, ay1: float, ax2: float, ay2: float,
+                        bx1: float, by1: float, bx2: float, by2: float) -> bool:
+  def orientation(px: float, py: float, qx: float, qy: float, rx: float, ry: float) -> float:
+    return (qy - py) * (rx - qx) - (qx - px) * (ry - qy)
+
+  def on_segment(px: float, py: float, qx: float, qy: float, rx: float, ry: float) -> bool:
+    return min(px, rx) <= qx <= max(px, rx) and min(py, ry) <= qy <= max(py, ry)
+
+  o1 = orientation(ax1, ay1, ax2, ay2, bx1, by1)
+  o2 = orientation(ax1, ay1, ax2, ay2, bx2, by2)
+  o3 = orientation(bx1, by1, bx2, by2, ax1, ay1)
+  o4 = orientation(bx1, by1, bx2, by2, ax2, ay2)
+  if o1 * o2 < 0.0 and o3 * o4 < 0.0:
+    return True
+
+  epsilon = 1e-6
+  return (
+    abs(o1) <= epsilon and on_segment(ax1, ay1, bx1, by1, ax2, ay2)
+    or abs(o2) <= epsilon and on_segment(ax1, ay1, bx2, by2, ax2, ay2)
+    or abs(o3) <= epsilon and on_segment(bx1, by1, ax1, ay1, bx2, by2)
+    or abs(o4) <= epsilon and on_segment(bx1, by1, ax2, ay2, bx2, by2)
+  )
+
+
 def _format_rejects(rejects: dict[str, int]) -> str:
   if not rejects:
     return "none"
@@ -336,9 +374,11 @@ def _short_extension_candidate_allowed(from_road: OSMRoadSegment, road: OSMRoadS
     return False
   if from_road.highway in LINK_HIGHWAYS and road.highway in LINK_HIGHWAYS:
     return True
-  if from_road.highway in MAJOR_FLOW_HIGHWAYS and road.highway in MAJOR_FLOW_HIGHWAYS and not road.is_ramp:
+  if from_road.highway in LINK_HIGHWAYS and road.highway in MAJOR_FLOW_HIGHWAYS and not road.is_ramp:
     return True
-  return speed_mps < MED_SPEED_TARGET_MIN_MPS and from_road.highway == road.highway and not road.is_ramp
+  if from_road.highway in MAJOR_FLOW_HIGHWAYS and road.highway in LINK_HIGHWAYS:
+    return True
+  return speed_mps < MED_SPEED_TARGET_MIN_MPS and _same_segment_identity(from_road, road) and not road.is_ramp
 
 
 class OSMRoadPredictor:
@@ -486,6 +526,102 @@ class OSMRoadPredictor:
     if len(self._prediction_quality_samples) > PREDICTION_QUALITY_WINDOW:
       self._prediction_quality_samples = self._prediction_quality_samples[-PREDICTION_QUALITY_WINDOW:]
 
+  def _prediction_score(self, prediction: RoadPrediction) -> float:
+    if prediction.current is None or not prediction.predicted:
+      return 0.0
+
+    score = 0.25
+    history_hold = "history_hold=1" in prediction.debug_text
+    if prediction.predicted_from_graph:
+      score += 0.45
+    if prediction.predicted_from_assist:
+      score -= 0.08
+    if history_hold:
+      score += 0.10
+    if "confidence=assist_verified" in prediction.debug_text:
+      score += 0.12
+    if "confidence=assist_uncertain" in prediction.debug_text and not history_hold:
+      score -= 0.12
+    if "confidence=fallback_fill" in prediction.debug_text and not history_hold:
+      score -= 0.30
+    if ("confidence=short_prediction" in prediction.debug_text or "short=1" in prediction.debug_text) and not history_hold:
+      score -= 0.25
+    return _clamp(score, 0.0, 1.0)
+
+  def _prediction_needs_history_hold(self, prediction: RoadPrediction) -> bool:
+    if prediction.current is None or not prediction.predicted:
+      return False
+    return (
+      not prediction.predicted_from_graph
+      or "confidence=assist_uncertain" in prediction.debug_text
+      or "confidence=fallback_fill" in prediction.debug_text
+      or "confidence=short_prediction" in prediction.debug_text
+      or "short=1" in prediction.debug_text
+    )
+
+  def _previous_prediction_tail(self, current: OSMRoadMatch | None, now: float) -> tuple[list[OSMRoadSegment], set[int], bool] | None:
+    previous = self._last_prediction
+    if current is None or previous is None or previous.current is None:
+      return None
+    if not previous.predicted_from_graph or not previous.predicted:
+      return None
+    if now - previous.updated_at > PREVIOUS_PREDICTION_HOLD_MAX_AGE_S:
+      return None
+
+    current_idx = next((idx for idx, road in enumerate(previous.predicted) if road.road_id == current.road_id), -1)
+    previous_hit = current_idx >= 0
+    if previous_hit:
+      tail = previous.predicted[current_idx + 1:]
+    elif previous.current.road_id == current.road_id:
+      tail = previous.predicted
+    else:
+      return None
+
+    tail = [road for road in tail if road.road_id != current.road_id]
+    if len(tail) < PREVIOUS_PREDICTION_MIN_TAIL_SEGMENTS:
+      return None
+    if _prediction_distance_m(tail) < PREVIOUS_PREDICTION_MIN_TAIL_DISTANCE_M:
+      return None
+
+    tail_ids = {road.road_id for road in tail}
+    assist_ids = previous.assist_road_ids & tail_ids
+    return tail, assist_ids, previous_hit
+
+  def _maybe_hold_previous_prediction(self, prediction: RoadPrediction, now: float) -> RoadPrediction:
+    if not self._prediction_needs_history_hold(prediction):
+      return prediction
+
+    previous_tail = self._previous_prediction_tail(prediction.current, now)
+    previous = self._last_prediction
+    if previous_tail is None or previous is None:
+      return prediction
+
+    tail, assist_ids, previous_hit = previous_tail
+    history_score = self._prediction_score(previous)
+    history_score += 0.25 if previous_hit else 0.10
+    history_score += min(0.20, self._prediction_match_quality() * 0.20)
+    history_score = _clamp(history_score, 0.0, 1.0)
+    current_score = self._prediction_score(prediction)
+    if history_score < current_score + PREVIOUS_PREDICTION_SCORE_MARGIN:
+      return prediction
+
+    held_debug = (
+      f"{prediction.debug_text} history_hold=1 "
+      f"previous_hit={int(previous_hit)} history_score={history_score:.2f} "
+      f"current_score={current_score:.2f} tail_len={len(tail)} tail_m={_prediction_distance_m(tail):.1f}"
+    )
+    return RoadPrediction(
+      gps=prediction.gps,
+      current=prediction.current,
+      nearby=prediction.nearby,
+      predicted=tail,
+      predicted_from_graph=True,
+      predicted_from_assist=bool(assist_ids),
+      assist_road_ids=assist_ids,
+      debug_text=held_debug,
+      updated_at=prediction.updated_at,
+    )
+
   def _find_current_road(
     self,
     conn: sqlite3.Connection,
@@ -570,6 +706,7 @@ class OSMRoadPredictor:
     result = RoadPrediction(gps=gps, current=current, nearby=nearby, predicted=predicted,
                             predicted_from_graph=predicted_from_graph, predicted_from_assist=predicted_from_assist,
                             assist_road_ids=assist_road_ids, debug_text=debug_text, updated_at=now)
+    result = self._maybe_hold_previous_prediction(result, now)
     self._record_prediction_quality(result)
     self._add_pending_prediction_match(result)
     self._last_gps = gps
@@ -597,6 +734,44 @@ class OSMRoadPredictor:
     if row is None:
       return None
     return row_to_segment(row)
+
+  def _candidate_endpoint(self, end_lat: float, end_lon: float, reference_bearing_deg: float,
+                          road: OSMRoadSegment) -> tuple[float, float, float]:
+    x1, y1 = latlon_to_car_space_m(end_lat, end_lon, reference_bearing_deg, road.lat1, road.lon1)
+    x2, y2 = latlon_to_car_space_m(end_lat, end_lon, reference_bearing_deg, road.lat2, road.lon2)
+    gap1 = math.hypot(x1, y1)
+    gap2 = math.hypot(x2, y2)
+    if gap1 <= gap2:
+      return gap1, road.lat1, road.lon1
+    return gap2, road.lat2, road.lon2
+
+  def _assist_crosses_blocking_road(self, start_lat: float, start_lon: float,
+                                    end_lat: float, end_lon: float, gap_m: float,
+                                    from_road: OSMRoadSegment, candidate_road: OSMRoadSegment,
+                                    nearby_roads: list[OSMRoadSegment]) -> bool:
+    if gap_m <= MAX_ENDPOINT_ASSIST_BLOCKING_GAP_M:
+      return False
+
+    end_x, end_y = latlon_to_car_space_m(start_lat, start_lon, 0.0, end_lat, end_lon)
+    for road in nearby_roads:
+      if road.highway not in BLOCKING_CROSSING_HIGHWAYS:
+        continue
+      if road.road_id in (from_road.road_id, candidate_road.road_id):
+        continue
+      osm_id = road.osm_id
+      if osm_id > 0 and osm_id in (from_road.osm_id, candidate_road.osm_id):
+        continue
+
+      x1, y1 = latlon_to_car_space_m(start_lat, start_lon, 0.0, road.lat1, road.lon1)
+      x2, y2 = latlon_to_car_space_m(start_lat, start_lon, 0.0, road.lat2, road.lon2)
+      if not _segments_intersect(0.0, 0.0, end_x, end_y, x1, y1, x2, y2):
+        continue
+      start_gap = _point_to_segment_distance_xy(0.0, 0.0, x1, y1, x2, y2)
+      end_gap = _point_to_segment_distance_xy(end_x, end_y, x1, y1, x2, y2)
+      if min(start_gap, end_gap) <= MAX_ENDPOINT_ASSIST_BLOCKING_GAP_M:
+        continue
+      return True
+    return False
 
   def _score_successor(self, gps: GPSFix, reference_bearing_deg: float, current_name: str,
                        current_osm_id: int, road: OSMRoadSegment,
@@ -720,6 +895,12 @@ class OSMRoadPredictor:
         continue
       if not _endpoint_assist_candidate_allowed(road, candidate_road):
         continue
+      endpoint_gap_m, candidate_end_lat, candidate_end_lon = self._candidate_endpoint(
+        end_lat, end_lon, reference_bearing_deg, candidate_road
+      )
+      if self._assist_crosses_blocking_road(end_lat, end_lon, candidate_end_lat, candidate_end_lon,
+                                            endpoint_gap_m, road, candidate_road, candidates):
+        continue
       candidate, reject_reason = self._score_successor(gps, reference_bearing_deg, current_name,
                                                         current_osm_id, candidate_road,
                                                         current_road=current_road)
@@ -729,9 +910,6 @@ class OSMRoadPredictor:
                                                    current_road=current_road)
       if candidate is None:
         continue
-      x1, y1 = latlon_to_car_space_m(end_lat, end_lon, reference_bearing_deg, candidate_road.lat1, candidate_road.lon1)
-      x2, y2 = latlon_to_car_space_m(end_lat, end_lon, reference_bearing_deg, candidate_road.lat2, candidate_road.lon2)
-      endpoint_gap_m = min(math.hypot(x1, y1), math.hypot(x2, y2))
       scored.append((candidate.score + endpoint_gap_m * 0.4, candidate))
     if not scored:
       return None
@@ -754,6 +932,12 @@ class OSMRoadPredictor:
       if candidate_road.road_id in visited or candidate_road.road_id == from_road.road_id:
         continue
       if not _short_extension_candidate_allowed(from_road, candidate_road, gps.speed_mps):
+        continue
+      endpoint_gap_m, candidate_end_lat, candidate_end_lon = self._candidate_endpoint(
+        end_lat, end_lon, reference_bearing_deg, candidate_road
+      )
+      if self._assist_crosses_blocking_road(end_lat, end_lon, candidate_end_lat, candidate_end_lon,
+                                            endpoint_gap_m, from_road, candidate_road, candidates):
         continue
       candidate = self._score_endpoint_candidate(end_lat, end_lon, reference_bearing_deg,
                                                  current_name, current_osm_id, candidate_road,
@@ -825,12 +1009,36 @@ class OSMRoadPredictor:
                                            predicted_distance_m: float) -> tuple[list[OSMRoadSegment], float]:
     added: list[OSMRoadSegment] = []
     fill_visited = set(visited)
-    for road in self._fallback_prediction(conn, gps, target_distance_m):
+    fallback_candidates = self._fallback_prediction(conn, gps, target_distance_m)
+    from_road = predicted[-1] if predicted else None
+    bearing = (
+      driving_bearing_for_oneway(from_road.bearing_deg, from_road.oneway, gps.bearing_deg)
+      if from_road is not None else gps.bearing_deg
+    )
+    for road in fallback_candidates:
       if road.road_id in fill_visited:
         continue
+      if from_road is not None:
+        if not _short_extension_candidate_allowed(from_road, road, gps.speed_mps):
+          continue
+        forward_to_lat2 = angle_diff_deg(from_road.bearing_deg, bearing) <= 90.0
+        end_lat = from_road.lat2 if forward_to_lat2 else from_road.lat1
+        end_lon = from_road.lon2 if forward_to_lat2 else from_road.lon1
+        endpoint_gap_m, candidate_end_lat, candidate_end_lon = self._candidate_endpoint(
+          end_lat, end_lon, bearing, road
+        )
+        if self._assist_crosses_blocking_road(end_lat, end_lon, candidate_end_lat, candidate_end_lon,
+                                              endpoint_gap_m, from_road, road, fallback_candidates):
+          continue
+        candidate = self._score_endpoint_candidate(end_lat, end_lon, bearing, from_road.display_name,
+                                                   from_road.osm_id, road, current_road=from_road)
+        if candidate is None:
+          continue
+        bearing = candidate.driving_bearing_deg
       added.append(road)
       fill_visited.add(road.road_id)
       predicted_distance_m += max(0.0, road.segment_length)
+      from_road = road
       if predicted_distance_m >= target_distance_m or len(predicted) + len(added) >= SHORT_GRAPH_EXTENSION_SEGMENT_LIMIT:
         break
     return added, predicted_distance_m
