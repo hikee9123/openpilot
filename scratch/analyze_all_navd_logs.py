@@ -39,6 +39,10 @@ def _is_graph_mode(row: dict[str, str]) -> bool:
   return row.get("mode", "").startswith("graph")
 
 
+def _has_failure_reason(row: dict[str, str]) -> bool:
+  return bool(row.get("failure_reason", ""))
+
+
 def _speed_mps(row: dict[str, str]) -> float:
   try:
     return float(row.get("speed_mps", "0") or 0.0)
@@ -68,20 +72,31 @@ def _debug_value(row: dict[str, str], key: str) -> str:
   return match.group(1) if match is not None else ""
 
 
+def _debug_int(row: dict[str, str], key: str) -> int | None:
+  try:
+    return int(float(_debug_value(row, key)))
+  except ValueError:
+    return None
+
+
+def _current_name(row: dict[str, str]) -> str:
+  return row.get("current_name", "") or "-"
+
+
 def _row_key(row: dict[str, str]) -> tuple[str, ...]:
   return tuple(row.get(field, "") for field in row.keys())
 
 
 def _count_failure_subset_mismatch(trace_rows: list[dict[str, str]], failure_rows: list[dict[str, str]]) -> int:
-  trace_non_graph = Counter(_row_key(row) for row in trace_rows if not _is_graph_mode(row))
+  trace_failures = Counter(_row_key(row) for row in trace_rows if _has_failure_reason(row))
   mismatches = 0
   for row in failure_rows:
     key = _row_key(row)
-    if trace_non_graph[key] <= 0:
+    if trace_failures[key] <= 0:
       mismatches += 1
       continue
-    trace_non_graph[key] -= 1
-  return mismatches + sum(trace_non_graph.values())
+    trace_failures[key] -= 1
+  return mismatches + sum(trace_failures.values())
 
 
 def _format_rate(count: int, total: int) -> str:
@@ -149,7 +164,9 @@ def analyze_logs(db_path: Path, log_root: Path, horizons: tuple[int, ...]) -> in
 
   total_rows = 0
   total_graph_rows = 0
-  total_failure_rows = 0
+  total_non_graph_rows = 0
+  total_failure_reason_rows = 0
+  total_failure_csv_rows = 0
   total_moving_rows = 0
   total_moving_graph_rows = 0
   total_stopped_rows = 0
@@ -161,6 +178,9 @@ def analyze_logs(db_path: Path, log_root: Path, horizons: tuple[int, ...]) -> in
   reason_counts: Counter[str] = Counter()
   confidence_counts: Counter[str] = Counter()
   failure_clusters: Counter[str] = Counter()
+  history_hold_counts: Counter[str] = Counter()
+  successors_zero_counts: Counter[str] = Counter()
+  graph_short_counts: Counter[str] = Counter()
   future_hits: Counter[int] = Counter()
   future_totals: Counter[int] = Counter()
 
@@ -173,6 +193,7 @@ def analyze_logs(db_path: Path, log_root: Path, horizons: tuple[int, ...]) -> in
       failure_rows = _read_csv(log_set.failure_path)
       graph_rows = [row for row in trace_rows if _is_graph_mode(row)]
       non_graph_rows = [row for row in trace_rows if not _is_graph_mode(row)]
+      failure_reason_rows = [row for row in trace_rows if _has_failure_reason(row)]
       moving_rows = [row for row in trace_rows if _speed_mps(row) >= STOPPED_LOG_SPEED_MPS]
       moving_graph_rows = [row for row in moving_rows if _is_graph_mode(row)]
       stopped_rows = len(trace_rows) - len(moving_rows)
@@ -181,7 +202,7 @@ def analyze_logs(db_path: Path, log_root: Path, horizons: tuple[int, ...]) -> in
       subset_mismatches = _count_failure_subset_mismatch(trace_rows, failure_rows)
       recovered_current_match = 0
 
-      for row in non_graph_rows:
+      for row in failure_reason_rows:
         try:
           lat = float(row["lat"])
           lon = float(row["lon"])
@@ -201,7 +222,9 @@ def analyze_logs(db_path: Path, log_root: Path, horizons: tuple[int, ...]) -> in
 
       total_rows += len(trace_rows)
       total_graph_rows += len(graph_rows)
-      total_failure_rows += len(non_graph_rows)
+      total_non_graph_rows += len(non_graph_rows)
+      total_failure_reason_rows += len(failure_reason_rows)
+      total_failure_csv_rows += len(failure_rows)
       total_moving_rows += len(moving_rows)
       total_moving_graph_rows += len(moving_graph_rows)
       total_stopped_rows += stopped_rows
@@ -212,18 +235,24 @@ def analyze_logs(db_path: Path, log_root: Path, horizons: tuple[int, ...]) -> in
       mode_counts.update(row.get("mode", "-") or "-" for row in trace_rows)
       reason_counts.update(row.get("failure_reason", "-") or "-" for row in trace_rows)
       confidence_counts.update(_debug_value(row, "confidence") or "-" for row in trace_rows)
+      history_hold_counts.update(_current_name(row) for row in trace_rows if _debug_value(row, "history_hold") == "1")
+      successors_zero_counts.update(_current_name(row) for row in trace_rows if _debug_int(row, "successors") == 0)
+      graph_short_counts.update(_current_name(row) for row in trace_rows if row.get("failure_reason") == "graph_short")
 
       print(f"Log: {log_set.name}")
       print(f"  - Trace samples: {len(trace_rows)}")
       print(f"  - Graph samples: {len(graph_rows)} ({_format_rate(len(graph_rows), len(trace_rows))})")
-      print(f"  - Failure samples: {len(non_graph_rows)}")
+      print(f"  - Non-graph samples: {len(non_graph_rows)}")
+      print(f"  - Failure-reason samples: {len(failure_reason_rows)}")
       print(f"  - Failure CSV rows: {len(failure_rows)}")
       print(f"  - Failure CSV/trace mismatch: {subset_mismatches}")
       print(f"  - Stopped samples skipped by logger: {stopped_rows}")
       print(f"  - Moving graph rate: {_format_rate(len(moving_graph_rows), len(moving_rows))}")
       print(f"  - Currentless failures: {len(currentless_failures)}")
-      print(f"  - Current-present graph failures: {len(current_present_failures)}")
-      print(f"  - Stateless current-match recoverable: {recovered_current_match} / {len(non_graph_rows)}")
+      print(f"  - Current-present non-graph samples: {len(current_present_failures)}")
+      print(f"  - Stateless current-match recoverable: {recovered_current_match} / {len(failure_reason_rows)}")
+      print(f"  - History holds: {sum(1 for row in trace_rows if _debug_value(row, 'history_hold') == '1')}")
+      print(f"  - Successor gaps: {sum(1 for row in trace_rows if _debug_int(row, 'successors') == 0)}")
       for horizon in horizons:
         hits, horizon_total = _future_hit_counts(trace_rows, horizon)
         print(f"  - Future hit +{horizon}s: {hits}/{horizon_total} ({_format_rate(hits, horizon_total)})")
@@ -240,13 +269,15 @@ def analyze_logs(db_path: Path, log_root: Path, horizons: tuple[int, ...]) -> in
   print("=" * 48)
   print(f"Trace samples: {total_rows}")
   print(f"Graph samples: {total_graph_rows} ({_format_rate(total_graph_rows, total_rows)})")
-  print(f"Failure samples: {total_failure_rows}")
+  print(f"Non-graph samples: {total_non_graph_rows}")
+  print(f"Failure-reason samples: {total_failure_reason_rows}")
+  print(f"Failure CSV rows: {total_failure_csv_rows}")
   print(f"Failure CSV/trace mismatch: {total_subset_mismatches}")
   print(f"Stopped samples skipped by logger: {total_stopped_rows}")
   print(f"Moving graph rate: {_format_rate(total_moving_graph_rows, total_moving_rows)}")
   print(f"Currentless failures: {total_currentless_failures}")
-  print(f"Current-present graph failures: {total_current_present_failures}")
-  print(f"Stateless current-match recoverable: {total_recovered_current_match} / {total_failure_rows}")
+  print(f"Current-present non-graph samples: {total_current_present_failures}")
+  print(f"Stateless current-match recoverable: {total_recovered_current_match} / {total_failure_reason_rows}")
 
   print("\nMode counts:")
   for mode, count in mode_counts.most_common():
@@ -259,6 +290,21 @@ def analyze_logs(db_path: Path, log_root: Path, horizons: tuple[int, ...]) -> in
   print("\nConfidence counts:")
   for confidence, count in confidence_counts.most_common():
     print(f"  - {confidence}: {count}")
+
+  if history_hold_counts:
+    print("\nHistory hold counts by current road:")
+    for name, count in history_hold_counts.most_common(10):
+      print(f"  - {name}: {count}")
+
+  if successors_zero_counts:
+    print("\nSuccessor gap counts by current road:")
+    for name, count in successors_zero_counts.most_common(10):
+      print(f"  - {name}: {count}")
+
+  if graph_short_counts:
+    print("\nGraph-short counts by current road:")
+    for name, count in graph_short_counts.most_common(10):
+      print(f"  - {name}: {count}")
 
   print("\nFuture hit rates:")
   for horizon in horizons:

@@ -21,6 +21,8 @@ HISTORY_SEGMENT_LIMIT = 40
 OSM_TRACE_LOG_MAX_BYTES = 10 * 1024 * 1024
 OSM_LOG_MIN_SPEED_MPS = 1.0
 OSM_LOG_REPEAT_SKIP_AFTER = 2
+HISTORY_HOLD_MIN_LEN_RATIO = 0.60
+HISTORY_HOLD_MIN_LEN_M = 100.0
 OSM_TRACE_LOG_PATH = DEFAULT_NAVD_LOG_DIR / "osm_prediction_trace.csv"
 OSM_FAILURE_LOG_PATH = DEFAULT_NAVD_LOG_DIR / "osm_prediction_failures.csv"
 OSM_TRACE_FIELDS = (
@@ -124,8 +126,12 @@ def _prediction_failure_reason(prediction: RoadPrediction) -> str:
   predicted_len_m = _prediction_distance_m(prediction)
   target_len_m = _target_prediction_distance_m(prediction.gps.speed_mps)
   short = predicted_len_m < target_len_m
+  history_hold = "history_hold=1" in prediction.debug_text
   if prediction.current is None:
     return "current_none_short" if short else "current_none_len_ok"
+  if history_hold:
+    history_min_len_m = max(HISTORY_HOLD_MIN_LEN_M, target_len_m * HISTORY_HOLD_MIN_LEN_RATIO)
+    return "" if predicted_len_m >= history_min_len_m else "history_hold_short"
   if prediction.predicted_from_graph and not short:
     return ""
   if "confidence=assist_uncertain" in prediction.debug_text:

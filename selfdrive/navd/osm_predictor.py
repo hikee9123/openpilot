@@ -90,6 +90,7 @@ PREVIOUS_PREDICTION_HOLD_MAX_AGE_S = 8.0
 PREVIOUS_PREDICTION_MIN_TAIL_DISTANCE_M = 100.0
 PREVIOUS_PREDICTION_MIN_TAIL_SEGMENTS = 3
 PREVIOUS_PREDICTION_SCORE_MARGIN = 0.15
+PREVIOUS_PREDICTION_GRAPH_GAP_SCORE_BONUS = 0.12
 TRUSTED_SUCCESSOR_BACKTRACK_M = -45.0
 STRONG_SUCCESSOR_BACKTRACK_M = -85.0
 TRUSTED_SUCCESSOR_SIDE_MULTIPLIER = 2.4
@@ -155,6 +156,18 @@ def _same_road_identity(current_name: str, current_osm_id: int, road: OSMRoadSeg
 
 def _same_segment_identity(left: OSMRoadSegment, right: OSMRoadSegment) -> bool:
   return _same_display_name(left.display_name, right.display_name) or (left.osm_id > 0 and left.osm_id == right.osm_id)
+
+
+def _same_match_identity(left: OSMRoadMatch, right: OSMRoadMatch) -> bool:
+  return (
+    left.road_id == right.road_id
+    or _same_display_name(left.display_name, right.display_name)
+    or (left.osm_id > 0 and left.osm_id == right.osm_id)
+  )
+
+
+def _match_segment_identity(current: OSMRoadMatch, road: OSMRoadSegment) -> bool:
+  return _same_display_name(current.display_name, road.display_name) or (current.osm_id > 0 and current.osm_id == road.osm_id)
 
 
 def _trusted_link_successor(road: OSMRoadSegment) -> bool:
@@ -553,13 +566,24 @@ class OSMRoadPredictor:
       return False
     return (
       not prediction.predicted_from_graph
+      or "successors=0" in prediction.debug_text
+      or "stop=no_candidates" in prediction.debug_text
       or "confidence=assist_uncertain" in prediction.debug_text
       or "confidence=fallback_fill" in prediction.debug_text
       or "confidence=short_prediction" in prediction.debug_text
       or "short=1" in prediction.debug_text
     )
 
-  def _previous_prediction_tail(self, current: OSMRoadMatch | None, now: float) -> tuple[list[OSMRoadSegment], set[int], bool] | None:
+  def _prediction_has_graph_gap(self, prediction: RoadPrediction) -> bool:
+    return (
+      "successors=0" in prediction.debug_text
+      or "stop=no_candidates" in prediction.debug_text
+      or "confidence=short_prediction" in prediction.debug_text
+      or "short=1" in prediction.debug_text
+    )
+
+  def _previous_prediction_tail(self, current: OSMRoadMatch | None, now: float,
+                                allow_related_current: bool = False) -> tuple[list[OSMRoadSegment], set[int], bool] | None:
     previous = self._last_prediction
     if current is None or previous is None or previous.current is None:
       return None
@@ -574,6 +598,14 @@ class OSMRoadPredictor:
       tail = previous.predicted[current_idx + 1:]
     elif previous.current.road_id == current.road_id:
       tail = previous.predicted
+    elif allow_related_current:
+      related_idx = next((idx for idx, road in enumerate(previous.predicted) if _match_segment_identity(current, road)), -1)
+      if related_idx >= 0:
+        tail = previous.predicted[related_idx + 1:]
+      elif _same_match_identity(previous.current, current):
+        tail = previous.predicted
+      else:
+        return None
     else:
       return None
 
@@ -591,7 +623,8 @@ class OSMRoadPredictor:
     if not self._prediction_needs_history_hold(prediction):
       return prediction
 
-    previous_tail = self._previous_prediction_tail(prediction.current, now)
+    graph_gap = self._prediction_has_graph_gap(prediction)
+    previous_tail = self._previous_prediction_tail(prediction.current, now, allow_related_current=graph_gap)
     previous = self._last_prediction
     if previous_tail is None or previous is None:
       return prediction
@@ -599,6 +632,8 @@ class OSMRoadPredictor:
     tail, assist_ids, previous_hit = previous_tail
     history_score = self._prediction_score(previous)
     history_score += 0.25 if previous_hit else 0.10
+    if graph_gap:
+      history_score += PREVIOUS_PREDICTION_GRAPH_GAP_SCORE_BONUS
     history_score += min(0.20, self._prediction_match_quality() * 0.20)
     history_score = _clamp(history_score, 0.0, 1.0)
     current_score = self._prediction_score(prediction)
