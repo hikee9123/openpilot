@@ -111,7 +111,7 @@ def _speed_camera_overlay(prediction: RoadPrediction, prediction_distance_m: flo
     max(CAMERA_MIN_FORWARD_WINDOW_M, prediction_distance_m + CAMERA_FORWARD_EXTRA_M),
   )
   route_bearings = _route_bearings(prediction)
-  cameras = speed_cameras_for_road_ids(road_ids[:CAMERA_LOOKUP_LIMIT], limit=MAX_CAMERA_OVERLAY_ITEMS * 3)
+  cameras = speed_cameras_for_road_ids(road_ids=road_ids[:CAMERA_LOOKUP_LIMIT], limit=MAX_CAMERA_OVERLAY_ITEMS * 3)
   overlays: list[dict] = []
   seen_camera_ids: set[int] = set()
   for camera in cameras:
