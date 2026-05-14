@@ -5,12 +5,11 @@ import argparse
 import os
 import select
 import shutil
-import sqlite3
 import stat
 import subprocess
 import sys
 import time
-from contextlib import closing
+from importlib import import_module
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -22,8 +21,18 @@ except Exception:
     def put(self, key: str, value: object) -> None:
       pass
 
-from openpilot.selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH, database_segment_count
-from openpilot.selfdrive.navd.paths import DEFAULT_NAVD_TMP_DIR, ensure_navd_dirs
+try:
+  from openpilot.selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH
+  from openpilot.selfdrive.navd.osm_roads_db import validate_osm_roads_db
+  from openpilot.selfdrive.navd.paths import DEFAULT_NAVD_TMP_DIR, ensure_navd_dirs
+except ModuleNotFoundError:
+  osm_roads = import_module("selfdrive.navd.osm_roads")
+  osm_roads_db = import_module("selfdrive.navd.osm_roads_db")
+  navd_paths = import_module("selfdrive.navd.paths")
+  DEFAULT_OSM_ROADS_DB_PATH = osm_roads.DEFAULT_OSM_ROADS_DB_PATH
+  validate_osm_roads_db = osm_roads_db.validate_osm_roads_db
+  DEFAULT_NAVD_TMP_DIR = navd_paths.DEFAULT_NAVD_TMP_DIR
+  ensure_navd_dirs = navd_paths.ensure_navd_dirs
 
 
 DEFAULT_REPO_URL = "https://github.com/hikee9123/data_nev.git"
@@ -251,59 +260,17 @@ def _rmtree_if_exists(path: Path, required: bool = True) -> None:
     print(f"failed to remove temporary clone {path}: {e}", flush=True)
 
 
-def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
-  row = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1", (table,)).fetchone()
-  return row is not None
-
-
-def _metadata_value(conn: sqlite3.Connection, key: str) -> str:
-  row = conn.execute("SELECT value FROM metadata WHERE key = ?", (key,)).fetchone()
-  return str(row[0]) if row and row[0] is not None else ""
-
-
-def _metadata_int(conn: sqlite3.Connection, key: str) -> int:
-  try:
-    return int(_metadata_value(conn, key))
-  except ValueError:
-    return 0
-
-
 def _validate_osm_db(db_path: Path, require_road_graph: bool) -> int:
   if not db_path.exists():
     raise RuntimeError(f"downloaded DB missing: {db_path}")
 
-  try:
-    with closing(sqlite3.connect(db_path)) as conn:
-      for table in ("roads", "roads_rtree", "metadata"):
-        if not _table_exists(conn, table):
-          raise RuntimeError(f"downloaded DB missing table: {table}")
-
-      segment_count = database_segment_count(db_path)
-      roads_count = int(conn.execute("SELECT COUNT(*) FROM roads").fetchone()[0])
-      rtree_count = int(conn.execute("SELECT COUNT(*) FROM roads_rtree").fetchone()[0])
-      if segment_count <= 0:
-        segment_count = roads_count
-      if roads_count <= 0 or rtree_count <= 0:
-        raise RuntimeError(f"downloaded DB has no road segments: roads={roads_count}, rtree={rtree_count}")
-      if roads_count != rtree_count:
-        raise RuntimeError(f"downloaded DB row count mismatch: roads={roads_count}, rtree={rtree_count}")
-
-      graph_nodes = _metadata_int(conn, "road_graph_node_count")
-      graph_edges = _metadata_int(conn, "road_graph_edge_count")
-      graph_adjacency = _metadata_int(conn, "road_graph_adjacency_count")
-      graph_skipped = _metadata_value(conn, "road_graph_skipped")
-      has_graph_tables = all(_table_exists(conn, table) for table in ("road_nodes", "road_edges", "road_adjacency"))
-      print(
-        f"road graph skipped={graph_skipped or 'unknown'} "
-        f"nodes={graph_nodes:,} edges={graph_edges:,} adjacency={graph_adjacency:,}",
-        flush=True,
-      )
-      if require_road_graph and (graph_skipped == "1" or not has_graph_tables or graph_nodes <= 0 or graph_edges <= 0 or graph_adjacency <= 0):
-        raise RuntimeError("downloaded DB does not contain the forward successor road graph")
-  except sqlite3.Error as e:
-    raise RuntimeError(f"downloaded DB validation failed: {e}") from e
-
-  return max(segment_count, roads_count)
+  validation = validate_osm_roads_db(db_path, require_road_graph=require_road_graph)
+  print(
+    f"road graph skipped={validation.graph_skipped or 'unknown'} "
+    f"nodes={validation.graph_node_count:,} edges={validation.graph_edge_count:,} adjacency={validation.graph_adjacency_count:,}",
+    flush=True,
+  )
+  return validation.segment_count
 
 
 def _move_or_copy(source: Path, target: Path) -> None:
