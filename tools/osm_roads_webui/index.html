@@ -627,8 +627,12 @@
     const healthEl = document.getElementById("server-health");
     const serverHost = location.protocol === "file:" ? "127.0.0.1" : (location.hostname || "127.0.0.1");
     const serverPort = location.protocol === "file:" ? "8765" : (location.port || "8765");
-    const serverCommand = `python tools/scripts/osm_roads_webui.py --host ${serverHost} --port ${serverPort}`;
-    let startScriptPath = localStartScriptPath();
+    const serverCommands = {
+      windows: `tools\\osm_roads_webui\\start_server.cmd ${serverPort}`,
+      ubuntu: `tools/osm_roads_webui/start_server.sh ${serverPort}`,
+    };
+    let activePlatform = preferredClientPlatform();
+    let startScriptPaths = localStartScriptPaths();
     let state = null;
     let selectedTask = "download";
     let speedCameraTouched = false;
@@ -692,7 +696,7 @@
         const message = `서버 요청 실패: ${e.message}`;
         summary.textContent = message;
         eventState.textContent = "서버 연결 실패";
-        alert(`${message}\n\n서버 실행:\n${serverCommand}`);
+        alert(`${message}\n\n서버 실행:\n${serverCommands[activePlatform] || serverCommands.windows}`);
       }
     }
 
@@ -716,8 +720,14 @@
     function renderHealth(data, latencyMs) {
       const db = data.db || {};
       const server = data.server || {};
+      if (data.platform) {
+        activePlatform = data.platform;
+      }
+      if (data.start_scripts) {
+        startScriptPaths = { ...startScriptPaths, ...data.start_scripts };
+      }
       if (data.start_script_path) {
-        startScriptPath = data.start_script_path;
+        startScriptPaths[activePlatform] = data.start_script_path;
       }
       const host = server.host && server.port ? `${server.host}:${server.port}` : "서버";
       const pathMode = db.uses_default_path ? "기본 DB" : "사용자 DB";
@@ -750,23 +760,25 @@
       actionsEl.appendChild(retryButton);
 
       if (showCopy) {
-        const copyButton = document.createElement("button");
-        copyButton.type = "button";
-        copyButton.textContent = "실행 명령 복사";
-        copyButton.addEventListener("click", () => copyServerCommand(copyButton));
-        actionsEl.appendChild(copyButton);
+        for (const platform of ["windows", "ubuntu"]) {
+          const copyButton = document.createElement("button");
+          copyButton.type = "button";
+          copyButton.textContent = `${platformLabel(platform)} 실행 복사`;
+          copyButton.addEventListener("click", () => copyServerCommand(copyButton, platform));
+          actionsEl.appendChild(copyButton);
 
-        const pathButton = document.createElement("button");
-        pathButton.type = "button";
-        pathButton.textContent = "스크립트 경로 복사";
-        pathButton.addEventListener("click", () => copyStartScriptPath(pathButton));
-        actionsEl.appendChild(pathButton);
+          const pathButton = document.createElement("button");
+          pathButton.type = "button";
+          pathButton.textContent = `${platformLabel(platform)} 경로 복사`;
+          pathButton.addEventListener("click", () => copyStartScriptPath(pathButton, platform));
+          actionsEl.appendChild(pathButton);
+        }
       }
 
       if (showOpen) {
         const openButton = document.createElement("button");
         openButton.type = "button";
-        openButton.textContent = "스크립트 위치 열기";
+        openButton.textContent = `${platformLabel(activePlatform)} 위치 열기`;
         openButton.addEventListener("click", () => openStartScriptFolder(openButton));
         actionsEl.appendChild(openButton);
       }
@@ -782,10 +794,11 @@
       refreshHealth();
     }
 
-    async function copyServerCommand(button) {
-      const copied = await copyText(serverCommand);
+    async function copyServerCommand(button, platform) {
+      const command = serverCommands[platform] || serverCommands.windows;
+      const copied = await copyText(command);
       if (!copied) {
-        window.prompt("서버 실행 명령", serverCommand);
+        window.prompt(`${platformLabel(platform)} 서버 실행 명령`, command);
         return;
       }
       const previousText = button.textContent;
@@ -795,10 +808,11 @@
       }, 1500);
     }
 
-    async function copyStartScriptPath(button) {
-      const copied = await copyText(startScriptPath);
+    async function copyStartScriptPath(button, platform) {
+      const path = startScriptPaths[platform] || startScriptPaths.windows;
+      const copied = await copyText(path);
       if (!copied) {
-        window.prompt("시작 스크립트 경로", startScriptPath);
+        window.prompt(`${platformLabel(platform)} 시작 스크립트 경로`, path);
         return;
       }
       const previousText = button.textContent;
@@ -826,12 +840,29 @@
       }
     }
 
-    function localStartScriptPath() {
+    function preferredClientPlatform() {
+      const platform = `${navigator.platform || ""} ${navigator.userAgent || ""}`.toLowerCase();
+      if (platform.includes("win")) return "windows";
+      if (platform.includes("linux") || platform.includes("ubuntu")) return "ubuntu";
+      return "windows";
+    }
+
+    function platformLabel(platform) {
+      return platform === "ubuntu" ? "Ubuntu" : "Windows";
+    }
+
+    function localStartScriptPaths() {
       if (location.protocol === "file:") {
-        const path = decodeURIComponent(new URL("start_server.cmd", location.href).pathname);
-        return path.replace(/^\/([A-Za-z]:)/, "$1").replaceAll("/", "\\");
+        const windowsPath = decodeURIComponent(new URL("start_server.cmd", location.href).pathname)
+          .replace(/^\/([A-Za-z]:)/, "$1")
+          .replaceAll("/", "\\");
+        const ubuntuPath = decodeURIComponent(new URL("start_server.sh", location.href).pathname);
+        return { windows: windowsPath, ubuntu: ubuntuPath };
       }
-      return "tools\\osm_roads_webui\\start_server.cmd";
+      return {
+        windows: "tools\\osm_roads_webui\\start_server.cmd",
+        ubuntu: "tools/osm_roads_webui/start_server.sh",
+      };
     }
 
     async function copyText(text) {

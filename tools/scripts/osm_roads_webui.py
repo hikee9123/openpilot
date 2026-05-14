@@ -4,7 +4,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -34,7 +36,8 @@ except ModuleNotFoundError:
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HTML_PATH = REPO_ROOT / "tools" / "osm_roads_webui" / "index.html"
 MAP_HTML_PATH = REPO_ROOT / "tools" / "osm_roads_webui" / "map.html"
-START_SCRIPT_PATH = REPO_ROOT / "tools" / "osm_roads_webui" / "start_server.cmd"
+WINDOWS_START_SCRIPT_PATH = REPO_ROOT / "tools" / "osm_roads_webui" / "start_server.cmd"
+UBUNTU_START_SCRIPT_PATH = REPO_ROOT / "tools" / "osm_roads_webui" / "start_server.sh"
 DEFAULT_PBF = DEFAULT_NAVD_SOURCE_DIR / "south-korea-latest.osm.pbf"
 DEFAULT_SPEED_CAMERA_CSV = DEFAULT_NAVD_SOURCE_DIR / "speed_cameras.csv"
 DEFAULT_TMP_DB = DEFAULT_NAVD_TMP_DIR / "osm_roads_build" / "osm_roads_kr.sqlite3.build"
@@ -470,6 +473,26 @@ def _rows(conn: sqlite3.Connection, query: str, params: tuple[object, ...] = ())
   }
 
 
+def _platform_name() -> str:
+  system = platform.system().lower()
+  if system == "windows":
+    return "windows"
+  if system == "linux":
+    return "ubuntu"
+  return system or "unknown"
+
+
+def _start_script_path() -> Path:
+  return WINDOWS_START_SCRIPT_PATH if _platform_name() == "windows" else UBUNTU_START_SCRIPT_PATH
+
+
+def _start_scripts_payload() -> dict[str, str]:
+  return {
+    "windows": str(WINDOWS_START_SCRIPT_PATH),
+    "ubuntu": str(UBUNTU_START_SCRIPT_PATH),
+  }
+
+
 def server_health(args: argparse.Namespace, started_monotonic: float) -> dict[str, object]:
   db_path = Path(args.db).expanduser()
   default_db_path = Path(DEFAULT_OSM_ROADS_DB_PATH).expanduser()
@@ -513,6 +536,8 @@ def server_health(args: argparse.Namespace, started_monotonic: float) -> dict[st
 
   db["check_ms"] = round((time.perf_counter() - check_start) * 1000, 1)
   ok = bool(db["exists"] and db["readable"] and db["schema_ok"] and db["smoke_ok"])
+  current_platform = _platform_name()
+  start_script_path = _start_script_path()
   return {
     "ok": ok,
     "checked_at": int(checked_at),
@@ -522,19 +547,31 @@ def server_health(args: argparse.Namespace, started_monotonic: float) -> dict[st
       "port": args.port,
       "uptime_s": round(time.monotonic() - started_monotonic, 1),
     },
-    "start_script_path": str(START_SCRIPT_PATH),
+    "platform": current_platform,
+    "start_script_path": str(start_script_path),
+    "start_scripts": _start_scripts_payload(),
     "db": db,
   }
 
 
 def open_start_script_folder() -> dict[str, object]:
-  if not START_SCRIPT_PATH.exists():
-    return {"ok": False, "message": f"시작 스크립트가 없습니다: {START_SCRIPT_PATH}", "path": str(START_SCRIPT_PATH)}
+  start_script_path = _start_script_path()
+  current_platform = _platform_name()
+  if not start_script_path.exists():
+    return {"ok": False, "message": f"시작 스크립트가 없습니다: {start_script_path}", "path": str(start_script_path)}
   try:
-    subprocess.Popen(["explorer.exe", f"/select,{START_SCRIPT_PATH}"])
+    if current_platform == "windows":
+      subprocess.Popen(["explorer.exe", f"/select,{start_script_path}"])
+    elif current_platform == "ubuntu":
+      opener = shutil.which("xdg-open")
+      if opener is None:
+        return {"ok": False, "message": "xdg-open을 찾을 수 없습니다", "path": str(start_script_path)}
+      subprocess.Popen([opener, str(start_script_path.parent)])
+    else:
+      return {"ok": False, "message": f"지원하지 않는 OS입니다: {current_platform}", "path": str(start_script_path)}
   except OSError as e:
-    return {"ok": False, "message": f"파일 탐색기 실행 실패: {e}", "path": str(START_SCRIPT_PATH)}
-  return {"ok": True, "message": "opened", "path": str(START_SCRIPT_PATH)}
+    return {"ok": False, "message": f"파일 탐색기 실행 실패: {e}", "path": str(start_script_path)}
+  return {"ok": True, "message": "opened", "platform": current_platform, "path": str(start_script_path)}
 
 
 def db_summary(db_path: Path) -> dict[str, object]:
