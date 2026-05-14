@@ -72,6 +72,50 @@
       justify-content: flex-end;
     }
 
+    .mode-toggle {
+      display: flex;
+      gap: 4px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #10151c;
+      padding: 3px;
+    }
+
+    .mode-toggle button {
+      height: 28px;
+      border-color: transparent;
+      padding: 0 9px;
+    }
+
+    .mode-toggle button.active {
+      border-color: var(--accent);
+      background: #193f3a;
+    }
+
+    .opacity-control {
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--muted);
+      padding: 0 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .opacity-control input {
+      width: 130px;
+      accent-color: var(--accent);
+    }
+
+    .opacity-control.disabled {
+      opacity: 0.45;
+    }
+
     .stat {
       border: 1px solid var(--line);
       border-radius: 6px;
@@ -159,6 +203,23 @@
         justify-content: stretch;
       }
 
+      .mode-toggle {
+        width: 100%;
+      }
+
+      .mode-toggle button {
+        flex: 1 1 0;
+      }
+
+      .opacity-control {
+        width: 100%;
+        justify-content: space-between;
+      }
+
+      .opacity-control input {
+        flex: 1 1 auto;
+      }
+
       .stat,
       button,
       a.button {
@@ -174,6 +235,20 @@
       <div class="path" id="db-path">DB 조회 중</div>
     </div>
     <div class="controls">
+      <div class="mode-toggle" aria-label="지도 모드">
+        <button data-map-mode="hybrid">OSM+DB</button>
+        <button data-map-mode="db">DB만</button>
+        <button data-map-mode="osm">OSM만</button>
+      </div>
+      <div class="mode-toggle" aria-label="데이터 탭">
+        <button data-layer-mode="all">전체 도로망</button>
+        <button data-layer-mode="matches">카메라 매칭</button>
+      </div>
+      <label class="opacity-control" id="opacity-control">
+        OSM 투명도
+        <input id="osm-opacity" type="range" min="15" max="100" step="5">
+        <span id="osm-opacity-value">45%</span>
+      </label>
       <div class="stats" id="stats"></div>
       <button id="refresh">새로고침</button>
       <a class="button" href="/">작업 화면</a>
@@ -191,13 +266,30 @@
     const pathEl = document.getElementById("db-path");
     const statsEl = document.getElementById("stats");
     const refreshButton = document.getElementById("refresh");
+    const modeButtons = document.querySelectorAll("[data-map-mode]");
+    const layerButtons = document.querySelectorAll("[data-layer-mode]");
+    const opacityControl = document.getElementById("opacity-control");
+    const opacityInput = document.getElementById("osm-opacity");
+    const opacityValue = document.getElementById("osm-opacity-value");
     let map = null;
+    let tileLayer = null;
     let cameraLayer = null;
     let roadLayer = null;
     let loadTimer = null;
     let requestId = 0;
+    let lastMapData = null;
+    let mapMode = selectedInitialMode();
+    let layerMode = selectedInitialLayerMode();
+    let osmOpacity = selectedInitialOpacity();
 
     refreshButton.addEventListener("click", () => loadMapData(true));
+    modeButtons.forEach((button) => {
+      button.addEventListener("click", () => setMapMode(button.dataset.mapMode, true));
+    });
+    layerButtons.forEach((button) => {
+      button.addEventListener("click", () => setLayerMode(button.dataset.layerMode, true));
+    });
+    opacityInput.addEventListener("input", () => setOsmOpacity(opacityInput.value, true));
 
     async function init() {
       if (!window.L) {
@@ -205,15 +297,118 @@
         return;
       }
       map = L.map("map", { preferCanvas: true }).setView([36.35, 127.85], 7);
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      tileLayer = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
         attribution: "&copy; OpenStreetMap contributors"
-      }).addTo(map);
-      roadLayer = L.layerGroup().addTo(map);
-      cameraLayer = L.layerGroup().addTo(map);
+      });
+      roadLayer = L.layerGroup();
+      cameraLayer = L.layerGroup();
       map.on("moveend zoomend", scheduleLoad);
       await loadSummary();
+      applyMapMode(false);
       await loadMapData(true);
+    }
+
+    function selectedInitialMode() {
+      const urlMode = new URLSearchParams(location.search).get("mode");
+      const storedMode = localStorage.getItem("osm_roads_map_mode");
+      const mode = urlMode || storedMode || "db";
+      return ["hybrid", "db", "osm"].includes(mode) ? mode : "db";
+    }
+
+    function selectedInitialLayerMode() {
+      const urlLayer = new URLSearchParams(location.search).get("layer");
+      const storedLayer = localStorage.getItem("osm_roads_layer_mode");
+      const mode = urlLayer || storedLayer || "all";
+      return ["all", "matches"].includes(mode) ? mode : "all";
+    }
+
+    function selectedInitialOpacity() {
+      const urlValue = new URLSearchParams(location.search).get("osm_opacity");
+      const storedValue = localStorage.getItem("osm_roads_osm_opacity");
+      return clampOpacity(urlValue || storedValue || "45");
+    }
+
+    function clampOpacity(value) {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return 45;
+      return Math.max(15, Math.min(100, Math.round(parsed / 5) * 5));
+    }
+
+    function setOsmOpacity(value, save) {
+      osmOpacity = clampOpacity(value);
+      if (save) {
+        localStorage.setItem("osm_roads_osm_opacity", String(osmOpacity));
+      }
+      applyOsmOpacity();
+    }
+
+    function applyOsmOpacity() {
+      opacityInput.value = String(osmOpacity);
+      opacityValue.textContent = `${osmOpacity}%`;
+      opacityInput.disabled = mapMode === "db";
+      opacityControl.classList.toggle("disabled", mapMode === "db");
+      if (tileLayer) {
+        tileLayer.setOpacity(osmOpacity / 100);
+      }
+    }
+
+    function setMapMode(mode, reload) {
+      if (!["hybrid", "db", "osm"].includes(mode)) return;
+      mapMode = mode;
+      localStorage.setItem("osm_roads_map_mode", mode);
+      applyMapMode(true);
+      if (reload && mapMode !== "osm") {
+        loadMapData(true);
+      }
+    }
+
+    function setLayerMode(mode, reload) {
+      if (!["all", "matches"].includes(mode)) return;
+      layerMode = mode;
+      lastMapData = null;
+      localStorage.setItem("osm_roads_layer_mode", mode);
+      applyLayerMode();
+      if (reload && mapMode !== "osm") {
+        loadMapData(true);
+      }
+    }
+
+    function applyLayerMode() {
+      layerButtons.forEach((button) => {
+        button.classList.toggle("active", button.dataset.layerMode === layerMode);
+      });
+      if (cameraLayer && layerMode === "all") {
+        cameraLayer.clearLayers();
+      }
+    }
+
+    function applyMapMode(updateStatus) {
+      modeButtons.forEach((button) => {
+        button.classList.toggle("active", button.dataset.mapMode === mapMode);
+      });
+      applyLayerMode();
+      applyOsmOpacity();
+      if (!map || !tileLayer || !roadLayer || !cameraLayer) return;
+
+      if (mapMode === "hybrid" || mapMode === "osm") {
+        if (!map.hasLayer(tileLayer)) tileLayer.addTo(map);
+      } else if (map.hasLayer(tileLayer)) {
+        map.removeLayer(tileLayer);
+      }
+
+      if (mapMode === "hybrid" || mapMode === "db") {
+        if (!map.hasLayer(roadLayer)) roadLayer.addTo(map);
+        if (!map.hasLayer(cameraLayer)) cameraLayer.addTo(map);
+        if (lastMapData) renderMapData(lastMapData);
+      } else {
+        if (map.hasLayer(roadLayer)) map.removeLayer(roadLayer);
+        if (map.hasLayer(cameraLayer)) map.removeLayer(cameraLayer);
+        if (updateStatus) statusEl.textContent = `OSM 배경만 표시 | 줌 ${map.getZoom()}`;
+      }
+      if (updateStatus && mapMode === "db") {
+        statusEl.textContent = `DB 데이터만 표시 | 줌 ${map.getZoom()}`;
+      }
     }
 
     async function loadSummary() {
@@ -240,12 +435,20 @@
     }
 
     function scheduleLoad() {
+      if (mapMode === "osm") {
+        statusEl.textContent = `OSM 배경만 표시 | 줌 ${map.getZoom()}`;
+        return;
+      }
       clearTimeout(loadTimer);
       loadTimer = setTimeout(() => loadMapData(false), 300);
     }
 
     async function loadMapData(force) {
       if (!map) return;
+      if (mapMode === "osm") {
+        statusEl.textContent = `OSM 배경만 표시 | 줌 ${map.getZoom()}`;
+        return;
+      }
       const currentRequest = ++requestId;
       const bounds = map.getBounds();
       const bbox = [
@@ -256,19 +459,36 @@
       ].map((value) => value.toFixed(6)).join(",");
       statusEl.textContent = force ? "지도 데이터 새로고침 중" : "지도 데이터 조회 중";
       try {
-        const res = await fetch(`${apiBase}/api/db/map?bbox=${encodeURIComponent(bbox)}&camera_limit=1200&road_limit=1800`);
+        const res = await fetch(mapDataUrl(bbox));
         const data = await res.json();
         if (currentRequest !== requestId) return;
         if (!res.ok || !data.ok) {
           statusEl.textContent = data.message || "지도 조회 실패";
           return;
         }
+        lastMapData = data;
         renderMapData(data);
       } catch (e) {
         if (currentRequest === requestId) {
           statusEl.textContent = `지도 조회 실패: ${e.message}`;
         }
       }
+    }
+
+    function mapDataUrl(bbox) {
+      if (layerMode === "all") {
+        const params = fullRoadParams();
+        return `${apiBase}/api/db/roads?bbox=${encodeURIComponent(bbox)}&road_limit=${params.limit}&min_priority=${params.minPriority}`;
+      }
+      return `${apiBase}/api/db/map?bbox=${encodeURIComponent(bbox)}&camera_limit=1200&road_limit=1800`;
+    }
+
+    function fullRoadParams() {
+      const zoom = map.getZoom();
+      if (zoom <= 7) return { limit: 8000, minPriority: 60 };
+      if (zoom <= 9) return { limit: 12000, minPriority: 35 };
+      if (zoom <= 11) return { limit: 20000, minPriority: 15 };
+      return { limit: 35000, minPriority: 0 };
     }
 
     function renderMapData(data) {
@@ -279,40 +499,59 @@
           [[Number(road.lat1), Number(road.lon1)], [Number(road.lat2), Number(road.lon2)]],
           {
             color: roadColor(road.highway),
-            weight: roadWeight(road.highway),
-            opacity: 0.72
+            weight: layerMode === "all" ? Math.max(1, roadWeight(road.highway) - 1) : roadWeight(road.highway),
+            opacity: layerMode === "all" ? 0.58 : 0.72
           }
         );
-        line.bindPopup(`
-          <strong>${escapeHtml(road.name || road.ref || "road")}</strong><br>
-          road_id ${escapeHtml(road.road_id)} / camera ${escapeHtml(road.camera_id)}<br>
-          ${escapeHtml(road.highway || "-")} / confidence ${escapeHtml(formatCell(road.match_confidence))}
-        `);
+        line.bindPopup(roadPopup(road));
         line.addTo(roadLayer);
       }
-      for (const camera of data.cameras || []) {
-        const marker = L.circleMarker([Number(camera.lat), Number(camera.lon)], {
-          radius: 5,
-          color: cameraColor(camera.speed_limit_kph),
-          fillColor: cameraColor(camera.speed_limit_kph),
-          fillOpacity: 0.88,
-          weight: 1.5
-        });
-        marker.bindPopup(`
-          <strong>camera ${escapeHtml(camera.id)}</strong><br>
-          제한속도 ${escapeHtml(formatSpeed(camera.speed_limit_kph))}<br>
-          ${escapeHtml(camera.address || camera.road_name || "-")}<br>
-          road ${escapeHtml(camera.road_id || "-")} ${escapeHtml(camera.matched_road_name || camera.matched_road_ref || "")}<br>
-          거리 ${escapeHtml(formatCell(camera.match_distance_m))}m / confidence ${escapeHtml(formatCell(camera.match_confidence))}
-        `);
-        marker.addTo(cameraLayer);
+      if (layerMode === "matches") {
+        for (const camera of data.cameras || []) {
+          const marker = L.circleMarker([Number(camera.lat), Number(camera.lon)], {
+            radius: 5,
+            color: cameraColor(camera.speed_limit_kph),
+            fillColor: cameraColor(camera.speed_limit_kph),
+            fillOpacity: 0.88,
+            weight: 1.5
+          });
+          marker.bindPopup(`
+            <strong>camera ${escapeHtml(camera.id)}</strong><br>
+            제한속도 ${escapeHtml(formatSpeed(camera.speed_limit_kph))}<br>
+            ${escapeHtml(camera.address || camera.road_name || "-")}<br>
+            road ${escapeHtml(camera.road_id || "-")} ${escapeHtml(camera.matched_road_name || camera.matched_road_ref || "")}<br>
+            거리 ${escapeHtml(formatCell(camera.match_distance_m))}m / confidence ${escapeHtml(formatCell(camera.match_confidence))}
+          `);
+          marker.addTo(cameraLayer);
+        }
       }
       const cameras = (data.cameras || []).length;
       const roads = (data.roads || []).length;
-      const cameraLimit = Number((data.limits || {}).camera_limit);
       const roadLimit = Number((data.limits || {}).road_limit);
+      const cameraLimit = Number((data.limits || {}).camera_limit);
       const limited = (Number.isFinite(cameraLimit) && cameras >= cameraLimit) || (Number.isFinite(roadLimit) && roads >= roadLimit);
-      statusEl.textContent = `${limited ? "일부 표시" : "표시 완료"} | 화면 카메라 ${formatNumber(cameras)} | 매칭 도로 ${formatNumber(roads)} | 줌 ${map.getZoom()}`;
+      const modeLabel = mapMode === "hybrid" ? "OSM+DB" : "DB만";
+      const layerLabel = layerMode === "all" ? "전체 도로망" : "카메라 매칭";
+      const cameraText = layerMode === "matches" ? ` | 화면 카메라 ${formatNumber(cameras)}` : "";
+      const minPriority = (data.limits || {}).min_priority;
+      const priorityText = layerMode === "all" && Number(minPriority) > 0 ? ` | 우선순위 ${formatCell(minPriority)}+` : "";
+      statusEl.textContent = `${modeLabel} ${layerLabel} ${limited ? "일부 표시" : "표시 완료"} | 도로 ${formatNumber(roads)}${cameraText}${priorityText} | 줌 ${map.getZoom()}`;
+    }
+
+    function roadPopup(road) {
+      if (layerMode === "all") {
+        return `
+          <strong>${escapeHtml(road.name || road.ref || "road")}</strong><br>
+          road_id ${escapeHtml(road.id)}<br>
+          ${escapeHtml(road.highway || "-")} / priority ${escapeHtml(formatCell(road.road_priority))}<br>
+          length ${escapeHtml(formatCell(road.segment_length))}m
+        `;
+      }
+      return `
+        <strong>${escapeHtml(road.name || road.ref || "road")}</strong><br>
+        road_id ${escapeHtml(road.road_id)} / camera ${escapeHtml(road.camera_id)}<br>
+        ${escapeHtml(road.highway || "-")} / confidence ${escapeHtml(formatCell(road.match_confidence))}
+      `;
     }
 
     function roadColor(highway) {

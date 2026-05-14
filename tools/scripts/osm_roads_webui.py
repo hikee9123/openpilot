@@ -650,6 +650,76 @@ def db_map(db_path: Path, query: dict[str, list[str]]) -> dict[str, object]:
   }
 
 
+def _bbox_from_query(db_path: Path, query: dict[str, list[str]]) -> tuple[float, float, float, float] | dict[str, object]:
+  bbox_text = query.get("bbox", [""])[0]
+  try:
+    min_lon, min_lat, max_lon, max_lat = (float(part) for part in bbox_text.split(",", maxsplit=3))
+  except ValueError:
+    return {"ok": False, "message": "bbox=minLon,minLat,maxLon,maxLat 형식이 필요합니다", "db_path": str(db_path)}
+
+  min_lat, max_lat = sorted((max(-90.0, min(90.0, min_lat)), max(-90.0, min(90.0, max_lat))))
+  min_lon, max_lon = sorted((max(-180.0, min(180.0, min_lon)), max(-180.0, min(180.0, max_lon))))
+  return min_lon, min_lat, max_lon, max_lat
+
+
+def db_roads(db_path: Path, query: dict[str, list[str]]) -> dict[str, object]:
+  db_path = db_path.expanduser()
+  if not db_path.exists():
+    return {"ok": False, "message": f"DB 파일이 없습니다: {db_path}", "db_path": str(db_path)}
+
+  bbox = _bbox_from_query(db_path, query)
+  if isinstance(bbox, dict):
+    return bbox
+  min_lon, min_lat, max_lon, max_lat = bbox
+  road_limit = _parse_int(query.get("road_limit", ["12000"])[0], 12000, 1, 50000)
+  min_priority = _parse_float(query.get("min_priority", ["0"])[0], 0.0)
+
+  with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+    if not all(_table_exists(conn, table) for table in ("roads", "roads_rtree")):
+      return {"ok": False, "message": "전체 도로망에 필요한 roads/roads_rtree 테이블이 없습니다", "db_path": str(db_path)}
+
+    cursor = conn.execute("""
+      SELECT
+        roads.id,
+        roads.name,
+        roads.ref,
+        roads.highway,
+        roads.road_priority,
+        ROUND(roads.segment_length, 1) AS segment_length,
+        roads.lat1,
+        roads.lon1,
+        roads.lat2,
+        roads.lon2
+      FROM roads
+      JOIN roads_rtree ON roads_rtree.id = roads.id
+      WHERE roads_rtree.min_lat <= ?
+        AND roads_rtree.max_lat >= ?
+        AND roads_rtree.min_lon <= ?
+        AND roads_rtree.max_lon >= ?
+        AND roads.road_priority >= ?
+      ORDER BY roads.road_priority DESC, roads.id
+      LIMIT ?
+    """, (max_lat, min_lat, max_lon, min_lon, min_priority, road_limit))
+    columns = [item[0] for item in cursor.description or []]
+    rows = [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()]
+
+  return {
+    "ok": True,
+    "db_path": str(db_path),
+    "bbox": {
+      "min_lat": min_lat,
+      "max_lat": max_lat,
+      "min_lon": min_lon,
+      "max_lon": max_lon,
+    },
+    "limits": {
+      "road_limit": road_limit,
+      "min_priority": min_priority,
+    },
+    "roads": rows,
+  }
+
+
 class OSMRoadsWebHandler(BaseHTTPRequestHandler):
   runner: OSMRoadsTaskRunner
 
@@ -669,6 +739,9 @@ class OSMRoadsWebHandler(BaseHTTPRequestHandler):
       _json_response(self, HTTPStatus.OK if payload.get("ok") else HTTPStatus.NOT_FOUND, payload)
     elif parsed.path == "/api/db/map":
       payload = db_map(Path(self.runner.args.db), parse_qs(parsed.query))
+      _json_response(self, HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_REQUEST, payload)
+    elif parsed.path == "/api/db/roads":
+      payload = db_roads(Path(self.runner.args.db), parse_qs(parsed.query))
       _json_response(self, HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_REQUEST, payload)
     elif parsed.path == "/api/events":
       self._serve_events()
