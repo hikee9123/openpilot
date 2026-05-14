@@ -616,6 +616,7 @@ def _build_graph(conn: sqlite3.Connection, progress: ProgressReporter) -> None:
   _execute_script_with_progress(conn, progress, """
     CREATE INDEX idx_directed_edges_from ON directed_edges(from_node_id);
     CREATE INDEX idx_directed_edges_to ON directed_edges(to_node_id);
+    CREATE INDEX IF NOT EXISTS idx_turn_restrictions_from_to ON turn_restrictions(from_osm_id, to_osm_id);
 
     CREATE TEMP TABLE node_degrees AS
       SELECT node_id, COUNT(*) AS degree

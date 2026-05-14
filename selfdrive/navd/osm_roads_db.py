@@ -432,7 +432,7 @@ def create_osm_roads_indexes(conn: sqlite3.Connection) -> None:
     CREATE INDEX idx_road_edges_end_node ON road_edges(end_node_id);
     CREATE INDEX idx_road_adjacency_to ON road_adjacency(to_road_id);
     CREATE INDEX idx_road_topology_from ON road_topology(from_road_id);
-    CREATE INDEX idx_turn_restrictions_from_to ON turn_restrictions(from_osm_id, to_osm_id);
+    CREATE INDEX IF NOT EXISTS idx_turn_restrictions_from_to ON turn_restrictions(from_osm_id, to_osm_id);
     CREATE INDEX idx_lane_connectivity_from_to ON lane_connectivity(from_osm_id, to_osm_id);
     CREATE INDEX idx_lane_graph_from ON lane_graph(from_road_id);
     CREATE INDEX idx_route_members_osm_id ON road_route_members(osm_id);
