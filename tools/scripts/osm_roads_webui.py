@@ -34,6 +34,7 @@ except ModuleNotFoundError:
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HTML_PATH = REPO_ROOT / "tools" / "osm_roads_webui" / "index.html"
 MAP_HTML_PATH = REPO_ROOT / "tools" / "osm_roads_webui" / "map.html"
+START_SCRIPT_PATH = REPO_ROOT / "tools" / "osm_roads_webui" / "start_server.cmd"
 DEFAULT_PBF = DEFAULT_NAVD_SOURCE_DIR / "south-korea-latest.osm.pbf"
 DEFAULT_SPEED_CAMERA_CSV = DEFAULT_NAVD_SOURCE_DIR / "speed_cameras.csv"
 DEFAULT_TMP_DB = DEFAULT_NAVD_TMP_DIR / "osm_roads_build" / "osm_roads_kr.sqlite3.build"
@@ -521,8 +522,19 @@ def server_health(args: argparse.Namespace, started_monotonic: float) -> dict[st
       "port": args.port,
       "uptime_s": round(time.monotonic() - started_monotonic, 1),
     },
+    "start_script_path": str(START_SCRIPT_PATH),
     "db": db,
   }
+
+
+def open_start_script_folder() -> dict[str, object]:
+  if not START_SCRIPT_PATH.exists():
+    return {"ok": False, "message": f"시작 스크립트가 없습니다: {START_SCRIPT_PATH}", "path": str(START_SCRIPT_PATH)}
+  try:
+    subprocess.Popen(["explorer.exe", f"/select,{START_SCRIPT_PATH}"])
+  except OSError as e:
+    return {"ok": False, "message": f"파일 탐색기 실행 실패: {e}", "path": str(START_SCRIPT_PATH)}
+  return {"ok": True, "message": "opened", "path": str(START_SCRIPT_PATH)}
 
 
 def db_summary(db_path: Path) -> dict[str, object]:
@@ -820,6 +832,9 @@ class OSMRoadsWebHandler(BaseHTTPRequestHandler):
     elif parsed.path == "/api/stop":
       ok, message = self.runner.stop()
       _json_response(self, HTTPStatus.OK if ok else HTTPStatus.CONFLICT, {"ok": ok, "message": message})
+    elif parsed.path == "/api/open/start-script-folder":
+      payload = open_start_script_folder()
+      _json_response(self, HTTPStatus.OK if payload.get("ok") else HTTPStatus.INTERNAL_SERVER_ERROR, payload)
     else:
       self.send_error(HTTPStatus.NOT_FOUND, "not found")
 

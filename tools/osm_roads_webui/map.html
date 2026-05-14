@@ -66,6 +66,8 @@
     .health {
       display: inline-flex;
       align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
       margin-top: 7px;
       max-width: min(760px, calc(100vw - 28px));
       border: 1px solid var(--line);
@@ -76,6 +78,25 @@
       font-size: 12px;
       font-weight: 700;
       overflow-wrap: anywhere;
+    }
+
+    .health-text {
+      min-width: 0;
+    }
+
+    .health-actions {
+      display: inline-flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .health button {
+      height: 24px;
+      border-radius: 5px;
+      padding: 0 7px;
+      font-size: 11px;
+      line-height: 1;
+      flex: 0 0 auto;
     }
 
     .health.ok {
@@ -299,6 +320,10 @@
     const refreshButton = document.getElementById("refresh");
     const homeLink = document.getElementById("home-link");
     const healthEl = document.getElementById("server-health");
+    const serverHost = location.protocol === "file:" ? "127.0.0.1" : (location.hostname || "127.0.0.1");
+    const serverPort = location.protocol === "file:" ? "8765" : (location.port || "8765");
+    const serverCommand = `python tools/scripts/osm_roads_webui.py --host ${serverHost} --port ${serverPort}`;
+    let startScriptPath = localStartScriptPath();
     const modeButtons = document.querySelectorAll("[data-map-mode]");
     const layerButtons = document.querySelectorAll("[data-layer-mode]");
     const opacityControl = document.getElementById("opacity-control");
@@ -478,8 +503,8 @@
         const latencyMs = Math.round(performance.now() - started);
         renderHealth(data, latencyMs);
       } catch (e) {
-        healthEl.className = "health bad";
-        healthEl.textContent = `서버 오프라인 | ${e.name === "AbortError" ? "응답 시간 초과" : e.message} | python tools/scripts/osm_roads_webui.py --host 127.0.0.1 --port 8765`;
+        const reason = e.name === "AbortError" ? "응답 시간 초과" : e.message;
+        setHealth("bad", `서버 오프라인 | ${reason}`, "", true, false);
       } finally {
         clearTimeout(timeout);
       }
@@ -488,19 +513,145 @@
     function renderHealth(data, latencyMs) {
       const db = data.db || {};
       const server = data.server || {};
+      if (data.start_script_path) {
+        startScriptPath = data.start_script_path;
+      }
       const host = server.host && server.port ? `${server.host}:${server.port}` : "서버";
       const pathMode = db.uses_default_path ? "기본 DB" : "사용자 DB";
       const sizeText = db.size_bytes ? ` | ${formatBytes(db.size_bytes)}` : "";
       if (data.ok) {
-        healthEl.className = db.uses_default_path ? "health ok" : "health warn";
-        healthEl.textContent = `${host} 온라인 | ${pathMode} OK${sizeText} | API ${latencyMs}ms`;
-        healthEl.title = `${db.configured_path || ""}`;
+        setHealth(
+          db.uses_default_path ? "ok" : "warn",
+          `${host} 온라인 | ${pathMode} OK${sizeText} | API ${latencyMs}ms`,
+          `${db.configured_path || ""}`,
+          false,
+          true,
+        );
         return;
       }
       const reason = db.error || (db.exists ? "스키마/스모크 테스트 실패" : "DB 파일 없음");
-      healthEl.className = "health bad";
-      healthEl.textContent = `${host} 온라인 | ${pathMode} 오류: ${reason}`;
-      healthEl.title = `${db.configured_path || ""}`;
+      setHealth("bad", `${host} 온라인 | ${pathMode} 오류: ${reason}`, `${db.configured_path || ""}`, false, true);
+    }
+
+    function setHealth(stateClass, text, title, showCopy, showOpen) {
+      const textEl = document.createElement("span");
+      textEl.className = "health-text";
+      textEl.textContent = text;
+      const actionsEl = document.createElement("span");
+      actionsEl.className = "health-actions";
+
+      const retryButton = document.createElement("button");
+      retryButton.type = "button";
+      retryButton.textContent = "다시 확인";
+      retryButton.addEventListener("click", forceOnlineCheck);
+      actionsEl.appendChild(retryButton);
+
+      if (showCopy) {
+        const copyButton = document.createElement("button");
+        copyButton.type = "button";
+        copyButton.textContent = "실행 명령 복사";
+        copyButton.addEventListener("click", () => copyServerCommand(copyButton));
+        actionsEl.appendChild(copyButton);
+
+        const pathButton = document.createElement("button");
+        pathButton.type = "button";
+        pathButton.textContent = "스크립트 경로 복사";
+        pathButton.addEventListener("click", () => copyStartScriptPath(pathButton));
+        actionsEl.appendChild(pathButton);
+      }
+
+      if (showOpen) {
+        const openButton = document.createElement("button");
+        openButton.type = "button";
+        openButton.textContent = "스크립트 위치 열기";
+        openButton.addEventListener("click", () => openStartScriptFolder(openButton));
+        actionsEl.appendChild(openButton);
+      }
+
+      healthEl.className = `health ${stateClass}`;
+      healthEl.title = title || "";
+      healthEl.replaceChildren(textEl, actionsEl);
+    }
+
+    function forceOnlineCheck() {
+      refreshHealth();
+      loadSummary();
+      loadMapData(true);
+    }
+
+    async function copyServerCommand(button) {
+      const copied = await copyText(serverCommand);
+      if (!copied) {
+        window.prompt("서버 실행 명령", serverCommand);
+        return;
+      }
+      const previousText = button.textContent;
+      button.textContent = "복사됨";
+      setTimeout(() => {
+        button.textContent = previousText;
+      }, 1500);
+    }
+
+    async function copyStartScriptPath(button) {
+      const copied = await copyText(startScriptPath);
+      if (!copied) {
+        window.prompt("시작 스크립트 경로", startScriptPath);
+        return;
+      }
+      const previousText = button.textContent;
+      button.textContent = "복사됨";
+      setTimeout(() => {
+        button.textContent = previousText;
+      }, 1500);
+    }
+
+    async function openStartScriptFolder(button) {
+      const previousText = button.textContent;
+      button.disabled = true;
+      button.textContent = "여는 중";
+      try {
+        const res = await fetch(`${apiBase}/api/open/start-script-folder`, { method: "POST" });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          alert(data.message || "파일 탐색기 열기 실패");
+        }
+      } catch (e) {
+        alert(`파일 탐색기 열기 실패: ${e.message}`);
+      } finally {
+        button.disabled = false;
+        button.textContent = previousText;
+      }
+    }
+
+    function localStartScriptPath() {
+      if (location.protocol === "file:") {
+        const path = decodeURIComponent(new URL("start_server.cmd", location.href).pathname);
+        return path.replace(/^\/([A-Za-z]:)/, "$1").replaceAll("/", "\\");
+      }
+      return "tools\\osm_roads_webui\\start_server.cmd";
+    }
+
+    async function copyText(text) {
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch (e) {
+        // Fall back to a temporary textarea below.
+      }
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        return document.execCommand("copy");
+      } finally {
+        textarea.remove();
+      }
     }
 
     function scheduleLoad() {
