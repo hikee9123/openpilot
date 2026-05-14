@@ -29,10 +29,12 @@ try:
     roads_insert_sql,
     validate_osm_roads_db,
   )
+  from openpilot.selfdrive.navd.osm_speed_cameras import DEFAULT_CAMERA_MATCH_RADIUS_M, import_speed_cameras_from_csv
   from openpilot.selfdrive.navd.paths import DEFAULT_NAVD_SOURCE_DIR, DEFAULT_NAVD_TMP_DIR, ensure_navd_dirs
 except ModuleNotFoundError:
   osm_roads = import_module("selfdrive.navd.osm_roads")
   osm_roads_db = import_module("selfdrive.navd.osm_roads_db")
+  osm_speed_cameras = import_module("selfdrive.navd.osm_speed_cameras")
   navd_paths = import_module("selfdrive.navd.paths")
   DEFAULT_OSM_ROADS_DB_PATH = osm_roads.DEFAULT_OSM_ROADS_DB_PATH
   configure_build_connection = osm_roads_db.configure_build_connection
@@ -43,6 +45,8 @@ except ModuleNotFoundError:
   road_row = osm_roads_db.road_row
   roads_insert_sql = osm_roads_db.roads_insert_sql
   validate_osm_roads_db = osm_roads_db.validate_osm_roads_db
+  DEFAULT_CAMERA_MATCH_RADIUS_M = osm_speed_cameras.DEFAULT_CAMERA_MATCH_RADIUS_M
+  import_speed_cameras_from_csv = osm_speed_cameras.import_speed_cameras_from_csv
   DEFAULT_NAVD_SOURCE_DIR = navd_paths.DEFAULT_NAVD_SOURCE_DIR
   DEFAULT_NAVD_TMP_DIR = navd_paths.DEFAULT_NAVD_TMP_DIR
   ensure_navd_dirs = navd_paths.ensure_navd_dirs
@@ -819,6 +823,9 @@ def _finalize_metadata(
   graph_node_count = int(conn.execute("SELECT COUNT(*) FROM road_nodes").fetchone()[0])
   graph_edge_count = int(conn.execute("SELECT COUNT(*) FROM road_edges").fetchone()[0])
   graph_adjacency_count = int(conn.execute("SELECT COUNT(*) FROM road_adjacency").fetchone()[0])
+  speed_camera_count = int(conn.execute("SELECT COUNT(*) FROM speed_cameras").fetchone()[0])
+  speed_camera_match_count = int(conn.execute("SELECT COUNT(*) FROM speed_camera_road_matches").fetchone()[0])
+  route_camera_lookup_count = int(conn.execute("SELECT COUNT(*) FROM route_camera_lookup").fetchone()[0])
   put_metadata(conn, {
     "version": 1,
     "built_at": int(datetime.now().timestamp()),
@@ -835,6 +842,9 @@ def _finalize_metadata(
     "lane_graph_count": int(conn.execute("SELECT COUNT(*) FROM lane_graph").fetchone()[0]),
     "motorway_junction_count": int(conn.execute("SELECT COUNT(*) FROM motorway_junctions").fetchone()[0]),
     "osm_relation_count": int(conn.execute("SELECT COUNT(*) FROM route_relations").fetchone()[0]),
+    "speed_camera_count": speed_camera_count,
+    "speed_camera_match_count": speed_camera_match_count,
+    "route_camera_lookup_count": route_camera_lookup_count,
   })
 
 
@@ -844,9 +854,14 @@ def build_db(
   final_db: Path,
   build_graph: bool,
   require_road_graph: bool,
+  require_speed_cameras: bool,
   quick_check: bool,
   progress_json: bool,
   build_profile: str,
+  speed_cameras_csv: Path | None,
+  speed_camera_source: str,
+  speed_camera_match_radius_m: float,
+  speed_camera_max_matches: int,
 ) -> None:
   build_profile = _normalize_build_profile(build_profile)
   included_highways = BUILD_PROFILE_HIGHWAYS[build_profile]
@@ -905,6 +920,26 @@ def build_db(
       raise RuntimeError("no road segments were built from the PBF")
     if build_graph:
       _build_graph(conn, progress)
+    if speed_cameras_csv is not None:
+      progress.emit("speed_cameras", 87, f"matching speed cameras from {speed_cameras_csv}", force=True)
+      summary = import_speed_cameras_from_csv(
+        conn,
+        speed_cameras_csv,
+        source=speed_camera_source,
+        match_radius_m=speed_camera_match_radius_m,
+        max_matches_per_camera=speed_camera_max_matches,
+        clear_existing=True,
+      )
+      progress.emit(
+        "speed_cameras",
+        87,
+        f"speed cameras imported={summary.imported_count:,} matched={summary.matched_camera_count:,} lookup={summary.lookup_count:,}",
+        force=True,
+        speed_camera_count=summary.imported_count,
+        speed_camera_matched_count=summary.matched_camera_count,
+        speed_camera_match_count=summary.match_count,
+        route_camera_lookup_count=summary.lookup_count,
+      )
     progress.emit("indexes", 88, "creating indexes", force=True)
     conn.set_progress_handler(progress.heartbeat("indexes", 89, "creating indexes"), 100000)
     try:
@@ -922,25 +957,34 @@ def build_db(
     conn.commit()
 
   progress.emit("validate", 94, f"validating built DB {tmp_db}", force=True)
-  validation = validate_osm_roads_db(tmp_db, require_road_graph=require_road_graph, run_quick_check=quick_check)
+  validation = validate_osm_roads_db(
+    tmp_db,
+    require_road_graph=require_road_graph,
+    require_speed_cameras=require_speed_cameras,
+    run_quick_check=quick_check,
+  )
   progress.emit(
     "validate",
     96,
     f"validated built DB segments={validation.segment_count:,} nodes={validation.graph_node_count:,} "
-    f"edges={validation.graph_edge_count:,} adjacency={validation.graph_adjacency_count:,}",
+    f"edges={validation.graph_edge_count:,} adjacency={validation.graph_adjacency_count:,} "
+    f"speed_cameras={validation.speed_camera_count:,} camera_lookup={validation.route_camera_lookup_count:,}",
     force=True,
     segments=validation.segment_count,
     graph_nodes=validation.graph_node_count,
     graph_edges=validation.graph_edge_count,
     graph_adjacency=validation.graph_adjacency_count,
+    speed_camera_count=validation.speed_camera_count,
+    route_camera_lookup_count=validation.route_camera_lookup_count,
   )
   final_validation = replace_osm_roads_db(tmp_db, final_db, require_road_graph=require_road_graph)
   progress.emit(
     "replace",
     100,
-    f"installed built DB {final_db} ({final_validation.segment_count:,} segments)",
+    f"installed built DB {final_db} ({final_validation.segment_count:,} segments, {final_validation.speed_camera_count:,} speed cameras)",
     force=True,
     segments=final_validation.segment_count,
+    speed_camera_count=final_validation.speed_camera_count,
   )
 
 
@@ -959,6 +1003,11 @@ def parse_args() -> argparse.Namespace:
     default="full",
     help="Road inclusion profile: full, camera-balanced, or major. Aliases: balanced, camera, camera-blanced",
   )
+  parser.add_argument("--speed-cameras", type=Path, default=None, help="Optional speed camera CSV to import and match into the built DB")
+  parser.add_argument("--speed-camera-source", default="", help="Source label for --speed-cameras metadata")
+  parser.add_argument("--speed-camera-match-radius-m", type=float, default=DEFAULT_CAMERA_MATCH_RADIUS_M, help="Road snapping radius for speed cameras")
+  parser.add_argument("--speed-camera-max-matches", type=int, default=3, help="Store up to this many road matches per speed camera")
+  parser.add_argument("--require-speed-cameras", action="store_true", help="Fail validation if matched speed camera lookup data is missing")
   parser.add_argument("--validate-only", action="store_true", help="Validate --db and exit without building")
   return parser.parse_args()
 
@@ -966,10 +1015,16 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
   args = parse_args()
   if args.validate_only:
-    validation = validate_osm_roads_db(args.db.expanduser(), require_road_graph=args.require_road_graph, run_quick_check=args.quick_check)
+    validation = validate_osm_roads_db(
+      args.db.expanduser(),
+      require_road_graph=args.require_road_graph,
+      require_speed_cameras=args.require_speed_cameras,
+      run_quick_check=args.quick_check,
+    )
     print(
       f"validated {validation.db_path}: segments={validation.segment_count:,} graph={int(validation.has_road_graph)} "
-      f"nodes={validation.graph_node_count:,} edges={validation.graph_edge_count:,} adjacency={validation.graph_adjacency_count:,}",
+      f"nodes={validation.graph_node_count:,} edges={validation.graph_edge_count:,} adjacency={validation.graph_adjacency_count:,} "
+      f"speed_cameras={validation.speed_camera_count:,} camera_lookup={validation.route_camera_lookup_count:,}",
       flush=True,
     )
     return 0
@@ -981,15 +1036,21 @@ def main() -> int:
     build_profile = _normalize_build_profile(args.profile)
   except ValueError as e:
     raise SystemExit(str(e)) from e
+  speed_cameras_csv = args.speed_cameras.expanduser() if args.speed_cameras is not None else None
   build_db(
     args.pbf.expanduser(),
     args.tmp_db.expanduser(),
     args.db.expanduser(),
     build_graph,
     args.require_road_graph,
+    args.require_speed_cameras,
     args.quick_check,
     args.progress_json,
     build_profile,
+    speed_cameras_csv,
+    args.speed_camera_source,
+    args.speed_camera_match_radius_m,
+    args.speed_camera_max_matches,
   )
   return 0
 

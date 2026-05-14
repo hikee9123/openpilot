@@ -34,7 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 HTML_PATH = REPO_ROOT / "tools" / "osm_roads_webui" / "index.html"
 DEFAULT_PBF = DEFAULT_NAVD_SOURCE_DIR / "south-korea-latest.osm.pbf"
 DEFAULT_TMP_DB = DEFAULT_NAVD_TMP_DIR / "osm_roads_build" / "osm_roads_kr.sqlite3.build"
-TASK_ORDER = ("download", "build", "validate", "upload_dry_run", "upload_push")
+TASK_ORDER = ("download", "build", "import_cameras", "validate", "upload_dry_run", "upload_push")
 PROGRESS_PREFIX = "__osm_progress__ "
 BUILD_PROFILES = ("full", "camera-balanced", "major")
 BUILD_PROFILE_ALIASES = {
@@ -48,6 +48,7 @@ BUILD_PROFILE_ALIASES = {
 TASK_LABELS = {
   "download": "PBF 다운로드",
   "build": "DB 생성",
+  "import_cameras": "카메라 매칭",
   "validate": "DB 검증",
   "upload_dry_run": "GitHub 업로드 확인",
   "upload_push": "GitHub 업로드",
@@ -115,12 +116,16 @@ class OSMRoadsTaskRunner:
         "tasks": {key: self.tasks[key].snapshot() for key in TASK_ORDER},
       }
 
-  def start(self, task_key: str, build_profile: str = "") -> tuple[bool, str]:
+  def start(self, task_key: str, build_profile: str = "", speed_cameras: str = "") -> tuple[bool, str]:
     if task_key not in self.tasks:
       return False, f"unknown task: {task_key}"
     with self.lock:
       if self.active_task is not None:
         return False, f"{self.tasks[self.active_task].label} 실행 중"
+      selected_build_profile = _normalize_build_profile(build_profile or self.args.build_profile)
+      selected_speed_cameras = speed_cameras.strip() or str(self.args.speed_cameras or "")
+      if task_key == "import_cameras" and not selected_speed_cameras:
+        return False, "단속카메라 CSV 경로가 필요합니다"
       task = self.tasks[task_key]
       task.status = "running"
       task.progress = 1
@@ -131,9 +136,12 @@ class OSMRoadsTaskRunner:
       task.finished_at = ""
       task.updated_at = task.started_at
       task.returncode = None
-      selected_build_profile = _normalize_build_profile(build_profile or self.args.build_profile)
-      task.details = {"build_profile": selected_build_profile} if task_key == "build" else {}
-      task.command = self._command_for(task_key, selected_build_profile)
+      task.details = {}
+      if task_key == "build":
+        task.details["build_profile"] = selected_build_profile
+      if task_key in ("build", "import_cameras") and selected_speed_cameras:
+        task.details["speed_cameras"] = selected_speed_cameras
+      task.command = self._command_for(task_key, selected_build_profile, selected_speed_cameras)
       task.log.clear()
       task.log.append("$ " + " ".join(task.command))
       self.active_task = task_key
@@ -162,7 +170,7 @@ class OSMRoadsTaskRunner:
     process.terminate()
     return True, "stopping"
 
-  def _command_for(self, task_key: str, build_profile: str = "") -> list[str]:
+  def _command_for(self, task_key: str, build_profile: str = "", speed_cameras: str = "") -> list[str]:
     db_path = str(Path(self.args.db).expanduser())
     pbf_path = str(Path(self.args.pbf).expanduser())
     require_graph = [] if self.args.no_require_road_graph else ["--require-road-graph"]
@@ -173,7 +181,7 @@ class OSMRoadsTaskRunner:
       return command
     if task_key == "build":
       profile = _normalize_build_profile(build_profile or self.args.build_profile)
-      return [
+      command = [
         sys.executable,
         "tools/scripts/build_osm_roads_db.py",
         "--pbf",
@@ -183,6 +191,26 @@ class OSMRoadsTaskRunner:
         "--profile",
         profile,
         "--progress-json",
+        *require_graph,
+      ]
+      if speed_cameras:
+        command.extend([
+          "--speed-cameras",
+          str(Path(speed_cameras).expanduser()),
+          "--speed-camera-match-radius-m",
+          str(self.args.speed_camera_match_radius_m),
+        ])
+      return command
+    if task_key == "import_cameras":
+      return [
+        sys.executable,
+        "tools/scripts/import_osm_speed_cameras.py",
+        "--db",
+        db_path,
+        "--csv",
+        str(Path(speed_cameras).expanduser()),
+        "--match-radius-m",
+        str(self.args.speed_camera_match_radius_m),
         *require_graph,
       ]
     if task_key == "validate":
@@ -332,7 +360,9 @@ def _progress_from_line(task_key: str, line: str, current: int) -> tuple[int, st
       ("built road segments", 55),
       ("indexing directed graph edges", 60),
       ("building road adjacency", 70),
-      ("creating indexes", 85),
+      ("matching speed cameras", 87),
+      ("speed cameras imported", 87),
+      ("creating indexes", 88),
       ("validating built db", 92),
       ("validated built db", 96),
       ("installed built db", 100),
@@ -340,6 +370,10 @@ def _progress_from_line(task_key: str, line: str, current: int) -> tuple[int, st
     for token, progress in stages:
       if token in lower:
         return progress, line
+  elif task_key == "import_cameras":
+    if "speed cameras imported" in lower:
+      return 100, line
+    return max(current, 50), line
   elif task_key == "validate":
     if "validated" in lower:
       return 100, line
@@ -397,7 +431,8 @@ class OSMRoadsWebHandler(BaseHTTPRequestHandler):
       task_key = parsed.path.rsplit("/", maxsplit=1)[-1]
       query = parse_qs(parsed.query)
       build_profile = query.get("profile", [""])[0]
-      ok, message = self.runner.start(task_key, build_profile=build_profile)
+      speed_cameras = query.get("speed_cameras", [""])[0]
+      ok, message = self.runner.start(task_key, build_profile=build_profile, speed_cameras=speed_cameras)
       _json_response(self, HTTPStatus.OK if ok else HTTPStatus.CONFLICT, {"ok": ok, "message": message})
     elif parsed.path == "/api/stop":
       ok, message = self.runner.stop()
@@ -456,6 +491,8 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--db", type=Path, default=DEFAULT_OSM_ROADS_DB_PATH, help=f"SQLite DB path (default: {DEFAULT_OSM_ROADS_DB_PATH})")
   parser.add_argument("--skip-md5", action="store_true", help="Pass --skip-md5 to the download task")
   parser.add_argument("--build-profile", default="camera-balanced", help="Default DB build profile for the web UI")
+  parser.add_argument("--speed-cameras", type=Path, default=None, help="Default speed camera CSV path for build/import tasks")
+  parser.add_argument("--speed-camera-match-radius-m", type=float, default=65.0, help="Road snapping radius for speed cameras")
   parser.add_argument("--no-require-road-graph", action="store_true", help="Do not pass --require-road-graph to build/validate/upload tasks")
   parser.add_argument("--upload-repo", type=Path, default=None, help="Existing local Git LFS data repo for upload tasks")
   parser.add_argument("--upload-repo-url", default="", help="Git data repo URL used when --upload-repo is omitted")

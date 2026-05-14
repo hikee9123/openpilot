@@ -95,7 +95,8 @@
       font-weight: 700;
     }
 
-    select {
+    select,
+    input {
       height: 38px;
       border: 1px solid var(--line);
       border-radius: 6px;
@@ -104,6 +105,10 @@
       padding: 0 10px;
       font: inherit;
       min-width: 190px;
+    }
+
+    input {
+      min-width: min(360px, 100%);
     }
 
     button {
@@ -261,7 +266,8 @@
         justify-content: stretch;
       }
 
-      select {
+      select,
+      input {
         flex: 1 1 190px;
       }
 
@@ -289,6 +295,7 @@
       <div class="toolbar">
         <button data-task="download">PBF 다운로드</button>
         <button class="primary" data-task="build">DB 생성</button>
+        <button data-task="import_cameras">카메라 매칭</button>
         <button data-task="validate">DB 검증</button>
         <button data-task="upload_dry_run">업로드 확인</button>
         <button class="primary" data-task="upload_push">GitHub 업로드</button>
@@ -301,6 +308,7 @@
           <option value="full">전체 도로</option>
           <option value="major">주요도로</option>
         </select>
+        <input id="speed-cameras" type="text" placeholder="단속카메라 CSV 경로">
       </div>
     </header>
     <div class="notice" id="notice"></div>
@@ -317,7 +325,7 @@
   </main>
 
   <script>
-    const taskOrder = ["download", "build", "validate", "upload_dry_run", "upload_push"];
+    const taskOrder = ["download", "build", "import_cameras", "validate", "upload_dry_run", "upload_push"];
     const statusText = {
       idle: "대기",
       running: "실행",
@@ -334,6 +342,7 @@
     const notice = document.getElementById("notice");
     const stopButton = document.getElementById("stop");
     const buildProfile = document.getElementById("build-profile");
+    const speedCameras = document.getElementById("speed-cameras");
     const apiBase = location.protocol === "file:" ? "http://127.0.0.1:8765" : "";
     let state = null;
     let selectedTask = "download";
@@ -356,6 +365,7 @@
         <div class="meta">
           <span>단계</span><span class="stage"></span>
           <span>모드</span><span class="mode"></span>
+          <span>카메라</span><span class="cameras"></span>
           <span>진행률</span><span class="percent"></span>
           <span>메시지</span><span class="message"></span>
           <span>경과</span><span class="elapsed"></span>
@@ -399,9 +409,19 @@
           return;
         }
         selectedTask = task;
-        const path = task === "build"
-          ? `/api/tasks/${task}?profile=${encodeURIComponent(buildProfile.value)}`
-          : `/api/tasks/${task}`;
+        if (task === "import_cameras" && !speedCameras.value.trim()) {
+          alert("단속카메라 CSV 경로를 입력하세요.");
+          return;
+        }
+        const params = new URLSearchParams();
+        if (task === "build") {
+          params.set("profile", buildProfile.value);
+        }
+        if ((task === "build" || task === "import_cameras") && speedCameras.value.trim()) {
+          params.set("speed_cameras", speedCameras.value.trim());
+        }
+        const query = params.toString();
+        const path = query ? `/api/tasks/${task}?${query}` : `/api/tasks/${task}`;
         await post(path);
       });
     });
@@ -415,6 +435,7 @@
       summary.textContent = busy ? `${state.tasks[active].label} 실행 중` : "대기 중";
       stopButton.disabled = !busy;
       buildProfile.disabled = busy;
+      speedCameras.disabled = busy;
       document.querySelectorAll("[data-task]").forEach((button) => {
         button.disabled = busy;
       });
@@ -432,6 +453,7 @@
         el.querySelector(".message").textContent = task.message || "-";
         el.querySelector(".stage").textContent = task.stage || details.step || "-";
         el.querySelector(".mode").textContent = formatProfile(details.build_profile);
+        el.querySelector(".cameras").textContent = formatCameras(details);
         el.querySelector(".elapsed").textContent = formatElapsed(details.elapsed_s);
         el.querySelector(".dbsize").textContent = formatBytes(details.db_size_bytes);
         el.querySelector(".batch").textContent = formatBatch(details);
@@ -484,6 +506,17 @@
       if (profile === "camera-balanced") return "카메라 추적용";
       if (profile === "full") return "전체 도로";
       if (profile === "major") return "주요도로";
+      return "-";
+    }
+
+    function formatCameras(details) {
+      const count = Number(details.speed_camera_count);
+      const lookup = Number(details.route_camera_lookup_count);
+      if (Number.isFinite(count) && count > 0) {
+        const lookupText = Number.isFinite(lookup) && lookup > 0 ? ` / lookup ${lookup.toLocaleString()}` : "";
+        return `${count.toLocaleString()}${lookupText}`;
+      }
+      if (details.speed_cameras) return details.speed_cameras;
       return "-";
     }
 

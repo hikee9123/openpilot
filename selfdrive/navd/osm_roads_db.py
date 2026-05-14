@@ -124,6 +124,9 @@ class OSMRoadsDBValidation:
   graph_adjacency_count: int
   graph_skipped: str
   has_road_graph: bool
+  speed_camera_count: int = 0
+  speed_camera_match_count: int = 0
+  route_camera_lookup_count: int = 0
 
 
 def road_row(values: dict[str, object]) -> tuple[object, ...]:
@@ -364,6 +367,56 @@ def create_osm_roads_schema(conn: sqlite3.Connection) -> None:
       UNIQUE (road_id)
     );
   """)
+  create_speed_camera_schema(conn)
+
+
+def create_speed_camera_schema(conn: sqlite3.Connection) -> None:
+  conn.executescript("""
+    CREATE TABLE IF NOT EXISTS speed_cameras (
+      id INTEGER PRIMARY KEY,
+      external_id TEXT NOT NULL DEFAULT '',
+      camera_type TEXT NOT NULL DEFAULT '',
+      lat REAL NOT NULL,
+      lon REAL NOT NULL,
+      speed_limit_kph INTEGER NOT NULL DEFAULT 0,
+      bearing_deg REAL NOT NULL DEFAULT -1.0,
+      direction TEXT NOT NULL DEFAULT '',
+      road_name TEXT NOT NULL DEFAULT '',
+      address TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT '',
+      source_updated_at TEXT NOT NULL DEFAULT '',
+      raw_json TEXT NOT NULL DEFAULT '',
+      map_confidence REAL NOT NULL DEFAULT 1.0,
+      UNIQUE (source, external_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS speed_camera_road_matches (
+      id INTEGER PRIMARY KEY,
+      camera_id INTEGER NOT NULL,
+      road_id INTEGER NOT NULL,
+      distance_m REAL NOT NULL,
+      heading_diff_deg REAL NOT NULL DEFAULT -1.0,
+      match_score REAL NOT NULL DEFAULT 0.0,
+      match_confidence REAL NOT NULL DEFAULT 0.0,
+      same_road_name INTEGER NOT NULL DEFAULT 0,
+      primary_match INTEGER NOT NULL DEFAULT 0,
+      matched_by TEXT NOT NULL DEFAULT 'nearest_road',
+      UNIQUE (camera_id, road_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS route_camera_lookup (
+      road_id INTEGER NOT NULL,
+      camera_id INTEGER NOT NULL,
+      match_id INTEGER NOT NULL,
+      match_distance_m REAL NOT NULL,
+      match_confidence REAL NOT NULL,
+      primary_match INTEGER NOT NULL DEFAULT 0,
+      speed_limit_kph INTEGER NOT NULL DEFAULT 0,
+      camera_type TEXT NOT NULL DEFAULT '',
+      camera_bearing_deg REAL NOT NULL DEFAULT -1.0,
+      PRIMARY KEY (road_id, camera_id)
+    );
+  """)
 
 
 def create_osm_roads_indexes(conn: sqlite3.Connection) -> None:
@@ -384,6 +437,20 @@ def create_osm_roads_indexes(conn: sqlite3.Connection) -> None:
     CREATE INDEX idx_lane_graph_from ON lane_graph(from_road_id);
     CREATE INDEX idx_route_members_osm_id ON road_route_members(osm_id);
     CREATE INDEX idx_motorway_junctions_osm_id ON motorway_junctions(osm_id);
+  """)
+  create_speed_camera_indexes(conn)
+
+
+def create_speed_camera_indexes(conn: sqlite3.Connection) -> None:
+  create_speed_camera_schema(conn)
+  conn.executescript("""
+    CREATE INDEX IF NOT EXISTS idx_speed_cameras_lat_lon ON speed_cameras(lat, lon);
+    CREATE INDEX IF NOT EXISTS idx_speed_cameras_source_external ON speed_cameras(source, external_id);
+    CREATE INDEX IF NOT EXISTS idx_speed_camera_matches_camera ON speed_camera_road_matches(camera_id);
+    CREATE INDEX IF NOT EXISTS idx_speed_camera_matches_road ON speed_camera_road_matches(road_id);
+    CREATE INDEX IF NOT EXISTS idx_speed_camera_matches_primary ON speed_camera_road_matches(primary_match, match_confidence);
+    CREATE INDEX IF NOT EXISTS idx_route_camera_lookup_road ON route_camera_lookup(road_id);
+    CREATE INDEX IF NOT EXISTS idx_route_camera_lookup_camera ON route_camera_lookup(camera_id);
   """)
 
 
@@ -415,6 +482,7 @@ def _metadata_int(conn: sqlite3.Connection, key: str) -> int:
 def validate_osm_roads_db(
   db_path: Path,
   require_road_graph: bool = False,
+  require_speed_cameras: bool = False,
   run_quick_check: bool = False,
   run_rtree_check: bool = False,
 ) -> OSMRoadsDBValidation:
@@ -450,6 +518,17 @@ def validate_osm_roads_db(
       if require_road_graph and not has_road_graph:
         raise RuntimeError("OSM roads DB does not contain the forward successor road graph")
 
+      speed_camera_count = 0
+      speed_camera_match_count = 0
+      route_camera_lookup_count = 0
+      has_speed_camera_tables = all(_table_exists(conn, table) for table in ("speed_cameras", "speed_camera_road_matches", "route_camera_lookup"))
+      if has_speed_camera_tables:
+        speed_camera_count = int(conn.execute("SELECT COUNT(*) FROM speed_cameras").fetchone()[0])
+        speed_camera_match_count = int(conn.execute("SELECT COUNT(*) FROM speed_camera_road_matches").fetchone()[0])
+        route_camera_lookup_count = int(conn.execute("SELECT COUNT(*) FROM route_camera_lookup").fetchone()[0])
+      if require_speed_cameras and (not has_speed_camera_tables or speed_camera_count <= 0 or route_camera_lookup_count <= 0):
+        raise RuntimeError("OSM roads DB does not contain matched speed camera lookup data")
+
       if run_quick_check:
         quick_check = str(conn.execute("PRAGMA quick_check").fetchone()[0])
         if quick_check.lower() != "ok":
@@ -476,6 +555,9 @@ def validate_osm_roads_db(
     graph_adjacency_count=graph_adjacency_count,
     graph_skipped=graph_skipped,
     has_road_graph=has_road_graph,
+    speed_camera_count=speed_camera_count,
+    speed_camera_match_count=speed_camera_match_count,
+    route_camera_lookup_count=route_camera_lookup_count,
   )
 
 

@@ -111,6 +111,26 @@ class OSMRoadTransition:
   secondary_successor_id: int = 0
 
 
+@dataclass(frozen=True)
+class OSMSpeedCamera:
+  camera_id: int
+  external_id: str
+  camera_type: str
+  lat: float
+  lon: float
+  speed_limit_kph: int
+  bearing_deg: float
+  direction: str
+  road_name: str
+  address: str
+  source: str
+  road_id: int
+  route_index: int
+  match_distance_m: float
+  match_confidence: float
+  primary_match: int
+
+
 def normalize_road_name(value: str) -> str:
   normalized = (value or "").strip().upper()
   normalized = re.sub(r"\s+", "", normalized)
@@ -464,6 +484,64 @@ def road_successors(db_path: DbSource = DEFAULT_OSM_ROADS_DB_PATH, road_id: int 
     )
     for row in rows
   ]
+
+
+def speed_cameras_for_road_ids(
+  db_path: DbSource = DEFAULT_OSM_ROADS_DB_PATH,
+  road_ids: list[int] | tuple[int, ...] = (),
+  limit: int = 32,
+) -> list[OSMSpeedCamera]:
+  if not road_ids or not _db_source_exists(db_path):
+    return []
+  ordered_road_ids = list(dict.fromkeys(int(road_id) for road_id in road_ids if int(road_id) > 0))
+  if not ordered_road_ids:
+    return []
+  close_conn, conn = _connect_read_db(db_path)
+  try:
+    if not all(_table_exists(conn, table) for table in ("speed_cameras", "route_camera_lookup")):
+      return []
+    placeholders = ",".join("?" for _ in ordered_road_ids)
+    rows = conn.execute(f"""
+      SELECT
+        speed_cameras.*,
+        route_camera_lookup.road_id,
+        route_camera_lookup.match_distance_m,
+        route_camera_lookup.match_confidence,
+        route_camera_lookup.primary_match
+      FROM route_camera_lookup
+      JOIN speed_cameras ON speed_cameras.id = route_camera_lookup.camera_id
+      WHERE route_camera_lookup.road_id IN ({placeholders})
+    """, ordered_road_ids).fetchall()
+  except sqlite3.Error:
+    return []
+  finally:
+    if close_conn is not None:
+      close_conn.close()
+
+  route_order = {road_id: idx for idx, road_id in enumerate(ordered_road_ids)}
+  cameras = [
+    OSMSpeedCamera(
+      camera_id=_row_int(row, "id"),
+      external_id=_row_text(row, "external_id"),
+      camera_type=_row_text(row, "camera_type"),
+      lat=_row_float(row, "lat"),
+      lon=_row_float(row, "lon"),
+      speed_limit_kph=_row_int(row, "speed_limit_kph"),
+      bearing_deg=_row_float(row, "bearing_deg", -1.0),
+      direction=_row_text(row, "direction"),
+      road_name=_row_text(row, "road_name"),
+      address=_row_text(row, "address"),
+      source=_row_text(row, "source"),
+      road_id=_row_int(row, "road_id"),
+      route_index=route_order.get(_row_int(row, "road_id"), 0),
+      match_distance_m=_row_float(row, "match_distance_m"),
+      match_confidence=_row_float(row, "match_confidence"),
+      primary_match=_row_int(row, "primary_match"),
+    )
+    for row in rows
+  ]
+  cameras.sort(key=lambda camera: (camera.route_index, -camera.primary_match, -camera.match_confidence, camera.match_distance_m, camera.camera_id))
+  return cameras[:max(0, limit)]
 
 
 def find_current_road(
