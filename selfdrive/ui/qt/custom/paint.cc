@@ -209,6 +209,7 @@ void OnPaint::updateState(const UIState &s)
   if (osm_enabled && naviData.getActive()) {
     auto overlay = naviData.getOsmRoadOverlay();
     auto roads = overlay.getRoads();
+    auto cameras = overlay.getCameras();
     m_nda.osmRoadOverlay.available = true;
     m_nda.osmRoadOverlay.road = QString::fromUtf8(overlay.getRoad().cStr());
     m_nda.osmRoadOverlay.bearing = overlay.getBearing();
@@ -228,6 +229,21 @@ void OnPaint::updateState(const UIState &s)
         road.getHistory(),
         road.getFallback(),
         road.getAssist(),
+      });
+    }
+    m_nda.osmRoadOverlay.cameras.reserve(cameras.size());
+    for (auto camera : cameras) {
+      m_nda.osmRoadOverlay.cameras.push_back({
+        camera.getCameraId(),
+        camera.getRoadId(),
+        QString::fromUtf8(camera.getCameraType().cStr()),
+        camera.getSpeedLimitKph(),
+        camera.getX(),
+        camera.getY(),
+        camera.getMatchDistanceM(),
+        camera.getMatchConfidence(),
+        camera.getPrimaryMatch(),
+        camera.getBearingDeg(),
       });
     }
   }

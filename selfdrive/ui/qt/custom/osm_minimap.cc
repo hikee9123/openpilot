@@ -77,6 +77,13 @@ QString predictionDistanceLabel(float distance_m) {
   return QStringLiteral("Pred %1m").arg(static_cast<int>(std::round(distance_m)));
 }
 
+QString cameraSpeedLabel(const OsmMinimapCamera &camera) {
+  if (camera.speed_limit_kph > 0) {
+    return QString::number(camera.speed_limit_kph);
+  }
+  return QStringLiteral("CAM");
+}
+
 QPointF egoPoint(const QRectF &panel, bool centered) {
   const double bottom_margin = centered ? 86.0 : 58.0;
   return QPointF(panel.center().x(), panel.bottom() - bottom_margin);
@@ -190,6 +197,12 @@ double debugFitRadiusM(const OsmMinimapData &data, const QRectF &panel) {
       max_right_m = std::max(max_right_m, right_m);
       max_left_m = std::max(max_left_m, -right_m);
     }
+  }
+  for (const OsmMinimapCamera &camera : data.cameras) {
+    max_forward_m = std::max(max_forward_m, static_cast<double>(camera.x));
+    max_backward_m = std::max(max_backward_m, -static_cast<double>(camera.x));
+    max_right_m = std::max(max_right_m, static_cast<double>(camera.y));
+    max_left_m = std::max(max_left_m, -static_cast<double>(camera.y));
   }
 
   const QPointF ego = egoPoint(panel, true);
@@ -399,6 +412,9 @@ void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinima
   for (const OsmMinimapRoad &road : data.roads) {
     if (road.current) drawRoad(p, panel, scale, road, centered);
   }
+  for (const OsmMinimapCamera &camera : data.cameras) {
+    drawCamera(p, panel, scale, camera, centered);
+  }
 
   QPainterPath ego_path;
   ego_path.moveTo(ego.x(), ego.y() - 15);
@@ -521,4 +537,38 @@ void OsmMinimapRenderer::drawRoad(QPainter &p, const QRectF &panel, double scale
     p.setPen(QColor(255, 255, 255, 210));
     p.drawText(QRectF(label.x() - 80, label.y() - 22, 160, 22), Qt::AlignCenter, name);
   }
+}
+
+void OsmMinimapRenderer::drawCamera(QPainter &p, const QRectF &panel, double scale,
+                                    const OsmMinimapCamera &camera, bool centered) {
+  const QPointF pt = projectPoint(panel, scale, camera.x, camera.y, centered);
+  if (!panel.adjusted(-40.0, -40.0, 40.0, 40.0).contains(pt)) return;
+
+  p.save();
+  const int marker_alpha = camera.primary_match ? 240 : 190;
+  p.setPen(QPen(QColor(10, 10, 10, 210), 3));
+  p.setBrush(QColor(239, 68, 68, marker_alpha));
+  p.drawEllipse(pt, 12.0, 12.0);
+
+  p.setPen(Qt::NoPen);
+  p.setBrush(QColor(255, 255, 255, 245));
+  p.drawEllipse(pt, 4.0, 4.0);
+
+  const QString label = cameraSpeedLabel(camera);
+  if (!label.isEmpty()) {
+    QRectF label_rect(pt.x() + 14.0, pt.y() - 28.0, label.size() > 2 ? 50.0 : 42.0, 24.0);
+    if (label_rect.right() > panel.right() - 8.0) {
+      label_rect.moveLeft(pt.x() - label_rect.width() - 14.0);
+    }
+    if (label_rect.top() < panel.top() + 42.0) {
+      label_rect.moveTop(pt.y() + 14.0);
+    }
+    p.setPen(QPen(QColor(239, 68, 68, 235), 1));
+    p.setBrush(QColor(255, 255, 255, 232));
+    p.drawRoundedRect(label_rect, 5.0, 5.0);
+    p.setFont(InterFont(17, QFont::DemiBold));
+    p.setPen(QColor(190, 32, 32, 245));
+    p.drawText(label_rect, Qt::AlignCenter, label);
+  }
+  p.restore();
 }

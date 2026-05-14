@@ -64,7 +64,8 @@ def _select_gps(sm: messaging.SubMaster) -> GPSFix | None:
 
 
 def _send_overlay(pm: messaging.PubMaster, available: bool, road_name: str = "", bearing: float = 0.0,
-                  prediction_distance_m: float = 0.0, roads: list[dict] | None = None) -> None:
+                  prediction_distance_m: float = 0.0, roads: list[dict] | None = None,
+                  cameras: list[dict] | None = None) -> None:
   msg = messaging.new_message("naviCustom")
   nav = msg.naviCustom.naviData
   nav.active = 1 if available else 0
@@ -87,6 +88,18 @@ def _send_overlay(pm: messaging.PubMaster, available: bool, road_name: str = "",
     road_items[i].history = road["history"]
     road_items[i].fallback = road["fallback"]
     road_items[i].assist = road["assist"]
+  camera_items = overlay.init("cameras", len(cameras or []))
+  for i, camera in enumerate(cameras or []):
+    camera_items[i].cameraId = camera["cameraId"]
+    camera_items[i].roadId = camera["roadId"]
+    camera_items[i].cameraType = camera["cameraType"]
+    camera_items[i].speedLimitKph = camera["speedLimitKph"]
+    camera_items[i].x = camera["x"]
+    camera_items[i].y = camera["y"]
+    camera_items[i].matchDistanceM = camera["matchDistanceM"]
+    camera_items[i].matchConfidence = camera["matchConfidence"]
+    camera_items[i].primaryMatch = camera["primaryMatch"]
+    camera_items[i].bearingDeg = camera["bearingDeg"]
   pm.send("naviCustom", msg)
 
 
@@ -355,10 +368,16 @@ def main() -> None:
         history_segments[current_segment.road_id] = current_segment
         while len(history_segments) > HISTORY_SEGMENT_LIMIT:
           history_segments.popitem(last=False)
-      road_name, bearing, prediction_distance_m, roads = build_minimap_overlay(prediction, list(history_segments.values()))
-      overlay_key = (road_name, bearing, round(prediction_distance_m, 1), tuple(tuple(sorted(road.items())) for road in roads))
+      road_name, bearing, prediction_distance_m, roads, cameras = build_minimap_overlay(prediction, list(history_segments.values()))
+      overlay_key = (
+        road_name,
+        bearing,
+        round(prediction_distance_m, 1),
+        tuple(tuple(sorted(road.items())) for road in roads),
+        tuple(tuple(sorted(camera.items())) for camera in cameras),
+      )
       if not last_available or overlay_key != last_overlay or now - last_send_t > 2.5:
-        _send_overlay(pm, True, road_name, bearing, prediction_distance_m, roads)
+        _send_overlay(pm, True, road_name, bearing, prediction_distance_m, roads, cameras)
         last_available = True
         last_overlay = overlay_key
         last_send_t = now

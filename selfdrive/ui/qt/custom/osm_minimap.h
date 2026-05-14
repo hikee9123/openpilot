@@ -23,12 +23,26 @@ struct OsmMinimapRoad {
   bool assist = false;
 };
 
+struct OsmMinimapCamera {
+  uint64_t camera_id = 0;
+  uint64_t road_id = 0;
+  QString camera_type;
+  int speed_limit_kph = 0;
+  float x = 0.0f;
+  float y = 0.0f;
+  float match_distance_m = 0.0f;
+  float match_confidence = 0.0f;
+  bool primary_match = false;
+  float bearing_deg = -1.0f;
+};
+
 struct OsmMinimapData {
   bool available = false;
   QString road;
   float bearing = 0.0f;
   float prediction_distance_m = 0.0f;
   std::vector<OsmMinimapRoad> roads;
+  std::vector<OsmMinimapCamera> cameras;
 
   void clear() {
     available = false;
@@ -36,6 +50,7 @@ struct OsmMinimapData {
     bearing = 0.0f;
     prediction_distance_m = 0.0f;
     roads.clear();
+    cameras.clear();
   }
 };
 
@@ -60,4 +75,5 @@ private:
   void drawDebugZoomControls(QPainter &p, const QRectF &panel, int debug_zoom);
   void drawDebugSpeedControls(QPainter &p, const QRectF &panel, int sim_speed_kph);
   void drawRoad(QPainter &p, const QRectF &panel, double scale, const OsmMinimapRoad &road, bool centered);
+  void drawCamera(QPainter &p, const QRectF &panel, double scale, const OsmMinimapCamera &camera, bool centered);
 };

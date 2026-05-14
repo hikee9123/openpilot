@@ -46,6 +46,7 @@ struct NaviCustom @0xf35cc4560bbf6ec2 {
             bearing @1 :Float32;
             roads @2 :List(OsmRoad);
             predictionDistanceM @3 :Float32;
+            cameras @4 :List(OsmCamera);
         }
 
         struct OsmRoad {
@@ -61,6 +62,19 @@ struct NaviCustom @0xf35cc4560bbf6ec2 {
             history @9 :Bool;
             fallback @10 :Bool;
             assist @11 :Bool;
+        }
+
+        struct OsmCamera {
+            cameraId @0 :UInt64;
+            roadId @1 :UInt64;
+            cameraType @2 :Text;
+            speedLimitKph @3 :Int16;
+            x @4 :Float32;
+            y @5 :Float32;
+            matchDistanceM @6 :Float32;
+            matchConfidence @7 :Float32;
+            primaryMatch @8 :Bool;
+            bearingDeg @9 :Float32;
         }
     }
 }
