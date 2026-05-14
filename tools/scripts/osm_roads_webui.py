@@ -110,6 +110,7 @@ class OSMRoadsTaskRunner:
     self.active_task: str | None = None
     self.process: subprocess.Popen[str] | None = None
     self.sequence = 0
+    self.started_monotonic = time.monotonic()
 
   def snapshot(self) -> dict[str, object]:
     with self.lock:
@@ -468,6 +469,62 @@ def _rows(conn: sqlite3.Connection, query: str, params: tuple[object, ...] = ())
   }
 
 
+def server_health(args: argparse.Namespace, started_monotonic: float) -> dict[str, object]:
+  db_path = Path(args.db).expanduser()
+  default_db_path = Path(DEFAULT_OSM_ROADS_DB_PATH).expanduser()
+  uses_default_path = os.path.normcase(os.path.abspath(str(db_path))) == os.path.normcase(os.path.abspath(str(default_db_path)))
+  required_tables = ("roads", "roads_rtree", "speed_cameras", "route_camera_lookup")
+  checked_at = time.time()
+  check_start = time.perf_counter()
+  db: dict[str, object] = {
+    "configured_path": str(db_path),
+    "default_path": str(default_db_path),
+    "uses_default_path": uses_default_path,
+    "exists": False,
+    "readable": False,
+    "schema_ok": False,
+    "smoke_ok": False,
+    "size_bytes": 0,
+    "modified_at": 0,
+    "tables": {table: False for table in required_tables},
+    "error": "",
+  }
+
+  try:
+    stat_result = db_path.stat()
+    db["exists"] = True
+    db["size_bytes"] = stat_result.st_size
+    db["modified_at"] = int(stat_result.st_mtime)
+    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+      db["readable"] = True
+      tables = {table: _table_exists(conn, table) for table in required_tables}
+      db["tables"] = tables
+      db["schema_ok"] = all(tables.values())
+      if tables["roads"]:
+        conn.execute("SELECT 1 FROM roads LIMIT 1").fetchone()
+        db["smoke_ok"] = True
+      else:
+        db["error"] = "roads table missing"
+  except OSError as e:
+    db["error"] = str(e)
+  except sqlite3.Error as e:
+    db["error"] = str(e)
+
+  db["check_ms"] = round((time.perf_counter() - check_start) * 1000, 1)
+  ok = bool(db["exists"] and db["readable"] and db["schema_ok"] and db["smoke_ok"])
+  return {
+    "ok": ok,
+    "checked_at": int(checked_at),
+    "server": {
+      "ok": True,
+      "host": args.host,
+      "port": args.port,
+      "uptime_s": round(time.monotonic() - started_monotonic, 1),
+    },
+    "db": db,
+  }
+
+
 def db_summary(db_path: Path) -> dict[str, object]:
   db_path = db_path.expanduser()
   if not db_path.exists():
@@ -732,6 +789,9 @@ class OSMRoadsWebHandler(BaseHTTPRequestHandler):
       self._serve_file(HTML_PATH)
     elif parsed.path in ("/map", "/map.html"):
       self._serve_file(MAP_HTML_PATH)
+    elif parsed.path == "/api/health":
+      payload = server_health(self.runner.args, self.runner.started_monotonic)
+      _json_response(self, HTTPStatus.OK, payload)
     elif parsed.path == "/api/state":
       _json_response(self, HTTPStatus.OK, self.runner.snapshot())
     elif parsed.path == "/api/db/summary":

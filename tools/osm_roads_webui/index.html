@@ -60,6 +60,36 @@
       color: var(--muted);
     }
 
+    .health {
+      display: inline-flex;
+      align-items: center;
+      margin-top: 8px;
+      max-width: min(760px, calc(100vw - 32px));
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--muted);
+      padding: 5px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .health.ok {
+      border-color: #2e6f54;
+      color: var(--good);
+    }
+
+    .health.warn {
+      border-color: #806b32;
+      color: var(--warn);
+    }
+
+    .health.bad {
+      border-color: #8a3e47;
+      color: var(--bad);
+    }
+
     .notice {
       display: none;
       margin-top: 14px;
@@ -473,6 +503,7 @@
       <div>
         <h1>OSM Roads DB</h1>
         <div class="sub" id="summary">연결 대기</div>
+        <div class="health warn" id="server-health">서버 상태 확인 중</div>
       </div>
       <div class="toolbar">
         <button data-task="download">PBF 다운로드</button>
@@ -571,6 +602,8 @@
     const mapMeta = document.getElementById("map-meta");
     const mapEl = document.getElementById("camera-map");
     const apiBase = location.protocol === "file:" ? "http://127.0.0.1:8765" : "";
+    const mapPageUrl = new URL("map.html", location.href).href;
+    const healthEl = document.getElementById("server-health");
     let state = null;
     let selectedTask = "download";
     let speedCameraTouched = false;
@@ -637,6 +670,41 @@
       }
     }
 
+    async function refreshHealth() {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2500);
+      const started = performance.now();
+      try {
+        const res = await fetch(`${apiBase}/api/health`, { signal: controller.signal, cache: "no-store" });
+        const data = await res.json();
+        const latencyMs = Math.round(performance.now() - started);
+        renderHealth(data, latencyMs);
+      } catch (e) {
+        healthEl.className = "health bad";
+        healthEl.textContent = `서버 오프라인 | ${e.name === "AbortError" ? "응답 시간 초과" : e.message} | python tools/scripts/osm_roads_webui.py --host 127.0.0.1 --port 8765`;
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
+    function renderHealth(data, latencyMs) {
+      const db = data.db || {};
+      const server = data.server || {};
+      const host = server.host && server.port ? `${server.host}:${server.port}` : "서버";
+      const pathMode = db.uses_default_path ? "기본 DB" : "사용자 DB";
+      const sizeText = db.size_bytes ? ` | ${formatBytes(db.size_bytes)}` : "";
+      if (data.ok) {
+        healthEl.className = db.uses_default_path ? "health ok" : "health warn";
+        healthEl.textContent = `${host} 온라인 | ${pathMode} OK${sizeText} | API ${latencyMs}ms`;
+        healthEl.title = `${db.configured_path || ""}`;
+        return;
+      }
+      const reason = db.error || (db.exists ? "스키마/스모크 테스트 실패" : "DB 파일 없음");
+      healthEl.className = "health bad";
+      healthEl.textContent = `${host} 온라인 | ${pathMode} 오류: ${reason}`;
+      healthEl.title = `${db.configured_path || ""}`;
+    }
+
     document.querySelectorAll("[data-task]").forEach((button) => {
       button.addEventListener("click", async () => {
         const task = button.dataset.task;
@@ -661,7 +729,7 @@
     dbButton.addEventListener("click", () => loadDbView());
     mapButton.addEventListener("click", () => showMapView());
     mapPageButton.addEventListener("click", () => {
-      window.location.href = `${apiBase}/map.html`;
+      window.location.href = mapPageUrl;
     });
     speedCameras.addEventListener("input", () => {
       speedCameraTouched = true;
@@ -1021,6 +1089,8 @@
 
     pollState();
     connectEvents();
+    refreshHealth();
+    setInterval(refreshHealth, 10000);
   </script>
 </body>
 </html>

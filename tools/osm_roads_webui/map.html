@@ -63,6 +63,36 @@
       overflow-wrap: anywhere;
     }
 
+    .health {
+      display: inline-flex;
+      align-items: center;
+      margin-top: 7px;
+      max-width: min(760px, calc(100vw - 28px));
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--muted);
+      padding: 5px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .health.ok {
+      border-color: #2e6f54;
+      color: var(--good);
+    }
+
+    .health.warn {
+      border-color: #806b32;
+      color: var(--warn);
+    }
+
+    .health.bad {
+      border-color: #8a3e47;
+      color: var(--bad);
+    }
+
     .controls,
     .stats {
       display: flex;
@@ -233,6 +263,7 @@
     <div>
       <h1>OSM Roads DB 지도</h1>
       <div class="path" id="db-path">DB 조회 중</div>
+      <div class="health warn" id="server-health">서버 상태 확인 중</div>
     </div>
     <div class="controls">
       <div class="mode-toggle" aria-label="지도 모드">
@@ -251,7 +282,7 @@
       </label>
       <div class="stats" id="stats"></div>
       <button id="refresh">새로고침</button>
-      <a class="button" href="/">작업 화면</a>
+      <a class="button" id="home-link" href="index.html">작업 화면</a>
     </div>
   </header>
   <main>
@@ -266,6 +297,8 @@
     const pathEl = document.getElementById("db-path");
     const statsEl = document.getElementById("stats");
     const refreshButton = document.getElementById("refresh");
+    const homeLink = document.getElementById("home-link");
+    const healthEl = document.getElementById("server-health");
     const modeButtons = document.querySelectorAll("[data-map-mode]");
     const layerButtons = document.querySelectorAll("[data-layer-mode]");
     const opacityControl = document.getElementById("opacity-control");
@@ -282,6 +315,7 @@
     let layerMode = selectedInitialLayerMode();
     let osmOpacity = selectedInitialOpacity();
 
+    homeLink.href = new URL("index.html", location.href).href;
     refreshButton.addEventListener("click", () => loadMapData(true));
     modeButtons.forEach((button) => {
       button.addEventListener("click", () => setMapMode(button.dataset.mapMode, true));
@@ -434,6 +468,41 @@
       }
     }
 
+    async function refreshHealth() {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2500);
+      const started = performance.now();
+      try {
+        const res = await fetch(`${apiBase}/api/health`, { signal: controller.signal, cache: "no-store" });
+        const data = await res.json();
+        const latencyMs = Math.round(performance.now() - started);
+        renderHealth(data, latencyMs);
+      } catch (e) {
+        healthEl.className = "health bad";
+        healthEl.textContent = `서버 오프라인 | ${e.name === "AbortError" ? "응답 시간 초과" : e.message} | python tools/scripts/osm_roads_webui.py --host 127.0.0.1 --port 8765`;
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
+    function renderHealth(data, latencyMs) {
+      const db = data.db || {};
+      const server = data.server || {};
+      const host = server.host && server.port ? `${server.host}:${server.port}` : "서버";
+      const pathMode = db.uses_default_path ? "기본 DB" : "사용자 DB";
+      const sizeText = db.size_bytes ? ` | ${formatBytes(db.size_bytes)}` : "";
+      if (data.ok) {
+        healthEl.className = db.uses_default_path ? "health ok" : "health warn";
+        healthEl.textContent = `${host} 온라인 | ${pathMode} OK${sizeText} | API ${latencyMs}ms`;
+        healthEl.title = `${db.configured_path || ""}`;
+        return;
+      }
+      const reason = db.error || (db.exists ? "스키마/스모크 테스트 실패" : "DB 파일 없음");
+      healthEl.className = "health bad";
+      healthEl.textContent = `${host} 온라인 | ${pathMode} 오류: ${reason}`;
+      healthEl.title = `${db.configured_path || ""}`;
+    }
+
     function scheduleLoad() {
       if (mapMode === "osm") {
         statusEl.textContent = `OSM 배경만 표시 | 줌 ${map.getZoom()}`;
@@ -470,9 +539,24 @@
         renderMapData(data);
       } catch (e) {
         if (currentRequest === requestId) {
-          statusEl.textContent = `지도 조회 실패: ${e.message}`;
+          if (isConnectionError(e)) {
+            switchToOsmFallback(`서버 연결 실패: ${e.message}`);
+          } else {
+            statusEl.textContent = `지도 조회 실패: ${e.message}`;
+          }
         }
       }
+    }
+
+    function isConnectionError(error) {
+      const message = String(error && error.message || "");
+      return error instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(message);
+    }
+
+    function switchToOsmFallback(message) {
+      mapMode = "osm";
+      applyMapMode(false);
+      statusEl.textContent = `${message} | OSM 배경만 표시`;
     }
 
     function mapDataUrl(bbox) {
@@ -619,6 +703,8 @@
     }
 
     init();
+    refreshHealth();
+    setInterval(refreshHealth, 10000);
   </script>
 </body>
 </html>
