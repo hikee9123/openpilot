@@ -15,7 +15,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import import_module
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -36,6 +36,15 @@ DEFAULT_PBF = DEFAULT_NAVD_SOURCE_DIR / "south-korea-latest.osm.pbf"
 DEFAULT_TMP_DB = DEFAULT_NAVD_TMP_DIR / "osm_roads_build" / "osm_roads_kr.sqlite3.build"
 TASK_ORDER = ("download", "build", "validate", "upload_dry_run", "upload_push")
 PROGRESS_PREFIX = "__osm_progress__ "
+BUILD_PROFILES = ("full", "camera-balanced", "major")
+BUILD_PROFILE_ALIASES = {
+  "balanced": "camera-balanced",
+  "camera": "camera-balanced",
+  "camera_blanced": "camera-balanced",
+  "camera-blanced": "camera-balanced",
+  "camera_balanced": "camera-balanced",
+  "camera-balanced": "camera-balanced",
+}
 TASK_LABELS = {
   "download": "PBF 다운로드",
   "build": "DB 생성",
@@ -43,6 +52,14 @@ TASK_LABELS = {
   "upload_dry_run": "GitHub 업로드 확인",
   "upload_push": "GitHub 업로드",
 }
+
+
+def _normalize_build_profile(value: str) -> str:
+  profile = (value or "camera-balanced").strip().lower()
+  profile = BUILD_PROFILE_ALIASES.get(profile, profile)
+  if profile not in BUILD_PROFILES:
+    return "camera-balanced"
+  return profile
 
 
 @dataclass
@@ -98,7 +115,7 @@ class OSMRoadsTaskRunner:
         "tasks": {key: self.tasks[key].snapshot() for key in TASK_ORDER},
       }
 
-  def start(self, task_key: str) -> tuple[bool, str]:
+  def start(self, task_key: str, build_profile: str = "") -> tuple[bool, str]:
     if task_key not in self.tasks:
       return False, f"unknown task: {task_key}"
     with self.lock:
@@ -114,8 +131,9 @@ class OSMRoadsTaskRunner:
       task.finished_at = ""
       task.updated_at = task.started_at
       task.returncode = None
-      task.details = {}
-      task.command = self._command_for(task_key)
+      selected_build_profile = _normalize_build_profile(build_profile or self.args.build_profile)
+      task.details = {"build_profile": selected_build_profile} if task_key == "build" else {}
+      task.command = self._command_for(task_key, selected_build_profile)
       task.log.clear()
       task.log.append("$ " + " ".join(task.command))
       self.active_task = task_key
@@ -144,7 +162,7 @@ class OSMRoadsTaskRunner:
     process.terminate()
     return True, "stopping"
 
-  def _command_for(self, task_key: str) -> list[str]:
+  def _command_for(self, task_key: str, build_profile: str = "") -> list[str]:
     db_path = str(Path(self.args.db).expanduser())
     pbf_path = str(Path(self.args.pbf).expanduser())
     require_graph = [] if self.args.no_require_road_graph else ["--require-road-graph"]
@@ -154,7 +172,19 @@ class OSMRoadsTaskRunner:
         command.append("--skip-md5")
       return command
     if task_key == "build":
-      return [sys.executable, "tools/scripts/build_osm_roads_db.py", "--pbf", pbf_path, "--db", db_path, "--progress-json", *require_graph]
+      profile = _normalize_build_profile(build_profile or self.args.build_profile)
+      return [
+        sys.executable,
+        "tools/scripts/build_osm_roads_db.py",
+        "--pbf",
+        pbf_path,
+        "--db",
+        db_path,
+        "--profile",
+        profile,
+        "--progress-json",
+        *require_graph,
+      ]
     if task_key == "validate":
       return [sys.executable, "tools/scripts/build_osm_roads_db.py", "--db", db_path, "--validate-only", *require_graph]
     if task_key in ("upload_dry_run", "upload_push"):
@@ -240,11 +270,13 @@ class OSMRoadsTaskRunner:
         except json.JSONDecodeError:
           task.log.append(line)
         else:
+          details = dict(task.details)
+          details.update(payload)
           task.progress = max(task.progress, int(payload.get("progress", task.progress)))
           task.message = str(payload.get("message", task.message))
           task.stage = str(payload.get("step", task.stage))
           task.updated_at = _now_text()
-          task.details = payload
+          task.details = details
           self.sequence += 1
           return
       progress, message = _progress_from_line(task_key, line, task.progress)
@@ -363,7 +395,9 @@ class OSMRoadsWebHandler(BaseHTTPRequestHandler):
     parsed = urlparse(self.path)
     if parsed.path.startswith("/api/tasks/"):
       task_key = parsed.path.rsplit("/", maxsplit=1)[-1]
-      ok, message = self.runner.start(task_key)
+      query = parse_qs(parsed.query)
+      build_profile = query.get("profile", [""])[0]
+      ok, message = self.runner.start(task_key, build_profile=build_profile)
       _json_response(self, HTTPStatus.OK if ok else HTTPStatus.CONFLICT, {"ok": ok, "message": message})
     elif parsed.path == "/api/stop":
       ok, message = self.runner.stop()
@@ -421,6 +455,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--pbf", type=Path, default=DEFAULT_PBF, help=f"PBF source path (default: {DEFAULT_PBF})")
   parser.add_argument("--db", type=Path, default=DEFAULT_OSM_ROADS_DB_PATH, help=f"SQLite DB path (default: {DEFAULT_OSM_ROADS_DB_PATH})")
   parser.add_argument("--skip-md5", action="store_true", help="Pass --skip-md5 to the download task")
+  parser.add_argument("--build-profile", default="camera-balanced", help="Default DB build profile for the web UI")
   parser.add_argument("--no-require-road-graph", action="store_true", help="Do not pass --require-road-graph to build/validate/upload tasks")
   parser.add_argument("--upload-repo", type=Path, default=None, help="Existing local Git LFS data repo for upload tasks")
   parser.add_argument("--upload-repo-url", default="", help="Git data repo URL used when --upload-repo is omitted")

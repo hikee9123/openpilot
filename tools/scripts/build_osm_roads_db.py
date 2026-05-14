@@ -60,6 +60,24 @@ DRIVABLE_HIGHWAYS = {
   "secondary", "secondary_link", "tertiary", "tertiary_link", "unclassified",
   "residential", "living_street", "service", "road",
 }
+MAJOR_PROFILE_HIGHWAYS = {
+  "motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link",
+  "secondary", "secondary_link", "tertiary", "tertiary_link",
+}
+CAMERA_BALANCED_EXCLUDED_HIGHWAYS = {"service", "living_street", "road"}
+BUILD_PROFILE_HIGHWAYS = {
+  "full": frozenset(DRIVABLE_HIGHWAYS),
+  "camera-balanced": frozenset(DRIVABLE_HIGHWAYS - CAMERA_BALANCED_EXCLUDED_HIGHWAYS),
+  "major": frozenset(MAJOR_PROFILE_HIGHWAYS),
+}
+BUILD_PROFILE_ALIASES = {
+  "balanced": "camera-balanced",
+  "camera": "camera-balanced",
+  "camera_blanced": "camera-balanced",
+  "camera-blanced": "camera-balanced",
+  "camera_balanced": "camera-balanced",
+  "camera-balanced": "camera-balanced",
+}
 LINK_HIGHWAYS = {"motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link"}
 BLOCKED_ACCESS = {"no", "private", "agricultural", "forestry"}
 ROAD_PRIORITY = {
@@ -79,6 +97,16 @@ ROAD_PRIORITY = {
   "secondary_link": 55,
   "tertiary_link": 45,
 }
+
+
+def _normalize_build_profile(value: str) -> str:
+  profile = (value or "full").strip().lower()
+  profile = BUILD_PROFILE_ALIASES.get(profile, profile)
+  if profile not in BUILD_PROFILE_HIGHWAYS:
+    choices = ", ".join(sorted(BUILD_PROFILE_HIGHWAYS))
+    aliases = ", ".join(sorted(BUILD_PROFILE_ALIASES))
+    raise ValueError(f"unknown build profile: {value!r}; choices: {choices}; aliases: {aliases}")
+  return profile
 
 
 class ProgressReporter:
@@ -242,9 +270,9 @@ def _oneway(tags: Any, highway: str) -> int:
   return 0
 
 
-def _is_drivable_way(tags: Any) -> bool:
+def _is_drivable_way(tags: Any, included_highways: frozenset[str]) -> bool:
   highway = _tag(tags, "highway")
-  if highway not in DRIVABLE_HIGHWAYS:
+  if highway not in included_highways:
     return False
   if _tag(tags, "area").lower() == "yes":
     return False
@@ -315,12 +343,14 @@ class OSMRoadsBuilder:
     source_pbf: Path,
     relation_collector: OSMRelationCollector,
     build_graph: bool,
+    included_highways: frozenset[str],
     progress: ProgressReporter,
   ) -> None:
     self.conn = conn
     self.source_pbf = source_pbf
     self.relation_collector = relation_collector
     self.build_graph = build_graph
+    self.included_highways = included_highways
     self.progress = progress
     self.node_ids: dict[tuple[int, int], int] = {}
     self.next_node_id = 1
@@ -520,7 +550,7 @@ class OSMRoadsBuilder:
   def way(self, way: Any) -> None:
     self.way_count += 1
     tags = way.tags
-    if not _is_drivable_way(tags):
+    if not _is_drivable_way(tags, self.included_highways):
       return
     nodes = []
     for node in way.nodes:
@@ -778,7 +808,13 @@ def _build_graph(conn: sqlite3.Connection, progress: ProgressReporter) -> None:
   """, "continuity", 86, "building road continuity cache")
 
 
-def _finalize_metadata(conn: sqlite3.Connection, pbf_path: Path, skipped_graph: bool) -> None:
+def _finalize_metadata(
+  conn: sqlite3.Connection,
+  pbf_path: Path,
+  skipped_graph: bool,
+  build_profile: str,
+  included_highways: frozenset[str],
+) -> None:
   roads_count = int(conn.execute("SELECT COUNT(*) FROM roads").fetchone()[0])
   graph_node_count = int(conn.execute("SELECT COUNT(*) FROM road_nodes").fetchone()[0])
   graph_edge_count = int(conn.execute("SELECT COUNT(*) FROM road_edges").fetchone()[0])
@@ -787,6 +823,9 @@ def _finalize_metadata(conn: sqlite3.Connection, pbf_path: Path, skipped_graph: 
     "version": 1,
     "built_at": int(datetime.now().timestamp()),
     "source_pbf": str(pbf_path),
+    "build_profile": build_profile,
+    "included_highways": ",".join(sorted(included_highways)),
+    "excluded_highways": ",".join(sorted(DRIVABLE_HIGHWAYS - set(included_highways))),
     "segment_count": roads_count,
     "road_graph_skipped": 1 if skipped_graph else 0,
     "road_graph_node_count": graph_node_count,
@@ -807,7 +846,10 @@ def build_db(
   require_road_graph: bool,
   quick_check: bool,
   progress_json: bool,
+  build_profile: str,
 ) -> None:
+  build_profile = _normalize_build_profile(build_profile)
+  included_highways = BUILD_PROFILE_HIGHWAYS[build_profile]
   progress = ProgressReporter(enabled=progress_json, db_path=tmp_db)
   osmium = _load_osmium_module()
   if not pbf_path.exists():
@@ -816,6 +858,15 @@ def build_db(
   tmp_db.unlink(missing_ok=True)
   ensure_navd_dirs(db_dir=final_db.parent, source_dir=pbf_path.parent, tmp_dir=tmp_db.parent)
 
+  progress.emit(
+    "profile",
+    1,
+    f"build profile={build_profile} included_highways={','.join(sorted(included_highways))}",
+    force=True,
+    build_profile=build_profile,
+    included_highways=sorted(included_highways),
+    excluded_highways=sorted(DRIVABLE_HIGHWAYS - set(included_highways)),
+  )
   progress.emit("relations", 3, f"collecting OSM relations from {pbf_path}", force=True)
   relation_collector = OSMRelationCollector(osmium)
   class OSMRelationHandler(osmium.SimpleHandler):
@@ -839,7 +890,7 @@ def build_db(
     configure_build_connection(conn)
     create_osm_roads_schema(conn)
     _insert_relation_metadata(conn, relation_collector)
-    builder = OSMRoadsBuilder(conn, pbf_path, relation_collector, build_graph, progress)
+    builder = OSMRoadsBuilder(conn, pbf_path, relation_collector, build_graph, included_highways, progress)
     builder.prepare_temp_tables()
     class OSMWayHandler(osmium.SimpleHandler):
       def way(self, way: Any) -> None:
@@ -861,7 +912,7 @@ def build_db(
     finally:
       conn.set_progress_handler(None, 0)
     progress.emit("metadata", 91, "writing metadata", force=True)
-    _finalize_metadata(conn, pbf_path, skipped_graph=not build_graph)
+    _finalize_metadata(conn, pbf_path, skipped_graph=not build_graph, build_profile=build_profile, included_highways=included_highways)
     progress.emit("analyze", 92, "analyzing sqlite query planner statistics", force=True)
     conn.set_progress_handler(progress.heartbeat("analyze", 92, "analyzing sqlite query planner statistics"), 100000)
     try:
@@ -902,6 +953,12 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--require-road-graph", action="store_true", help="Fail validation if the successor road graph is missing")
   parser.add_argument("--quick-check", action="store_true", help="Run SQLite PRAGMA quick_check during validation")
   parser.add_argument("--progress-json", action="store_true", help="Print machine-readable progress events prefixed with __osm_progress__")
+  parser.add_argument(
+    "--profile",
+    "--build-profile",
+    default="full",
+    help="Road inclusion profile: full, camera-balanced, or major. Aliases: balanced, camera, camera-blanced",
+  )
   parser.add_argument("--validate-only", action="store_true", help="Validate --db and exit without building")
   return parser.parse_args()
 
@@ -920,6 +977,10 @@ def main() -> int:
   build_graph = not args.skip_road_graph
   if args.require_road_graph and not build_graph:
     raise RuntimeError("--require-road-graph cannot be used with --skip-road-graph")
+  try:
+    build_profile = _normalize_build_profile(args.profile)
+  except ValueError as e:
+    raise SystemExit(str(e)) from e
   build_db(
     args.pbf.expanduser(),
     args.tmp_db.expanduser(),
@@ -928,6 +989,7 @@ def main() -> int:
     args.require_road_graph,
     args.quick_check,
     args.progress_json,
+    build_profile,
   )
   return 0
 

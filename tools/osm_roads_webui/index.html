@@ -80,6 +80,32 @@
       justify-content: flex-end;
     }
 
+    .build-options {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      margin-top: 10px;
+      color: var(--muted);
+    }
+
+    .build-options label {
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    select {
+      height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--text);
+      padding: 0 10px;
+      font: inherit;
+      min-width: 190px;
+    }
+
     button {
       height: 38px;
       border: 1px solid var(--line);
@@ -231,6 +257,14 @@
         flex-direction: column;
       }
 
+      .build-options {
+        justify-content: stretch;
+      }
+
+      select {
+        flex: 1 1 190px;
+      }
+
       .toolbar {
         justify-content: stretch;
       }
@@ -259,6 +293,14 @@
         <button data-task="upload_dry_run">업로드 확인</button>
         <button class="primary" data-task="upload_push">GitHub 업로드</button>
         <button class="danger" id="stop" disabled>중지</button>
+      </div>
+      <div class="build-options">
+        <label for="build-profile">DB 생성 모드</label>
+        <select id="build-profile">
+          <option value="camera-balanced" selected>카메라 추적용</option>
+          <option value="full">전체 도로</option>
+          <option value="major">주요도로</option>
+        </select>
       </div>
     </header>
     <div class="notice" id="notice"></div>
@@ -291,6 +333,7 @@
     const eventState = document.getElementById("event-state");
     const notice = document.getElementById("notice");
     const stopButton = document.getElementById("stop");
+    const buildProfile = document.getElementById("build-profile");
     const apiBase = location.protocol === "file:" ? "http://127.0.0.1:8765" : "";
     let state = null;
     let selectedTask = "download";
@@ -312,6 +355,7 @@
         <div class="progress"><div class="bar"></div></div>
         <div class="meta">
           <span>단계</span><span class="stage"></span>
+          <span>모드</span><span class="mode"></span>
           <span>진행률</span><span class="percent"></span>
           <span>메시지</span><span class="message"></span>
           <span>경과</span><span class="elapsed"></span>
@@ -355,7 +399,10 @@
           return;
         }
         selectedTask = task;
-        await post(`/api/tasks/${task}`);
+        const path = task === "build"
+          ? `/api/tasks/${task}?profile=${encodeURIComponent(buildProfile.value)}`
+          : `/api/tasks/${task}`;
+        await post(path);
       });
     });
 
@@ -367,6 +414,7 @@
       const active = state.active_task;
       summary.textContent = busy ? `${state.tasks[active].label} 실행 중` : "대기 중";
       stopButton.disabled = !busy;
+      buildProfile.disabled = busy;
       document.querySelectorAll("[data-task]").forEach((button) => {
         button.disabled = busy;
       });
@@ -383,6 +431,7 @@
         el.querySelector(".percent").textContent = `${task.progress}%`;
         el.querySelector(".message").textContent = task.message || "-";
         el.querySelector(".stage").textContent = task.stage || details.step || "-";
+        el.querySelector(".mode").textContent = formatProfile(details.build_profile);
         el.querySelector(".elapsed").textContent = formatElapsed(details.elapsed_s);
         el.querySelector(".dbsize").textContent = formatBytes(details.db_size_bytes);
         el.querySelector(".batch").textContent = formatBatch(details);
@@ -429,6 +478,13 @@
         parts.push(`${inserted.toLocaleString()} rows`);
       }
       return parts.length ? parts.join(" | ") : "-";
+    }
+
+    function formatProfile(profile) {
+      if (profile === "camera-balanced") return "카메라 추적용";
+      if (profile === "full") return "전체 도로";
+      if (profile === "major") return "주요도로";
+      return "-";
     }
 
     function renderLog() {
