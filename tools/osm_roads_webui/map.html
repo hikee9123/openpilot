@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OSM Roads DB Map</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101216;
+      --panel: #181d24;
+      --panel-2: #222933;
+      --text: #edf1f7;
+      --muted: #9da8b8;
+      --line: #313a47;
+      --accent: #41c7a7;
+      --warn: #e9b44c;
+      --bad: #f06c75;
+      --good: #65d17d;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-height: 100vh;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .path {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    .controls,
+    .stats {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .stat {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      padding: 6px 9px;
+      min-width: 92px;
+    }
+
+    .stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .stat strong {
+      display: block;
+      margin-top: 2px;
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    button,
+    a.button {
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--text);
+      padding: 0 12px;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      text-decoration: none;
+    }
+
+    button:hover,
+    a.button:hover {
+      border-color: var(--accent);
+    }
+
+    main {
+      min-height: 0;
+      position: relative;
+    }
+
+    #map {
+      width: 100%;
+      height: 100%;
+      min-height: 420px;
+      background: #0c0f13;
+    }
+
+    .status {
+      position: absolute;
+      z-index: 500;
+      left: 12px;
+      bottom: 12px;
+      max-width: min(620px, calc(100vw - 24px));
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(24, 29, 36, 0.92);
+      color: var(--muted);
+      padding: 8px 10px;
+      font-size: 12px;
+      backdrop-filter: blur(6px);
+    }
+
+    .leaflet-container {
+      background: #0c0f13;
+      color: #18202a;
+      font: 13px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    @media (max-width: 840px) {
+      header {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .controls,
+      .stats {
+        justify-content: stretch;
+      }
+
+      .stat,
+      button,
+      a.button {
+        flex: 1 1 120px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>OSM Roads DB 지도</h1>
+      <div class="path" id="db-path">DB 조회 중</div>
+    </div>
+    <div class="controls">
+      <div class="stats" id="stats"></div>
+      <button id="refresh">새로고침</button>
+      <a class="button" href="/">작업 화면</a>
+    </div>
+  </header>
+  <main>
+    <div id="map"></div>
+    <div class="status" id="status">지도 초기화 중</div>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const apiBase = location.protocol === "file:" ? "http://127.0.0.1:8765" : "";
+    const statusEl = document.getElementById("status");
+    const pathEl = document.getElementById("db-path");
+    const statsEl = document.getElementById("stats");
+    const refreshButton = document.getElementById("refresh");
+    let map = null;
+    let cameraLayer = null;
+    let roadLayer = null;
+    let loadTimer = null;
+    let requestId = 0;
+
+    refreshButton.addEventListener("click", () => loadMapData(true));
+
+    async function init() {
+      if (!window.L) {
+        statusEl.textContent = "지도 라이브러리 로드 실패";
+        return;
+      }
+      map = L.map("map", { preferCanvas: true }).setView([36.35, 127.85], 7);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: "&copy; OpenStreetMap contributors"
+      }).addTo(map);
+      roadLayer = L.layerGroup().addTo(map);
+      cameraLayer = L.layerGroup().addTo(map);
+      map.on("moveend zoomend", scheduleLoad);
+      await loadSummary();
+      await loadMapData(true);
+    }
+
+    async function loadSummary() {
+      try {
+        const res = await fetch(`${apiBase}/api/db/summary`);
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          pathEl.textContent = data.message || "DB 조회 실패";
+          return;
+        }
+        pathEl.textContent = `${data.db_path} | ${formatBytes(data.size_bytes)} | ${formatTimestamp(data.modified_at)}`;
+        const counts = data.counts || {};
+        statsEl.innerHTML = [
+          ["도로", counts.roads],
+          ["연결", counts.road_adjacency],
+          ["카메라", counts.speed_cameras],
+          ["매칭", counts.route_camera_lookup]
+        ].map(([label, value]) => `
+          <div class="stat"><span>${label}</span><strong>${formatNumber(value)}</strong></div>
+        `).join("");
+      } catch (e) {
+        pathEl.textContent = `DB 조회 실패: ${e.message}`;
+      }
+    }
+
+    function scheduleLoad() {
+      clearTimeout(loadTimer);
+      loadTimer = setTimeout(() => loadMapData(false), 300);
+    }
+
+    async function loadMapData(force) {
+      if (!map) return;
+      const currentRequest = ++requestId;
+      const bounds = map.getBounds();
+      const bbox = [
+        bounds.getWest(),
+        bounds.getSouth(),
+        bounds.getEast(),
+        bounds.getNorth()
+      ].map((value) => value.toFixed(6)).join(",");
+      statusEl.textContent = force ? "지도 데이터 새로고침 중" : "지도 데이터 조회 중";
+      try {
+        const res = await fetch(`${apiBase}/api/db/map?bbox=${encodeURIComponent(bbox)}&camera_limit=1200&road_limit=1800`);
+        const data = await res.json();
+        if (currentRequest !== requestId) return;
+        if (!res.ok || !data.ok) {
+          statusEl.textContent = data.message || "지도 조회 실패";
+          return;
+        }
+        renderMapData(data);
+      } catch (e) {
+        if (currentRequest === requestId) {
+          statusEl.textContent = `지도 조회 실패: ${e.message}`;
+        }
+      }
+    }
+
+    function renderMapData(data) {
+      roadLayer.clearLayers();
+      cameraLayer.clearLayers();
+      for (const road of data.roads || []) {
+        const line = L.polyline(
+          [[Number(road.lat1), Number(road.lon1)], [Number(road.lat2), Number(road.lon2)]],
+          {
+            color: roadColor(road.highway),
+            weight: roadWeight(road.highway),
+            opacity: 0.72
+          }
+        );
+        line.bindPopup(`
+          <strong>${escapeHtml(road.name || road.ref || "road")}</strong><br>
+          road_id ${escapeHtml(road.road_id)} / camera ${escapeHtml(road.camera_id)}<br>
+          ${escapeHtml(road.highway || "-")} / confidence ${escapeHtml(formatCell(road.match_confidence))}
+        `);
+        line.addTo(roadLayer);
+      }
+      for (const camera of data.cameras || []) {
+        const marker = L.circleMarker([Number(camera.lat), Number(camera.lon)], {
+          radius: 5,
+          color: cameraColor(camera.speed_limit_kph),
+          fillColor: cameraColor(camera.speed_limit_kph),
+          fillOpacity: 0.88,
+          weight: 1.5
+        });
+        marker.bindPopup(`
+          <strong>camera ${escapeHtml(camera.id)}</strong><br>
+          제한속도 ${escapeHtml(formatSpeed(camera.speed_limit_kph))}<br>
+          ${escapeHtml(camera.address || camera.road_name || "-")}<br>
+          road ${escapeHtml(camera.road_id || "-")} ${escapeHtml(camera.matched_road_name || camera.matched_road_ref || "")}<br>
+          거리 ${escapeHtml(formatCell(camera.match_distance_m))}m / confidence ${escapeHtml(formatCell(camera.match_confidence))}
+        `);
+        marker.addTo(cameraLayer);
+      }
+      const cameras = (data.cameras || []).length;
+      const roads = (data.roads || []).length;
+      const cameraLimit = Number((data.limits || {}).camera_limit);
+      const roadLimit = Number((data.limits || {}).road_limit);
+      const limited = (Number.isFinite(cameraLimit) && cameras >= cameraLimit) || (Number.isFinite(roadLimit) && roads >= roadLimit);
+      statusEl.textContent = `${limited ? "일부 표시" : "표시 완료"} | 화면 카메라 ${formatNumber(cameras)} | 매칭 도로 ${formatNumber(roads)} | 줌 ${map.getZoom()}`;
+    }
+
+    function roadColor(highway) {
+      if (highway === "motorway" || highway === "trunk") return "#f06c75";
+      if (highway === "primary") return "#e9b44c";
+      if (highway === "secondary" || highway === "tertiary") return "#41c7a7";
+      return "#9da8b8";
+    }
+
+    function roadWeight(highway) {
+      if (highway === "motorway" || highway === "trunk") return 4;
+      if (highway === "primary") return 3;
+      return 2;
+    }
+
+    function cameraColor(speed) {
+      const value = Number(speed);
+      if (Number.isFinite(value) && value >= 80) return "#f06c75";
+      if (Number.isFinite(value) && value <= 30) return "#e9b44c";
+      return "#65d17d";
+    }
+
+    function formatSpeed(speed) {
+      const value = Number(speed);
+      return Number.isFinite(value) && value > 0 ? `${value} km/h` : "-";
+    }
+
+    function formatBytes(bytes) {
+      const value = Number(bytes);
+      if (!Number.isFinite(value) || value <= 0) return "-";
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      let size = value;
+      let unit = 0;
+      while (size >= 1024 && unit < units.length - 1) {
+        size /= 1024;
+        unit += 1;
+      }
+      return unit === 0 ? `${Math.round(size)} ${units[unit]}` : `${size.toFixed(1)} ${units[unit]}`;
+    }
+
+    function formatNumber(value) {
+      const number = Number(value);
+      return Number.isFinite(number) ? number.toLocaleString() : "-";
+    }
+
+    function formatTimestamp(seconds) {
+      const value = Number(seconds);
+      if (!Number.isFinite(value) || value <= 0) return "-";
+      return new Date(value * 1000).toLocaleString();
+    }
+
+    function formatCell(value) {
+      if (value === null || value === undefined || value === "") return "-";
+      if (typeof value === "number" && Number.isFinite(value)) return value.toLocaleString();
+      return String(value);
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    init();
+  </script>
+</body>
+</html>

@@ -482,6 +482,7 @@
         <button data-task="validate">DB 검증</button>
         <button id="db-view">DB 보기</button>
         <button id="map-view">지도 보기</button>
+        <button id="map-page">지도 전용</button>
         <button data-task="upload_dry_run">업로드 확인</button>
         <button class="primary" data-task="upload_push">GitHub 업로드</button>
         <button class="danger" id="stop" disabled>중지</button>
@@ -564,6 +565,7 @@
     const dbMeta = document.getElementById("db-meta");
     const dbTable = document.getElementById("db-table");
     const mapButton = document.getElementById("map-view");
+    const mapPageButton = document.getElementById("map-page");
     const mapPanel = document.getElementById("map-panel");
     const mapStatus = document.getElementById("map-status");
     const mapMeta = document.getElementById("map-meta");
@@ -658,6 +660,9 @@
     stopButton.addEventListener("click", () => post("/api/stop"));
     dbButton.addEventListener("click", () => loadDbView());
     mapButton.addEventListener("click", () => showMapView());
+    mapPageButton.addEventListener("click", () => {
+      window.location.href = `${apiBase}/map.html`;
+    });
     speedCameras.addEventListener("input", () => {
       speedCameraTouched = true;
     });
@@ -684,6 +689,7 @@
       });
       dbButton.disabled = busy;
       mapButton.disabled = busy;
+      mapPageButton.disabled = busy;
 
       for (const key of taskOrder) {
         const task = state.tasks[key];

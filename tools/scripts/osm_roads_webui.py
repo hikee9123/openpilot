@@ -33,6 +33,7 @@ except ModuleNotFoundError:
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HTML_PATH = REPO_ROOT / "tools" / "osm_roads_webui" / "index.html"
+MAP_HTML_PATH = REPO_ROOT / "tools" / "osm_roads_webui" / "map.html"
 DEFAULT_PBF = DEFAULT_NAVD_SOURCE_DIR / "south-korea-latest.osm.pbf"
 DEFAULT_SPEED_CAMERA_CSV = DEFAULT_NAVD_SOURCE_DIR / "speed_cameras.csv"
 DEFAULT_TMP_DB = DEFAULT_NAVD_TMP_DIR / "osm_roads_build" / "osm_roads_kr.sqlite3.build"
@@ -658,7 +659,9 @@ class OSMRoadsWebHandler(BaseHTTPRequestHandler):
   def do_GET(self) -> None:
     parsed = urlparse(self.path)
     if parsed.path in ("", "/", "/index.html"):
-      self._serve_index()
+      self._serve_file(HTML_PATH)
+    elif parsed.path in ("/map", "/map.html"):
+      self._serve_file(MAP_HTML_PATH)
     elif parsed.path == "/api/state":
       _json_response(self, HTTPStatus.OK, self.runner.snapshot())
     elif parsed.path == "/api/db/summary":
@@ -694,11 +697,11 @@ class OSMRoadsWebHandler(BaseHTTPRequestHandler):
     self.send_header("Access-Control-Allow-Headers", "Content-Type")
     self.end_headers()
 
-  def _serve_index(self) -> None:
+  def _serve_file(self, path: Path) -> None:
     try:
-      body = HTML_PATH.read_bytes()
+      body = path.read_bytes()
     except OSError:
-      self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, f"missing HTML: {HTML_PATH}")
+      self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, f"missing HTML: {path}")
       return
     self.send_response(HTTPStatus.OK)
     self.send_header("Content-Type", "text/html; charset=utf-8")
