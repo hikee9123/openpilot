@@ -311,8 +311,13 @@
         </div>
         <div class="progress"><div class="bar"></div></div>
         <div class="meta">
+          <span>단계</span><span class="stage"></span>
           <span>진행률</span><span class="percent"></span>
           <span>메시지</span><span class="message"></span>
+          <span>경과</span><span class="elapsed"></span>
+          <span>DB 크기</span><span class="dbsize"></span>
+          <span>배치</span><span class="batch"></span>
+          <span>갱신</span><span class="updated"></span>
           <span>시작</span><span class="started"></span>
           <span>종료</span><span class="finished"></span>
         </div>
@@ -373,13 +378,57 @@
         const status = el.querySelector(".status");
         status.className = `status ${task.status}`;
         status.textContent = statusText[task.status] || task.status;
+        const details = task.details || {};
         el.querySelector(".bar").style.width = `${Math.max(0, Math.min(100, task.progress))}%`;
         el.querySelector(".percent").textContent = `${task.progress}%`;
         el.querySelector(".message").textContent = task.message || "-";
+        el.querySelector(".stage").textContent = task.stage || details.step || "-";
+        el.querySelector(".elapsed").textContent = formatElapsed(details.elapsed_s);
+        el.querySelector(".dbsize").textContent = formatBytes(details.db_size_bytes);
+        el.querySelector(".batch").textContent = formatBatch(details);
+        el.querySelector(".updated").textContent = task.updated_at || "-";
         el.querySelector(".started").textContent = task.started_at || "-";
         el.querySelector(".finished").textContent = task.finished_at || "-";
       }
       renderLog();
+    }
+
+    function formatElapsed(seconds) {
+      if (!Number.isFinite(Number(seconds))) return "-";
+      const value = Math.max(0, Number(seconds));
+      const h = Math.floor(value / 3600);
+      const m = Math.floor((value % 3600) / 60);
+      const s = Math.floor(value % 60);
+      if (h > 0) return `${h}h ${m}m ${s}s`;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
+    }
+
+    function formatBytes(bytes) {
+      const value = Number(bytes);
+      if (!Number.isFinite(value) || value <= 0) return "-";
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      let size = value;
+      let unit = 0;
+      while (size >= 1024 && unit < units.length - 1) {
+        size /= 1024;
+        unit += 1;
+      }
+      return unit === 0 ? `${Math.round(size)} ${units[unit]}` : `${size.toFixed(1)} ${units[unit]}`;
+    }
+
+    function formatBatch(details) {
+      const batch = Number(details.batch);
+      const count = Number(details.batch_count);
+      const inserted = Number(details.inserted_rows);
+      const parts = [];
+      if (Number.isFinite(batch) && Number.isFinite(count) && count > 0) {
+        parts.push(`${batch}/${count}`);
+      }
+      if (Number.isFinite(inserted) && inserted > 0) {
+        parts.push(`${inserted.toLocaleString()} rows`);
+      }
+      return parts.length ? parts.join(" | ") : "-";
     }
 
     function renderLog() {

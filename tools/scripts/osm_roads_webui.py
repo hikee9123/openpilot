@@ -21,18 +21,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 try:
   from openpilot.selfdrive.navd.osm_roads import DEFAULT_OSM_ROADS_DB_PATH
-  from openpilot.selfdrive.navd.paths import DEFAULT_NAVD_SOURCE_DIR
+  from openpilot.selfdrive.navd.paths import DEFAULT_NAVD_SOURCE_DIR, DEFAULT_NAVD_TMP_DIR
 except ModuleNotFoundError:
   osm_roads = import_module("selfdrive.navd.osm_roads")
   navd_paths = import_module("selfdrive.navd.paths")
   DEFAULT_OSM_ROADS_DB_PATH = osm_roads.DEFAULT_OSM_ROADS_DB_PATH
   DEFAULT_NAVD_SOURCE_DIR = navd_paths.DEFAULT_NAVD_SOURCE_DIR
+  DEFAULT_NAVD_TMP_DIR = navd_paths.DEFAULT_NAVD_TMP_DIR
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HTML_PATH = REPO_ROOT / "tools" / "osm_roads_webui" / "index.html"
 DEFAULT_PBF = DEFAULT_NAVD_SOURCE_DIR / "south-korea-latest.osm.pbf"
+DEFAULT_TMP_DB = DEFAULT_NAVD_TMP_DIR / "osm_roads_build" / "osm_roads_kr.sqlite3.build"
 TASK_ORDER = ("download", "build", "validate", "upload_dry_run", "upload_push")
+PROGRESS_PREFIX = "__osm_progress__ "
 TASK_LABELS = {
   "download": "PBF 다운로드",
   "build": "DB 생성",
@@ -49,11 +52,15 @@ class TaskState:
   status: str = "idle"
   progress: int = 0
   message: str = "대기"
+  stage: str = ""
   started_at: str = ""
   finished_at: str = ""
+  updated_at: str = ""
   returncode: int | None = None
   command: list[str] = field(default_factory=list)
+  details: dict[str, object] = field(default_factory=dict)
   log: deque[str] = field(default_factory=lambda: deque(maxlen=600))
+  started_monotonic: float = 0.0
 
   def snapshot(self) -> dict[str, object]:
     return {
@@ -62,10 +69,13 @@ class TaskState:
       "status": self.status,
       "progress": self.progress,
       "message": self.message,
+      "stage": self.stage,
       "started_at": self.started_at,
       "finished_at": self.finished_at,
+      "updated_at": self.updated_at,
       "returncode": self.returncode,
       "command": self.command,
+      "details": self.details,
       "log": list(self.log),
     }
 
@@ -98,9 +108,13 @@ class OSMRoadsTaskRunner:
       task.status = "running"
       task.progress = 1
       task.message = "시작"
+      task.stage = ""
       task.started_at = _now_text()
+      task.started_monotonic = time.monotonic()
       task.finished_at = ""
+      task.updated_at = task.started_at
       task.returncode = None
+      task.details = {}
       task.command = self._command_for(task_key)
       task.log.clear()
       task.log.append("$ " + " ".join(task.command))
@@ -109,6 +123,9 @@ class OSMRoadsTaskRunner:
 
     thread = threading.Thread(target=self._run_task, args=(task_key,), daemon=True)
     thread.start()
+    if task_key == "build":
+      monitor_thread = threading.Thread(target=self._monitor_build_task, daemon=True)
+      monitor_thread.start()
     return True, "started"
 
   def stop(self) -> tuple[bool, str]:
@@ -121,6 +138,7 @@ class OSMRoadsTaskRunner:
       task = self.tasks[task_key]
       task.status = "stopping"
       task.message = "중지 요청"
+      task.updated_at = _now_text()
       task.log.append("stop requested")
       self.sequence += 1
     process.terminate()
@@ -136,7 +154,7 @@ class OSMRoadsTaskRunner:
         command.append("--skip-md5")
       return command
     if task_key == "build":
-      return [sys.executable, "tools/scripts/build_osm_roads_db.py", "--pbf", pbf_path, "--db", db_path, *require_graph]
+      return [sys.executable, "tools/scripts/build_osm_roads_db.py", "--pbf", pbf_path, "--db", db_path, "--progress-json", *require_graph]
     if task_key == "validate":
       return [sys.executable, "tools/scripts/build_osm_roads_db.py", "--db", db_path, "--validate-only", *require_graph]
     if task_key in ("upload_dry_run", "upload_push"):
@@ -183,6 +201,7 @@ class OSMRoadsTaskRunner:
         task.progress = max(task.progress, 1)
         task.message = str(e)
         task.finished_at = _now_text()
+        task.updated_at = task.finished_at
         task.log.append(f"error: {e}")
         task.returncode = -1
         self.active_task = None
@@ -203,6 +222,7 @@ class OSMRoadsTaskRunner:
         task.message = f"실패 exit={returncode}"
       task.returncode = returncode
       task.finished_at = _now_text()
+      task.updated_at = task.finished_at
       self.active_task = None
       self.process = None
       self.sequence += 1
@@ -213,10 +233,44 @@ class OSMRoadsTaskRunner:
     with self.lock:
       task = self.tasks[task_key]
       task.log.append(line)
+      if line.startswith(PROGRESS_PREFIX):
+        task.log.pop()
+        try:
+          payload = json.loads(line[len(PROGRESS_PREFIX):])
+        except json.JSONDecodeError:
+          task.log.append(line)
+        else:
+          task.progress = max(task.progress, int(payload.get("progress", task.progress)))
+          task.message = str(payload.get("message", task.message))
+          task.stage = str(payload.get("step", task.stage))
+          task.updated_at = _now_text()
+          task.details = payload
+          self.sequence += 1
+          return
       progress, message = _progress_from_line(task_key, line, task.progress)
       task.progress = max(task.progress, progress)
       task.message = message or line[-180:]
+      task.updated_at = _now_text()
       self.sequence += 1
+
+  def _monitor_build_task(self) -> None:
+    while True:
+      time.sleep(5.0)
+      with self.lock:
+        if self.active_task != "build":
+          return
+        task = self.tasks["build"]
+        details = dict(task.details)
+        details["elapsed_s"] = int(time.monotonic() - task.started_monotonic) if task.started_monotonic > 0.0 else 0
+        try:
+          stat_result = DEFAULT_TMP_DB.stat()
+          details["db_size_bytes"] = stat_result.st_size
+          details["db_mtime"] = int(stat_result.st_mtime)
+        except OSError:
+          details.setdefault("db_size_bytes", 0)
+        task.details = details
+        task.updated_at = _now_text()
+        self.sequence += 1
 
 
 def _now_text() -> str:

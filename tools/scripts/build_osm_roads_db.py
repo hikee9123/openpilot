@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import sqlite3
 import sys
@@ -50,7 +51,9 @@ except ModuleNotFoundError:
 DEFAULT_PBF = DEFAULT_NAVD_SOURCE_DIR / "south-korea-latest.osm.pbf"
 DEFAULT_TMP_DB = DEFAULT_NAVD_TMP_DIR / "osm_roads_build" / "osm_roads_kr.sqlite3.build"
 ROAD_BATCH_SIZE = 50000
+ADJACENCY_NODE_BATCH_SIZE = 20000
 EARTH_RADIUS_M = 6371000.0
+PROGRESS_PREFIX = "__osm_progress__ "
 
 DRIVABLE_HIGHWAYS = {
   "motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link",
@@ -76,6 +79,52 @@ ROAD_PRIORITY = {
   "secondary_link": 55,
   "tertiary_link": 45,
 }
+
+
+class ProgressReporter:
+  def __init__(self, enabled: bool = False, db_path: Path | None = None, min_interval_s: float = 10.0) -> None:
+    self.enabled = enabled
+    self.db_path = db_path
+    self.min_interval_s = min_interval_s
+    self.started_at = time.monotonic()
+    self.last_emit_t = 0.0
+
+  def emit(
+    self,
+    step: str,
+    progress: int,
+    message: str,
+    *,
+    force: bool = False,
+    **details: object,
+  ) -> None:
+    now = time.monotonic()
+    if not force and now - self.last_emit_t < self.min_interval_s:
+      return
+    self.last_emit_t = now
+    payload: dict[str, object] = {
+      "step": step,
+      "progress": max(0, min(100, int(progress))),
+      "message": message,
+      "elapsed_s": int(now - self.started_at),
+    }
+    if self.db_path is not None:
+      try:
+        payload["db_size_bytes"] = self.db_path.stat().st_size
+        payload["db_mtime"] = int(self.db_path.stat().st_mtime)
+      except OSError:
+        payload["db_size_bytes"] = 0
+    payload.update(details)
+    if self.enabled:
+      print(PROGRESS_PREFIX + json.dumps(payload, sort_keys=True), flush=True)
+    print(message, flush=True)
+
+  def heartbeat(self, step: str, progress: int, message: str, **details: object):
+    def _callback() -> int:
+      self.emit(step, progress, message, **details)
+      return 0
+
+    return _callback
 
 
 @dataclass(frozen=True)
@@ -260,11 +309,19 @@ class OSMRelationCollector:
 
 
 class OSMRoadsBuilder:
-  def __init__(self, conn: sqlite3.Connection, source_pbf: Path, relation_collector: OSMRelationCollector, build_graph: bool) -> None:
+  def __init__(
+    self,
+    conn: sqlite3.Connection,
+    source_pbf: Path,
+    relation_collector: OSMRelationCollector,
+    build_graph: bool,
+    progress: ProgressReporter,
+  ) -> None:
     self.conn = conn
     self.source_pbf = source_pbf
     self.relation_collector = relation_collector
     self.build_graph = build_graph
+    self.progress = progress
     self.node_ids: dict[tuple[int, int], int] = {}
     self.next_node_id = 1
     self.next_road_id = 1
@@ -275,7 +332,6 @@ class OSMRoadsBuilder:
     self.directed_edges: list[tuple[int, int, int, int, int, float, int, str, str, str, str, str, int, int, int, int]] = []
     self.way_count = 0
     self.segment_count = 0
-    self.last_log_t = time.monotonic()
 
   def prepare_temp_tables(self) -> None:
     self.conn.execute("""
@@ -483,11 +539,15 @@ class OSMRoadsBuilder:
         self._log_progress()
 
   def _log_progress(self) -> None:
-    now = time.monotonic()
-    if now - self.last_log_t < 10.0:
-      return
-    print(f"parsed ways={self.way_count:,} segments={self.segment_count:,} nodes={len(self.node_ids):,}", flush=True)
-    self.last_log_t = now
+    message = f"parsed ways={self.way_count:,} segments={self.segment_count:,} nodes={len(self.node_ids):,}"
+    self.progress.emit(
+      "segments",
+      min(54, 15 + self.segment_count // 250000),
+      message,
+      ways=self.way_count,
+      segments=self.segment_count,
+      nodes=len(self.node_ids),
+    )
 
 
 def _insert_relation_metadata(conn: sqlite3.Connection, collector: OSMRelationCollector) -> None:
@@ -509,9 +569,17 @@ def _insert_relation_metadata(conn: sqlite3.Connection, collector: OSMRelationCo
   )
 
 
-def _build_graph(conn: sqlite3.Connection) -> None:
-  print("indexing directed graph edges", flush=True)
-  conn.executescript("""
+def _execute_script_with_progress(conn: sqlite3.Connection, progress: ProgressReporter, script: str, step: str, percent: int, message: str) -> None:
+  conn.set_progress_handler(progress.heartbeat(step, percent, message), 100000)
+  try:
+    conn.executescript(script)
+  finally:
+    conn.set_progress_handler(None, 0)
+
+
+def _build_graph(conn: sqlite3.Connection, progress: ProgressReporter) -> None:
+  progress.emit("graph_index", 60, "indexing directed graph edges", force=True)
+  _execute_script_with_progress(conn, progress, """
     CREATE INDEX idx_directed_edges_from ON directed_edges(from_node_id);
     CREATE INDEX idx_directed_edges_to ON directed_edges(to_node_id);
 
@@ -527,9 +595,33 @@ def _build_graph(conn: sqlite3.Connection) -> None:
 
     UPDATE road_nodes
     SET node_degree = COALESCE((SELECT degree FROM node_degrees WHERE node_degrees.node_id = road_nodes.id), 0);
-  """)
-  print("building road adjacency", flush=True)
-  conn.executescript("""
+  """, "graph_index", 61, "indexing directed graph edges")
+
+  progress.emit("adjacency_prepare", 62, "preparing road adjacency batches", force=True)
+  conn.set_progress_handler(progress.heartbeat("adjacency_prepare", 63, "preparing road adjacency batches"), 100000)
+  try:
+    conn.execute(f"""
+      CREATE TEMP TABLE adjacency_node_batches AS
+      SELECT
+        from_node_id,
+        CAST((ROW_NUMBER() OVER (ORDER BY from_node_id) - 1) / {ADJACENCY_NODE_BATCH_SIZE} AS INTEGER) AS batch_id
+      FROM (SELECT DISTINCT from_node_id FROM directed_edges)
+    """)
+    conn.execute("CREATE INDEX idx_adjacency_node_batches_batch ON adjacency_node_batches(batch_id, from_node_id)")
+  finally:
+    conn.set_progress_handler(None, 0)
+  total_from_nodes = int(conn.execute("SELECT COUNT(*) FROM adjacency_node_batches").fetchone()[0])
+  batch_count = int(conn.execute("SELECT COALESCE(MAX(batch_id) + 1, 0) FROM adjacency_node_batches").fetchone()[0])
+  progress.emit(
+    "adjacency",
+    64,
+    f"building road adjacency batches={batch_count:,} from_nodes={total_from_nodes:,}",
+    force=True,
+    batch=0,
+    batch_count=batch_count,
+    from_nodes=total_from_nodes,
+  )
+  adjacency_sql = """
     INSERT OR IGNORE INTO road_adjacency(
       from_road_id, to_road_id, turn_angle_deg, blocked_transition, transition_cost, transition_probability,
       preferred_transition_score, flow_probability, connectivity_confidence
@@ -590,12 +682,54 @@ def _build_graph(conn: sqlite3.Connection) -> None:
     FROM directed_edges AS from_edge
     JOIN directed_edges AS to_edge ON from_edge.to_node_id = to_edge.from_node_id
     WHERE from_edge.road_id != to_edge.road_id
-      AND from_edge.layer_int = to_edge.layer_int;
+      AND from_edge.layer_int = to_edge.layer_int
+      AND from_edge.from_node_id IN (
+        SELECT from_node_id FROM adjacency_node_batches WHERE batch_id = ?
+      )
+  """
+  inserted_total = 0
+  for batch in range(batch_count):
+    percent = 64 + int(((batch + 1) / max(1, batch_count)) * 14)
+    before_changes = conn.total_changes
+    conn.set_progress_handler(
+      progress.heartbeat(
+        "adjacency",
+        percent,
+        f"building road adjacency batch={batch + 1:,}/{batch_count:,}",
+        batch=batch + 1,
+        batch_count=batch_count,
+        inserted_rows=inserted_total,
+      ),
+      100000,
+    )
+    try:
+      conn.execute(adjacency_sql, (batch,))
+    finally:
+      conn.set_progress_handler(None, 0)
+    inserted_total += max(0, conn.total_changes - before_changes)
+    if batch == 0 or batch + 1 == batch_count or (batch + 1) % 10 == 0:
+      progress.emit(
+        "adjacency",
+        percent,
+        f"road adjacency batch {batch + 1:,}/{batch_count:,} inserted={inserted_total:,}",
+        force=True,
+        batch=batch + 1,
+        batch_count=batch_count,
+        inserted_rows=inserted_total,
+      )
+    if (batch + 1) % 25 == 0:
+      conn.commit()
+  conn.commit()
 
+  progress.emit("topology", 79, "building road topology", force=True)
+  _execute_script_with_progress(conn, progress, """
     INSERT INTO road_topology(from_road_id, to_road_id, topology_type, topology_inferred, inferred_reason)
     SELECT from_road_id, to_road_id, 'shared_node', 0, ''
     FROM road_adjacency;
+  """, "topology", 79, "building road topology")
 
+  progress.emit("successor_rank", 81, "ranking road successors", force=True)
+  _execute_script_with_progress(conn, progress, """
     CREATE TEMP TABLE ranked_successors AS
       SELECT
         from_road_id,
@@ -607,7 +741,10 @@ def _build_graph(conn: sqlite3.Connection) -> None:
       FROM road_adjacency
       WHERE blocked_transition = 0;
     CREATE INDEX idx_ranked_successors_from_rank ON ranked_successors(from_road_id, successor_rank);
+  """, "successor_rank", 82, "ranking road successors")
 
+  progress.emit("successor_update", 83, "updating preferred road successors", force=True)
+  _execute_script_with_progress(conn, progress, """
     UPDATE road_adjacency
     SET
       preferred_successor_id = COALESCE((
@@ -620,7 +757,10 @@ def _build_graph(conn: sqlite3.Connection) -> None:
         WHERE ranked_successors.from_road_id = road_adjacency.from_road_id
           AND successor_rank = 2
       ), 0);
+  """, "successor_update", 84, "updating preferred road successors")
 
+  progress.emit("continuity", 86, "building road continuity cache", force=True)
+  _execute_script_with_progress(conn, progress, """
     INSERT OR REPLACE INTO road_continuity_cache(
       road_id, preferred_successor_id, secondary_successor_id, motorway_continuity, ramp_continuity,
       destination_continuity, route_continuity, continuity_class
@@ -635,7 +775,7 @@ def _build_graph(conn: sqlite3.Connection) -> None:
       CASE WHEN roads.route_ref != '' OR roads.int_ref != '' OR roads.ref != '' THEN 1.0 ELSE 0.0 END,
       roads.continuity_class
     FROM roads;
-  """)
+  """, "continuity", 86, "building road continuity cache")
 
 
 def _finalize_metadata(conn: sqlite3.Connection, pbf_path: Path, skipped_graph: bool) -> None:
@@ -659,7 +799,16 @@ def _finalize_metadata(conn: sqlite3.Connection, pbf_path: Path, skipped_graph: 
   })
 
 
-def build_db(pbf_path: Path, tmp_db: Path, final_db: Path, build_graph: bool, require_road_graph: bool, quick_check: bool) -> None:
+def build_db(
+  pbf_path: Path,
+  tmp_db: Path,
+  final_db: Path,
+  build_graph: bool,
+  require_road_graph: bool,
+  quick_check: bool,
+  progress_json: bool,
+) -> None:
+  progress = ProgressReporter(enabled=progress_json, db_path=tmp_db)
   osmium = _load_osmium_module()
   if not pbf_path.exists():
     raise RuntimeError(f"PBF source missing: {pbf_path}")
@@ -667,7 +816,7 @@ def build_db(pbf_path: Path, tmp_db: Path, final_db: Path, build_graph: bool, re
   tmp_db.unlink(missing_ok=True)
   ensure_navd_dirs(db_dir=final_db.parent, source_dir=pbf_path.parent, tmp_dir=tmp_db.parent)
 
-  print(f"collecting OSM relations from {pbf_path}", flush=True)
+  progress.emit("relations", 3, f"collecting OSM relations from {pbf_path}", force=True)
   relation_collector = OSMRelationCollector(osmium)
   class OSMRelationHandler(osmium.SimpleHandler):
     def relation(self, relation: Any) -> None:
@@ -675,46 +824,73 @@ def build_db(pbf_path: Path, tmp_db: Path, final_db: Path, build_graph: bool, re
 
   relation_handler = OSMRelationHandler()
   relation_handler.apply_file(str(pbf_path), locations=False)
-  print(
+  progress.emit(
+    "relations",
+    10,
     f"relations route={len(relation_collector.route_relations):,} route_members={sum(len(v) for v in relation_collector.route_members_by_way.values()):,} "
     f"turn_restrictions={len(relation_collector.turn_restrictions):,}",
-    flush=True,
+    force=True,
+    route_relations=len(relation_collector.route_relations),
+    route_members=sum(len(v) for v in relation_collector.route_members_by_way.values()),
+    turn_restrictions=len(relation_collector.turn_restrictions),
   )
 
   with closing(sqlite3.connect(tmp_db)) as conn:
     configure_build_connection(conn)
     create_osm_roads_schema(conn)
     _insert_relation_metadata(conn, relation_collector)
-    builder = OSMRoadsBuilder(conn, pbf_path, relation_collector, build_graph)
+    builder = OSMRoadsBuilder(conn, pbf_path, relation_collector, build_graph, progress)
     builder.prepare_temp_tables()
     class OSMWayHandler(osmium.SimpleHandler):
       def way(self, way: Any) -> None:
         builder.way(way)
 
     way_handler = OSMWayHandler()
-    print("building road segments", flush=True)
+    progress.emit("segments", 15, "building road segments", force=True)
     way_handler.apply_file(str(pbf_path), locations=True)
     builder.flush()
-    print(f"built road segments: {builder.segment_count:,}", flush=True)
+    progress.emit("segments", 55, f"built road segments: {builder.segment_count:,}", force=True, segments=builder.segment_count)
     if builder.segment_count <= 0:
       raise RuntimeError("no road segments were built from the PBF")
     if build_graph:
-      _build_graph(conn)
-    print("creating indexes", flush=True)
-    create_osm_roads_indexes(conn)
+      _build_graph(conn, progress)
+    progress.emit("indexes", 88, "creating indexes", force=True)
+    conn.set_progress_handler(progress.heartbeat("indexes", 89, "creating indexes"), 100000)
+    try:
+      create_osm_roads_indexes(conn)
+    finally:
+      conn.set_progress_handler(None, 0)
+    progress.emit("metadata", 91, "writing metadata", force=True)
     _finalize_metadata(conn, pbf_path, skipped_graph=not build_graph)
-    conn.execute("ANALYZE")
+    progress.emit("analyze", 92, "analyzing sqlite query planner statistics", force=True)
+    conn.set_progress_handler(progress.heartbeat("analyze", 92, "analyzing sqlite query planner statistics"), 100000)
+    try:
+      conn.execute("ANALYZE")
+    finally:
+      conn.set_progress_handler(None, 0)
     conn.commit()
 
-  print(f"validating built DB {tmp_db}", flush=True)
+  progress.emit("validate", 94, f"validating built DB {tmp_db}", force=True)
   validation = validate_osm_roads_db(tmp_db, require_road_graph=require_road_graph, run_quick_check=quick_check)
-  print(
+  progress.emit(
+    "validate",
+    96,
     f"validated built DB segments={validation.segment_count:,} nodes={validation.graph_node_count:,} "
     f"edges={validation.graph_edge_count:,} adjacency={validation.graph_adjacency_count:,}",
-    flush=True,
+    force=True,
+    segments=validation.segment_count,
+    graph_nodes=validation.graph_node_count,
+    graph_edges=validation.graph_edge_count,
+    graph_adjacency=validation.graph_adjacency_count,
   )
   final_validation = replace_osm_roads_db(tmp_db, final_db, require_road_graph=require_road_graph)
-  print(f"installed built DB {final_db} ({final_validation.segment_count:,} segments)", flush=True)
+  progress.emit(
+    "replace",
+    100,
+    f"installed built DB {final_db} ({final_validation.segment_count:,} segments)",
+    force=True,
+    segments=final_validation.segment_count,
+  )
 
 
 def parse_args() -> argparse.Namespace:
@@ -725,6 +901,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--skip-road-graph", action="store_true", help="Build only roads/rtree and mark road graph as skipped")
   parser.add_argument("--require-road-graph", action="store_true", help="Fail validation if the successor road graph is missing")
   parser.add_argument("--quick-check", action="store_true", help="Run SQLite PRAGMA quick_check during validation")
+  parser.add_argument("--progress-json", action="store_true", help="Print machine-readable progress events prefixed with __osm_progress__")
   parser.add_argument("--validate-only", action="store_true", help="Validate --db and exit without building")
   return parser.parse_args()
 
@@ -743,7 +920,15 @@ def main() -> int:
   build_graph = not args.skip_road_graph
   if args.require_road_graph and not build_graph:
     raise RuntimeError("--require-road-graph cannot be used with --skip-road-graph")
-  build_db(args.pbf.expanduser(), args.tmp_db.expanduser(), args.db.expanduser(), build_graph, args.require_road_graph, args.quick_check)
+  build_db(
+    args.pbf.expanduser(),
+    args.tmp_db.expanduser(),
+    args.db.expanduser(),
+    build_graph,
+    args.require_road_graph,
+    args.quick_check,
+    args.progress_json,
+  )
   return 0
 
 
