@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -438,6 +439,216 @@ def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[s
   handler.wfile.write(body)
 
 
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+  return conn.execute(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+    (name,),
+  ).fetchone() is not None
+
+
+def _count_or_metadata(conn: sqlite3.Connection, metadata: dict[str, str], table: str, metadata_key: str) -> int:
+  value = metadata.get(metadata_key)
+  if value is not None:
+    try:
+      return int(value)
+    except ValueError:
+      pass
+  if not _table_exists(conn, table):
+    return 0
+  return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+
+
+def _rows(conn: sqlite3.Connection, query: str, params: tuple[object, ...] = ()) -> dict[str, object]:
+  cursor = conn.execute(query, params)
+  columns = [item[0] for item in cursor.description or []]
+  return {
+    "columns": columns,
+    "rows": [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()],
+  }
+
+
+def db_summary(db_path: Path) -> dict[str, object]:
+  db_path = db_path.expanduser()
+  if not db_path.exists():
+    return {"ok": False, "message": f"DB 파일이 없습니다: {db_path}", "db_path": str(db_path)}
+
+  stat_result = db_path.stat()
+  with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+    metadata = dict(conn.execute("SELECT key, value FROM metadata").fetchall()) if _table_exists(conn, "metadata") else {}
+    counts = {
+      "roads": _count_or_metadata(conn, metadata, "roads", "segment_count"),
+      "road_nodes": _count_or_metadata(conn, metadata, "road_nodes", "road_graph_node_count"),
+      "road_edges": _count_or_metadata(conn, metadata, "road_edges", "road_graph_edge_count"),
+      "road_adjacency": _count_or_metadata(conn, metadata, "road_adjacency", "road_graph_adjacency_count"),
+      "speed_cameras": _count_or_metadata(conn, metadata, "speed_cameras", "speed_camera_count"),
+      "speed_camera_road_matches": _count_or_metadata(conn, metadata, "speed_camera_road_matches", "speed_camera_match_count"),
+      "route_camera_lookup": _count_or_metadata(conn, metadata, "route_camera_lookup", "route_camera_lookup_count"),
+    }
+    samples = {
+      "roads": _rows(conn, """
+        SELECT id, name, ref, highway, road_priority, segment_length, lat1, lon1, lat2, lon2
+        FROM roads
+        ORDER BY road_priority DESC, id
+        LIMIT 30
+      """) if _table_exists(conn, "roads") else {"columns": [], "rows": []},
+      "cameras": _rows(conn, """
+        SELECT id, camera_type, speed_limit_kph, lat, lon, road_name, address, source_updated_at
+        FROM speed_cameras
+        ORDER BY id
+        LIMIT 30
+      """) if _table_exists(conn, "speed_cameras") else {"columns": [], "rows": []},
+      "matches": _rows(conn, """
+        SELECT
+          lookup.road_id,
+          roads.name AS road_name,
+          roads.ref AS road_ref,
+          roads.highway,
+          lookup.camera_id,
+          cameras.camera_type,
+          lookup.speed_limit_kph,
+          ROUND(lookup.match_distance_m, 1) AS match_distance_m,
+          ROUND(lookup.match_confidence, 3) AS match_confidence,
+          cameras.address
+        FROM route_camera_lookup AS lookup
+        JOIN roads ON roads.id = lookup.road_id
+        JOIN speed_cameras AS cameras ON cameras.id = lookup.camera_id
+        ORDER BY lookup.match_confidence DESC, lookup.match_distance_m ASC
+        LIMIT 30
+      """) if all(_table_exists(conn, table) for table in ("route_camera_lookup", "roads", "speed_cameras")) else {"columns": [], "rows": []},
+    }
+
+  important_metadata_keys = (
+    "build_profile", "built_at", "source_pbf", "included_highways", "excluded_highways",
+    "speed_camera_source", "speed_camera_csv", "speed_camera_matched_count", "speed_camera_match_radius_m",
+  )
+  return {
+    "ok": True,
+    "db_path": str(db_path),
+    "size_bytes": stat_result.st_size,
+    "modified_at": int(stat_result.st_mtime),
+    "metadata": {key: metadata[key] for key in important_metadata_keys if key in metadata},
+    "counts": counts,
+    "samples": samples,
+  }
+
+
+def _parse_float(value: str, default: float) -> float:
+  try:
+    return float(value)
+  except (TypeError, ValueError):
+    return default
+
+
+def _parse_int(value: str, default: int, low: int, high: int) -> int:
+  try:
+    parsed = int(value)
+  except (TypeError, ValueError):
+    parsed = default
+  return max(low, min(high, parsed))
+
+
+def db_map(db_path: Path, query: dict[str, list[str]]) -> dict[str, object]:
+  db_path = db_path.expanduser()
+  if not db_path.exists():
+    return {"ok": False, "message": f"DB 파일이 없습니다: {db_path}", "db_path": str(db_path)}
+
+  bbox_text = query.get("bbox", [""])[0]
+  try:
+    min_lon, min_lat, max_lon, max_lat = (float(part) for part in bbox_text.split(",", maxsplit=3))
+  except ValueError:
+    return {"ok": False, "message": "bbox=minLon,minLat,maxLon,maxLat 형식이 필요합니다", "db_path": str(db_path)}
+
+  min_lat, max_lat = sorted((max(-90.0, min(90.0, min_lat)), max(-90.0, min(90.0, max_lat))))
+  min_lon, max_lon = sorted((max(-180.0, min(180.0, min_lon)), max(-180.0, min(180.0, max_lon))))
+  camera_limit = _parse_int(query.get("camera_limit", ["800"])[0], 800, 1, 3000)
+  road_limit = _parse_int(query.get("road_limit", ["1200"])[0], 1200, 1, 5000)
+
+  with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+    if not all(_table_exists(conn, table) for table in ("speed_cameras", "route_camera_lookup", "roads")):
+      return {"ok": False, "message": "지도에 필요한 speed_cameras/route_camera_lookup/roads 테이블이 없습니다", "db_path": str(db_path)}
+
+    camera_rows = _rows(conn, """
+      SELECT
+        cameras.id,
+        cameras.lat,
+        cameras.lon,
+        cameras.camera_type,
+        cameras.speed_limit_kph,
+        cameras.road_name,
+        cameras.address,
+        best.road_id,
+        best.road_name AS matched_road_name,
+        best.road_ref AS matched_road_ref,
+        best.highway,
+        ROUND(best.match_distance_m, 1) AS match_distance_m,
+        ROUND(best.match_confidence, 3) AS match_confidence
+      FROM speed_cameras AS cameras
+      LEFT JOIN (
+        SELECT
+          lookup.camera_id,
+          lookup.road_id,
+          roads.name AS road_name,
+          roads.ref AS road_ref,
+          roads.highway,
+          lookup.match_distance_m,
+          lookup.match_confidence
+        FROM route_camera_lookup AS lookup
+        JOIN roads ON roads.id = lookup.road_id
+        WHERE lookup.primary_match = 1
+      ) AS best ON best.camera_id = cameras.id
+      WHERE cameras.lat BETWEEN ? AND ?
+        AND cameras.lon BETWEEN ? AND ?
+      ORDER BY cameras.id
+      LIMIT ?
+    """, (min_lat, max_lat, min_lon, max_lon, camera_limit))
+
+    road_cursor = conn.execute("""
+      SELECT
+        lookup.road_id,
+        lookup.camera_id,
+        roads.name,
+        roads.ref,
+        roads.highway,
+        roads.lat1,
+        roads.lon1,
+        roads.lat2,
+        roads.lon2,
+        ROUND(lookup.match_distance_m, 1) AS match_distance_m,
+        ROUND(lookup.match_confidence, 3) AS match_confidence
+      FROM route_camera_lookup AS lookup
+      JOIN speed_cameras AS cameras ON cameras.id = lookup.camera_id
+      JOIN roads ON roads.id = lookup.road_id
+      WHERE lookup.primary_match = 1
+        AND cameras.lat BETWEEN ? AND ?
+        AND cameras.lon BETWEEN ? AND ?
+        AND roads.min_lat <= ?
+        AND roads.max_lat >= ?
+        AND roads.min_lon <= ?
+        AND roads.max_lon >= ?
+      ORDER BY lookup.match_confidence DESC, lookup.match_distance_m ASC
+      LIMIT ?
+    """, (min_lat, max_lat, min_lon, max_lon, max_lat, min_lat, max_lon, min_lon, road_limit))
+    road_columns = [item[0] for item in road_cursor.description or []]
+    road_rows = [dict(zip(road_columns, row, strict=False)) for row in road_cursor.fetchall()]
+
+  return {
+    "ok": True,
+    "db_path": str(db_path),
+    "bbox": {
+      "min_lat": min_lat,
+      "max_lat": max_lat,
+      "min_lon": min_lon,
+      "max_lon": max_lon,
+    },
+    "limits": {
+      "camera_limit": camera_limit,
+      "road_limit": road_limit,
+    },
+    "cameras": camera_rows["rows"],
+    "roads": road_rows,
+  }
+
+
 class OSMRoadsWebHandler(BaseHTTPRequestHandler):
   runner: OSMRoadsTaskRunner
 
@@ -450,6 +661,12 @@ class OSMRoadsWebHandler(BaseHTTPRequestHandler):
       self._serve_index()
     elif parsed.path == "/api/state":
       _json_response(self, HTTPStatus.OK, self.runner.snapshot())
+    elif parsed.path == "/api/db/summary":
+      payload = db_summary(Path(self.runner.args.db))
+      _json_response(self, HTTPStatus.OK if payload.get("ok") else HTTPStatus.NOT_FOUND, payload)
+    elif parsed.path == "/api/db/map":
+      payload = db_map(Path(self.runner.args.db), parse_qs(parsed.query))
+      _json_response(self, HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_REQUEST, payload)
     elif parsed.path == "/api/events":
       self._serve_events()
     else:

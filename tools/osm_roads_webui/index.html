@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OSM Roads DB</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <style>
     :root {
       color-scheme: dark;
@@ -230,6 +231,174 @@
       overflow: hidden;
     }
 
+    .db-panel {
+      margin-top: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .map-panel {
+      margin-top: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .map-panel.hidden {
+      display: none;
+    }
+
+    .map-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      background: #12161d;
+    }
+
+    .map-status {
+      color: var(--muted);
+      overflow-wrap: anywhere;
+      font-size: 12px;
+    }
+
+    .map-meta {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+    }
+
+    .map-meta strong {
+      color: var(--text);
+    }
+
+    .map-canvas {
+      width: 100%;
+      height: min(640px, 72vh);
+      min-height: 420px;
+      background: #0c0f13;
+    }
+
+    .leaflet-container {
+      background: #0c0f13;
+      color: #18202a;
+      font: 13px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .db-panel.hidden {
+      display: none;
+    }
+
+    .db-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      background: #12161d;
+    }
+
+    .db-path {
+      color: var(--muted);
+      overflow-wrap: anywhere;
+      font-size: 12px;
+    }
+
+    .db-stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .db-stat {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      padding: 10px;
+      min-width: 0;
+    }
+
+    .db-stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .db-stat strong {
+      display: block;
+      margin-top: 4px;
+      font-size: 18px;
+      overflow-wrap: anywhere;
+    }
+
+    .db-meta {
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      gap: 5px 10px;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+    }
+
+    .db-meta span:nth-child(even) {
+      color: var(--text);
+      overflow-wrap: anywhere;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .tabs button.active {
+      border-color: var(--accent);
+      background: #193f3a;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      max-height: 440px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    th,
+    td {
+      padding: 8px 10px;
+      border-bottom: 1px solid #242b36;
+      text-align: left;
+      vertical-align: top;
+      white-space: nowrap;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #12161d;
+      color: var(--muted);
+      z-index: 1;
+    }
+
     .log-head {
       display: flex;
       justify-content: space-between;
@@ -279,6 +448,19 @@
         flex: 1 1 160px;
       }
 
+      .db-stats {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .db-meta {
+        grid-template-columns: 90px 1fr;
+      }
+
+      .map-canvas {
+        min-height: 360px;
+        height: 58vh;
+      }
+
       .grid {
         grid-template-columns: 1fr;
       }
@@ -298,6 +480,8 @@
         <button class="primary" data-task="build">DB 생성</button>
         <button data-task="import_cameras">카메라 매칭</button>
         <button data-task="validate">DB 검증</button>
+        <button id="db-view">DB 보기</button>
+        <button id="map-view">지도 보기</button>
         <button data-task="upload_dry_run">업로드 확인</button>
         <button class="primary" data-task="upload_push">GitHub 업로드</button>
         <button class="danger" id="stop" disabled>중지</button>
@@ -316,6 +500,34 @@
 
     <section class="grid" id="tasks"></section>
 
+    <section class="db-panel hidden" id="db-panel">
+      <div class="db-head">
+        <strong>DB 보기</strong>
+        <span class="db-path" id="db-path">-</span>
+      </div>
+      <div class="db-stats" id="db-stats"></div>
+      <div class="db-meta" id="db-meta"></div>
+      <div class="tabs">
+        <button data-db-tab="matches" class="active">카메라 매칭</button>
+        <button data-db-tab="cameras">단속카메라</button>
+        <button data-db-tab="roads">도로</button>
+      </div>
+      <div class="table-wrap" id="db-table"></div>
+    </section>
+
+    <section class="map-panel hidden" id="map-panel">
+      <div class="map-head">
+        <strong>지도 보기</strong>
+        <span class="map-status" id="map-status">대기</span>
+      </div>
+      <div class="map-meta" id="map-meta">
+        <span>카메라 <strong>-</strong></span>
+        <span>도로 <strong>-</strong></span>
+        <span>확대/이동하면 현재 화면만 다시 조회합니다</span>
+      </div>
+      <div class="map-canvas" id="camera-map"></div>
+    </section>
+
     <section class="log-shell">
       <div class="log-head">
         <strong id="log-title">로그</strong>
@@ -325,6 +537,7 @@
     </section>
   </main>
 
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
     const taskOrder = ["download", "generate_cameras", "build", "import_cameras", "validate", "upload_dry_run", "upload_push"];
     const statusText = {
@@ -344,10 +557,28 @@
     const stopButton = document.getElementById("stop");
     const buildProfile = document.getElementById("build-profile");
     const speedCameras = document.getElementById("speed-cameras");
+    const dbButton = document.getElementById("db-view");
+    const dbPanel = document.getElementById("db-panel");
+    const dbPath = document.getElementById("db-path");
+    const dbStats = document.getElementById("db-stats");
+    const dbMeta = document.getElementById("db-meta");
+    const dbTable = document.getElementById("db-table");
+    const mapButton = document.getElementById("map-view");
+    const mapPanel = document.getElementById("map-panel");
+    const mapStatus = document.getElementById("map-status");
+    const mapMeta = document.getElementById("map-meta");
+    const mapEl = document.getElementById("camera-map");
     const apiBase = location.protocol === "file:" ? "http://127.0.0.1:8765" : "";
     let state = null;
     let selectedTask = "download";
     let speedCameraTouched = false;
+    let dbData = null;
+    let selectedDbTab = "matches";
+    let cameraMap = null;
+    let cameraLayer = null;
+    let roadLayer = null;
+    let mapLoadTimer = null;
+    let mapRequestId = 0;
 
     if (location.protocol === "file:") {
       notice.classList.add("show");
@@ -425,8 +656,16 @@
     });
 
     stopButton.addEventListener("click", () => post("/api/stop"));
+    dbButton.addEventListener("click", () => loadDbView());
+    mapButton.addEventListener("click", () => showMapView());
     speedCameras.addEventListener("input", () => {
       speedCameraTouched = true;
+    });
+    document.querySelectorAll("[data-db-tab]").forEach((button) => {
+      button.addEventListener("click", () => {
+        selectedDbTab = button.dataset.dbTab;
+        renderDbTable();
+      });
     });
 
     function render(nextState) {
@@ -443,6 +682,8 @@
       document.querySelectorAll("[data-task]").forEach((button) => {
         button.disabled = busy;
       });
+      dbButton.disabled = busy;
+      mapButton.disabled = busy;
 
       for (const key of taskOrder) {
         const task = state.tasks[key];
@@ -468,6 +709,196 @@
       renderLog();
     }
 
+    async function showMapView() {
+      mapPanel.classList.remove("hidden");
+      if (!window.L) {
+        mapStatus.textContent = "지도 라이브러리 로드 실패";
+        return;
+      }
+      if (!cameraMap) {
+        cameraMap = L.map(mapEl, { preferCanvas: true }).setView([36.35, 127.85], 7);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxZoom: 19,
+          attribution: "&copy; OpenStreetMap contributors"
+        }).addTo(cameraMap);
+        roadLayer = L.layerGroup().addTo(cameraMap);
+        cameraLayer = L.layerGroup().addTo(cameraMap);
+        cameraMap.on("moveend zoomend", scheduleMapLoad);
+      }
+      setTimeout(() => {
+        cameraMap.invalidateSize();
+        loadMapData();
+      }, 80);
+    }
+
+    function scheduleMapLoad() {
+      clearTimeout(mapLoadTimer);
+      mapLoadTimer = setTimeout(loadMapData, 350);
+    }
+
+    async function loadMapData() {
+      if (!cameraMap) return;
+      const requestId = ++mapRequestId;
+      const bounds = cameraMap.getBounds();
+      const bbox = [
+        bounds.getWest(),
+        bounds.getSouth(),
+        bounds.getEast(),
+        bounds.getNorth()
+      ].map((value) => value.toFixed(6)).join(",");
+      mapStatus.textContent = "지도 데이터 조회 중";
+      try {
+        const res = await fetch(`${apiBase}/api/db/map?bbox=${encodeURIComponent(bbox)}&camera_limit=800&road_limit=1200`);
+        const data = await res.json();
+        if (requestId !== mapRequestId) return;
+        if (!res.ok || !data.ok) {
+          mapStatus.textContent = data.message || "지도 조회 실패";
+          return;
+        }
+        renderMapData(data);
+      } catch (e) {
+        if (requestId === mapRequestId) {
+          mapStatus.textContent = `지도 조회 실패: ${e.message}`;
+        }
+      }
+    }
+
+    function renderMapData(data) {
+      roadLayer.clearLayers();
+      cameraLayer.clearLayers();
+      for (const road of data.roads || []) {
+        const line = L.polyline(
+          [[Number(road.lat1), Number(road.lon1)], [Number(road.lat2), Number(road.lon2)]],
+          {
+            color: roadColor(road.highway),
+            weight: roadWeight(road.highway),
+            opacity: 0.72
+          }
+        );
+        line.bindPopup(`
+          <strong>${escapeHtml(road.name || road.ref || "road")}</strong><br>
+          road_id ${escapeHtml(road.road_id)} / camera ${escapeHtml(road.camera_id)}<br>
+          ${escapeHtml(road.highway || "-")} / confidence ${escapeHtml(formatCell(road.match_confidence))}
+        `);
+        line.addTo(roadLayer);
+      }
+      for (const camera of data.cameras || []) {
+        const marker = L.circleMarker([Number(camera.lat), Number(camera.lon)], {
+          radius: 5,
+          color: cameraColor(camera.speed_limit_kph),
+          fillColor: cameraColor(camera.speed_limit_kph),
+          fillOpacity: 0.88,
+          weight: 1.5
+        });
+        marker.bindPopup(`
+          <strong>camera ${escapeHtml(camera.id)}</strong><br>
+          제한속도 ${escapeHtml(formatSpeed(camera.speed_limit_kph))}<br>
+          ${escapeHtml(camera.address || camera.road_name || "-")}<br>
+          road ${escapeHtml(camera.road_id || "-")} ${escapeHtml(camera.matched_road_name || camera.matched_road_ref || "")}<br>
+          거리 ${escapeHtml(formatCell(camera.match_distance_m))}m / confidence ${escapeHtml(formatCell(camera.match_confidence))}
+        `);
+        marker.addTo(cameraLayer);
+      }
+      const cameras = (data.cameras || []).length;
+      const roads = (data.roads || []).length;
+      const cameraLimit = Number((data.limits || {}).camera_limit);
+      const roadLimit = Number((data.limits || {}).road_limit);
+      const limited = (Number.isFinite(cameraLimit) && cameras >= cameraLimit) || (Number.isFinite(roadLimit) && roads >= roadLimit);
+      mapStatus.textContent = limited ? "조회 제한 도달, 확대하면 더 자세히 표시됩니다" : "지도 데이터 표시 완료";
+      mapMeta.innerHTML = `
+        <span>카메라 <strong>${formatNumber(cameras)}</strong></span>
+        <span>도로 <strong>${formatNumber(roads)}</strong></span>
+        <span>줌 <strong>${cameraMap.getZoom()}</strong></span>
+        <span>${limited ? "현재 화면 결과 일부만 표시" : "현재 화면 전체 표시"}</span>
+      `;
+    }
+
+    function roadColor(highway) {
+      if (highway === "motorway" || highway === "trunk") return "#f06c75";
+      if (highway === "primary") return "#e9b44c";
+      if (highway === "secondary" || highway === "tertiary") return "#41c7a7";
+      return "#9da8b8";
+    }
+
+    function roadWeight(highway) {
+      if (highway === "motorway" || highway === "trunk") return 4;
+      if (highway === "primary") return 3;
+      return 2;
+    }
+
+    function cameraColor(speed) {
+      const value = Number(speed);
+      if (Number.isFinite(value) && value >= 80) return "#f06c75";
+      if (Number.isFinite(value) && value <= 30) return "#e9b44c";
+      return "#65d17d";
+    }
+
+    function formatSpeed(speed) {
+      const value = Number(speed);
+      return Number.isFinite(value) && value > 0 ? `${value} km/h` : "-";
+    }
+
+    async function loadDbView() {
+      dbPanel.classList.remove("hidden");
+      dbPath.textContent = "조회 중";
+      try {
+        const res = await fetch(`${apiBase}/api/db/summary`);
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          dbPath.textContent = data.message || "DB 조회 실패";
+          dbStats.innerHTML = "";
+          dbMeta.innerHTML = "";
+          dbTable.innerHTML = "";
+          return;
+        }
+        dbData = data;
+        renderDbView();
+      } catch (e) {
+        dbPath.textContent = `DB 조회 실패: ${e.message}`;
+      }
+    }
+
+    function renderDbView() {
+      if (!dbData) return;
+      const counts = dbData.counts || {};
+      const metadata = dbData.metadata || {};
+      dbPath.textContent = `${dbData.db_path} | ${formatBytes(dbData.size_bytes)} | ${formatTimestamp(dbData.modified_at)}`;
+      const statItems = [
+        ["도로", counts.roads],
+        ["연결", counts.road_adjacency],
+        ["카메라", counts.speed_cameras],
+        ["매칭", counts.route_camera_lookup]
+      ];
+      dbStats.innerHTML = statItems.map(([label, value]) => `
+        <div class="db-stat"><span>${label}</span><strong>${formatNumber(value)}</strong></div>
+      `).join("");
+      const metaItems = [
+        ["모드", formatProfile(metadata.build_profile) || metadata.build_profile || "-"],
+        ["카메라 CSV", metadata.speed_camera_csv || "-"],
+        ["PBF", metadata.source_pbf || "-"],
+        ["포함 도로", metadata.included_highways || "-"]
+      ];
+      dbMeta.innerHTML = metaItems.map(([label, value]) => `<span>${label}</span><span>${escapeHtml(String(value))}</span>`).join("");
+      renderDbTable();
+    }
+
+    function renderDbTable() {
+      if (!dbData) return;
+      document.querySelectorAll("[data-db-tab]").forEach((button) => {
+        button.classList.toggle("active", button.dataset.dbTab === selectedDbTab);
+      });
+      const sample = (dbData.samples || {})[selectedDbTab] || { columns: [], rows: [] };
+      if (!sample.columns.length) {
+        dbTable.innerHTML = "";
+        return;
+      }
+      const head = sample.columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("");
+      const rows = sample.rows.map((row) => `
+        <tr>${sample.columns.map((column) => `<td>${escapeHtml(formatCell(row[column]))}</td>`).join("")}</tr>
+      `).join("");
+      dbTable.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
     function formatElapsed(seconds) {
       if (!Number.isFinite(Number(seconds))) return "-";
       const value = Math.max(0, Number(seconds));
@@ -490,6 +921,32 @@
         unit += 1;
       }
       return unit === 0 ? `${Math.round(size)} ${units[unit]}` : `${size.toFixed(1)} ${units[unit]}`;
+    }
+
+    function formatNumber(value) {
+      const number = Number(value);
+      return Number.isFinite(number) ? number.toLocaleString() : "-";
+    }
+
+    function formatTimestamp(seconds) {
+      const value = Number(seconds);
+      if (!Number.isFinite(value) || value <= 0) return "-";
+      return new Date(value * 1000).toLocaleString();
+    }
+
+    function formatCell(value) {
+      if (value === null || value === undefined || value === "") return "-";
+      if (typeof value === "number" && Number.isFinite(value)) return value.toLocaleString();
+      return String(value);
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
     }
 
     function formatBatch(details) {
