@@ -421,22 +421,23 @@ def create_speed_camera_schema(conn: sqlite3.Connection) -> None:
 
 def create_osm_roads_indexes(conn: sqlite3.Connection) -> None:
   conn.executescript("""
-    CREATE INDEX idx_roads_osm_id ON roads(osm_id);
-    CREATE INDEX idx_roads_highway ON roads(highway);
-    CREATE INDEX idx_roads_name ON roads(name);
-    CREATE INDEX idx_roads_ref ON roads(ref);
-    CREATE INDEX idx_roads_layer_int ON roads(layer_int);
-    CREATE INDEX idx_roads_parallel_group ON roads(parallel_group_id);
-    CREATE INDEX idx_roads_route_group ON roads(route_group_id);
-    CREATE INDEX idx_road_edges_start_node ON road_edges(start_node_id);
-    CREATE INDEX idx_road_edges_end_node ON road_edges(end_node_id);
-    CREATE INDEX idx_road_adjacency_to ON road_adjacency(to_road_id);
-    CREATE INDEX idx_road_topology_from ON road_topology(from_road_id);
+    CREATE INDEX IF NOT EXISTS idx_roads_osm_id ON roads(osm_id);
+    CREATE INDEX IF NOT EXISTS idx_roads_highway ON roads(highway);
+    CREATE INDEX IF NOT EXISTS idx_roads_name ON roads(name);
+    CREATE INDEX IF NOT EXISTS idx_roads_ref ON roads(ref);
+    CREATE INDEX IF NOT EXISTS idx_roads_layer_int ON roads(layer_int);
+    CREATE INDEX IF NOT EXISTS idx_roads_parallel_group ON roads(parallel_group_id);
+    CREATE INDEX IF NOT EXISTS idx_roads_route_group ON roads(route_group_id);
+    CREATE INDEX IF NOT EXISTS idx_road_edges_start_node ON road_edges(start_node_id);
+    CREATE INDEX IF NOT EXISTS idx_road_edges_end_node ON road_edges(end_node_id);
+    CREATE INDEX IF NOT EXISTS idx_road_adjacency_to ON road_adjacency(to_road_id);
+    CREATE INDEX IF NOT EXISTS idx_road_topology_from ON road_topology(from_road_id);
+    CREATE INDEX IF NOT EXISTS idx_road_topology_from_to ON road_topology(from_road_id, to_road_id);
     CREATE INDEX IF NOT EXISTS idx_turn_restrictions_from_to ON turn_restrictions(from_osm_id, to_osm_id);
-    CREATE INDEX idx_lane_connectivity_from_to ON lane_connectivity(from_osm_id, to_osm_id);
-    CREATE INDEX idx_lane_graph_from ON lane_graph(from_road_id);
-    CREATE INDEX idx_route_members_osm_id ON road_route_members(osm_id);
-    CREATE INDEX idx_motorway_junctions_osm_id ON motorway_junctions(osm_id);
+    CREATE INDEX IF NOT EXISTS idx_lane_connectivity_from_to ON lane_connectivity(from_osm_id, to_osm_id);
+    CREATE INDEX IF NOT EXISTS idx_lane_graph_from ON lane_graph(from_road_id);
+    CREATE INDEX IF NOT EXISTS idx_route_members_osm_id ON road_route_members(osm_id);
+    CREATE INDEX IF NOT EXISTS idx_motorway_junctions_osm_id ON motorway_junctions(osm_id);
   """)
   create_speed_camera_indexes(conn)
 

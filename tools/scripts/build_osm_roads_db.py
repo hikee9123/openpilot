@@ -56,6 +56,7 @@ DEFAULT_PBF = DEFAULT_NAVD_SOURCE_DIR / "south-korea-latest.osm.pbf"
 DEFAULT_TMP_DB = DEFAULT_NAVD_TMP_DIR / "osm_roads_build" / "osm_roads_kr.sqlite3.build"
 ROAD_BATCH_SIZE = 50000
 ADJACENCY_NODE_BATCH_SIZE = 20000
+CROSS_LAYER_SHARED_NODE_BATCH_SIZE = 10000
 EARTH_RADIUS_M = 6371000.0
 PROGRESS_PREFIX = "__osm_progress__ "
 CROSS_LAYER_SHARED_NODE_MAX_LAYER_DELTA = 1
@@ -640,38 +641,43 @@ def _build_cross_layer_shared_node_adjacency(conn: sqlite3.Connection, progress:
   conn.set_progress_handler(progress.heartbeat("layer_adjacency", 80, "finding cross-layer shared-node candidates"), 100000)
   try:
     conn.execute("DROP TABLE IF EXISTS cross_layer_adjacency_candidates")
+    conn.execute("DROP TABLE IF EXISTS cross_layer_osm_node_batches")
     conn.execute("DROP TABLE IF EXISTS cross_layer_osm_nodes")
-    conn.execute("""
-      CREATE TEMP TABLE cross_layer_osm_nodes AS
-      SELECT osm_node_id
-      FROM (
-        SELECT
-          CAST(substr(node_key, 1, instr(node_key, ':') - 1) AS INTEGER) AS osm_node_id,
-          layer_int
-        FROM road_nodes
-      )
-      GROUP BY osm_node_id
-      HAVING COUNT(DISTINCT layer_int) > 1
+    conn.execute(f"""
+      CREATE TEMP TABLE cross_layer_osm_node_batches AS
+      SELECT
+        to_osm_node_id AS osm_node_id,
+        CAST((ROW_NUMBER() OVER (ORDER BY to_osm_node_id) - 1) / {CROSS_LAYER_SHARED_NODE_BATCH_SIZE} AS INTEGER) AS batch_id
+      FROM (SELECT DISTINCT to_osm_node_id FROM directed_edges)
     """)
-    conn.execute("CREATE INDEX idx_cross_layer_osm_nodes_osm_node ON cross_layer_osm_nodes(osm_node_id)")
+    conn.execute("CREATE INDEX idx_cross_layer_osm_node_batches_batch ON cross_layer_osm_node_batches(batch_id, osm_node_id)")
     conn.execute("DROP TABLE IF EXISTS cross_layer_exit_edges")
     conn.execute("DROP TABLE IF EXISTS cross_layer_entry_edges")
     conn.execute("""
-      CREATE TEMP TABLE cross_layer_exit_edges AS
-      SELECT directed_edges.*
-      FROM directed_edges
-      JOIN cross_layer_osm_nodes ON cross_layer_osm_nodes.osm_node_id = directed_edges.to_osm_node_id
+      CREATE TEMP TABLE cross_layer_adjacency_candidates (
+        from_road_id INTEGER NOT NULL,
+        to_road_id INTEGER NOT NULL,
+        from_osm_id INTEGER NOT NULL,
+        to_osm_id INTEGER NOT NULL,
+        via_osm_node_id INTEGER NOT NULL,
+        from_priority INTEGER NOT NULL,
+        to_priority INTEGER NOT NULL,
+        from_is_ramp INTEGER NOT NULL,
+        to_is_ramp INTEGER NOT NULL,
+        layer_delta INTEGER NOT NULL,
+        turn_angle_deg REAL NOT NULL,
+        same_identity INTEGER NOT NULL,
+        route_continuity INTEGER NOT NULL,
+        link_continuity INTEGER NOT NULL
+      )
     """)
-    conn.execute("CREATE INDEX idx_cross_layer_exit_edges_osm_node ON cross_layer_exit_edges(to_osm_node_id)")
-    conn.execute("""
-      CREATE TEMP TABLE cross_layer_entry_edges AS
-      SELECT directed_edges.*
-      FROM directed_edges
-      JOIN cross_layer_osm_nodes ON cross_layer_osm_nodes.osm_node_id = directed_edges.from_osm_node_id
-    """)
-    conn.execute("CREATE INDEX idx_cross_layer_entry_edges_osm_node ON cross_layer_entry_edges(from_osm_node_id)")
-    conn.execute(f"""
-      CREATE TEMP TABLE cross_layer_adjacency_candidates AS
+    batch_count = int(conn.execute("SELECT COALESCE(MAX(batch_id) + 1, 0) FROM cross_layer_osm_node_batches").fetchone()[0])
+    candidate_sql = f"""
+      INSERT INTO cross_layer_adjacency_candidates(
+        from_road_id, to_road_id, from_osm_id, to_osm_id, via_osm_node_id,
+        from_priority, to_priority, from_is_ramp, to_is_ramp, layer_delta,
+        turn_angle_deg, same_identity, route_continuity, link_continuity
+      )
       WITH candidates AS (
         SELECT
           from_edge.road_id AS from_road_id,
@@ -688,13 +694,21 @@ def _build_cross_layer_shared_node_adjacency(conn: sqlite3.Connection, progress:
           CASE WHEN {same_identity_sql} THEN 1 ELSE 0 END AS same_identity,
           CASE WHEN {route_continuity_sql} THEN 1 ELSE 0 END AS route_continuity,
           CASE WHEN {link_continuity_sql} THEN 1 ELSE 0 END AS link_continuity
-        FROM cross_layer_exit_edges AS from_edge
-        JOIN cross_layer_entry_edges AS to_edge ON to_edge.from_osm_node_id = from_edge.to_osm_node_id
-        WHERE from_edge.road_id != to_edge.road_id
-          AND from_edge.layer_int != to_edge.layer_int
-          AND ABS(from_edge.layer_int - to_edge.layer_int) <= {CROSS_LAYER_SHARED_NODE_MAX_LAYER_DELTA}
+        FROM cross_layer_osm_node_batches AS node_batch
+        JOIN directed_edges AS from_edge INDEXED BY idx_directed_edges_to_osm_layer
+          ON from_edge.to_osm_node_id = node_batch.osm_node_id
+        JOIN directed_edges AS to_edge INDEXED BY idx_directed_edges_from_osm_layer
+          ON to_edge.from_osm_node_id = node_batch.osm_node_id
+         AND to_edge.layer_int != from_edge.layer_int
+         AND to_edge.layer_int BETWEEN from_edge.layer_int - {CROSS_LAYER_SHARED_NODE_MAX_LAYER_DELTA}
+                                   AND from_edge.layer_int + {CROSS_LAYER_SHARED_NODE_MAX_LAYER_DELTA}
+        WHERE node_batch.batch_id = ?
+          AND from_edge.road_id != to_edge.road_id
       )
-      SELECT *
+      SELECT
+        from_road_id, to_road_id, from_osm_id, to_osm_id, via_osm_node_id,
+        from_priority, to_priority, from_is_ramp, to_is_ramp, layer_delta,
+        turn_angle_deg, same_identity, route_continuity, link_continuity
       FROM candidates
       WHERE turn_angle_deg <= {CROSS_LAYER_SHARED_NODE_MAX_TURN_DEG}
         AND (
@@ -703,7 +717,19 @@ def _build_cross_layer_shared_node_adjacency(conn: sqlite3.Connection, progress:
           OR (from_priority >= 60 AND to_priority >= 60 AND turn_angle_deg <= {CROSS_LAYER_SHARED_NODE_MAJOR_TURN_DEG})
           OR (link_continuity = 1 AND turn_angle_deg <= {CROSS_LAYER_SHARED_NODE_LINK_TURN_DEG})
         )
-    """)
+    """
+    for batch in range(batch_count):
+      conn.set_progress_handler(
+        progress.heartbeat(
+          "layer_adjacency",
+          80,
+          f"finding cross-layer shared-node candidates batch={batch + 1:,}/{batch_count:,}",
+          batch=batch + 1,
+          batch_count=batch_count,
+        ),
+        100000,
+      )
+      conn.execute(candidate_sql, (batch,))
     conn.execute("CREATE INDEX idx_cross_layer_adjacency_candidates_from_to ON cross_layer_adjacency_candidates(from_road_id, to_road_id)")
   finally:
     conn.set_progress_handler(None, 0)
@@ -765,6 +791,7 @@ def _build_cross_layer_shared_node_adjacency(conn: sqlite3.Connection, progress:
     conn.set_progress_handler(None, 0)
   inserted_count = max(0, conn.total_changes - before_changes)
 
+  conn.execute("CREATE INDEX IF NOT EXISTS idx_road_topology_from_to ON road_topology(from_road_id, to_road_id)")
   conn.execute("""
     INSERT INTO road_topology(from_road_id, to_road_id, topology_type, topology_inferred, inferred_reason)
     SELECT DISTINCT candidates.from_road_id, candidates.to_road_id, 'layer_transition', 1, 'shared_osm_node_cross_layer'
@@ -782,6 +809,7 @@ def _build_cross_layer_shared_node_adjacency(conn: sqlite3.Connection, progress:
   conn.execute("DROP TABLE IF EXISTS cross_layer_adjacency_candidates")
   conn.execute("DROP TABLE IF EXISTS cross_layer_entry_edges")
   conn.execute("DROP TABLE IF EXISTS cross_layer_exit_edges")
+  conn.execute("DROP TABLE IF EXISTS cross_layer_osm_node_batches")
   conn.execute("DROP TABLE IF EXISTS cross_layer_osm_nodes")
   conn.commit()
   progress.emit(
@@ -802,6 +830,8 @@ def _build_graph(conn: sqlite3.Connection, progress: ProgressReporter) -> None:
     CREATE INDEX idx_directed_edges_to ON directed_edges(to_node_id);
     CREATE INDEX idx_directed_edges_from_osm_node ON directed_edges(from_osm_node_id);
     CREATE INDEX idx_directed_edges_to_osm_node ON directed_edges(to_osm_node_id);
+    CREATE INDEX idx_directed_edges_from_osm_layer ON directed_edges(from_osm_node_id, layer_int);
+    CREATE INDEX idx_directed_edges_to_osm_layer ON directed_edges(to_osm_node_id, layer_int);
     CREATE INDEX IF NOT EXISTS idx_turn_restrictions_from_to ON turn_restrictions(from_osm_id, to_osm_id);
 
     CREATE TEMP TABLE node_degrees AS
