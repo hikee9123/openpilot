@@ -58,6 +58,11 @@ ROAD_BATCH_SIZE = 50000
 ADJACENCY_NODE_BATCH_SIZE = 20000
 EARTH_RADIUS_M = 6371000.0
 PROGRESS_PREFIX = "__osm_progress__ "
+CROSS_LAYER_SHARED_NODE_MAX_LAYER_DELTA = 1
+CROSS_LAYER_SHARED_NODE_MAX_TURN_DEG = 35.0
+CROSS_LAYER_SHARED_NODE_MAJOR_TURN_DEG = 25.0
+CROSS_LAYER_SHARED_NODE_LINK_TURN_DEG = 45.0
+CROSS_LAYER_SHARED_NODE_CONNECTIVITY_CONFIDENCE = 0.82
 
 DRIVABLE_HIGHWAYS = {
   "motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link",
@@ -611,11 +616,192 @@ def _execute_script_with_progress(conn: sqlite3.Connection, progress: ProgressRe
     conn.set_progress_handler(None, 0)
 
 
+def _build_cross_layer_shared_node_adjacency(conn: sqlite3.Connection, progress: ProgressReporter) -> int:
+  progress.emit("layer_adjacency", 80, "building cross-layer shared-node adjacency", force=True)
+  turn_angle_sql = """
+    CASE
+      WHEN ABS(to_edge.bearing_deg - from_edge.bearing_deg) > 180.0
+      THEN 360.0 - ABS(to_edge.bearing_deg - from_edge.bearing_deg)
+      ELSE ABS(to_edge.bearing_deg - from_edge.bearing_deg)
+    END
+  """
+  same_identity_sql = """
+    (from_edge.road_osm_id = to_edge.road_osm_id
+     OR (from_edge.name != '' AND from_edge.name = to_edge.name))
+  """
+  route_continuity_sql = """
+    ((from_edge.ref != '' AND from_edge.ref = to_edge.ref)
+     OR (from_edge.route_ref != '' AND from_edge.route_ref = to_edge.route_ref))
+  """
+  link_continuity_sql = f"""
+    (from_edge.highway IN ({",".join(repr(highway) for highway in sorted(LINK_HIGHWAYS))})
+     OR to_edge.highway IN ({",".join(repr(highway) for highway in sorted(LINK_HIGHWAYS))}))
+  """
+  conn.set_progress_handler(progress.heartbeat("layer_adjacency", 80, "finding cross-layer shared-node candidates"), 100000)
+  try:
+    conn.execute("DROP TABLE IF EXISTS cross_layer_adjacency_candidates")
+    conn.execute("DROP TABLE IF EXISTS cross_layer_osm_nodes")
+    conn.execute("""
+      CREATE TEMP TABLE cross_layer_osm_nodes AS
+      SELECT osm_node_id
+      FROM (
+        SELECT
+          CAST(substr(node_key, 1, instr(node_key, ':') - 1) AS INTEGER) AS osm_node_id,
+          layer_int
+        FROM road_nodes
+      )
+      GROUP BY osm_node_id
+      HAVING COUNT(DISTINCT layer_int) > 1
+    """)
+    conn.execute("CREATE INDEX idx_cross_layer_osm_nodes_osm_node ON cross_layer_osm_nodes(osm_node_id)")
+    conn.execute("DROP TABLE IF EXISTS cross_layer_exit_edges")
+    conn.execute("DROP TABLE IF EXISTS cross_layer_entry_edges")
+    conn.execute("""
+      CREATE TEMP TABLE cross_layer_exit_edges AS
+      SELECT directed_edges.*
+      FROM directed_edges
+      JOIN cross_layer_osm_nodes ON cross_layer_osm_nodes.osm_node_id = directed_edges.to_osm_node_id
+    """)
+    conn.execute("CREATE INDEX idx_cross_layer_exit_edges_osm_node ON cross_layer_exit_edges(to_osm_node_id)")
+    conn.execute("""
+      CREATE TEMP TABLE cross_layer_entry_edges AS
+      SELECT directed_edges.*
+      FROM directed_edges
+      JOIN cross_layer_osm_nodes ON cross_layer_osm_nodes.osm_node_id = directed_edges.from_osm_node_id
+    """)
+    conn.execute("CREATE INDEX idx_cross_layer_entry_edges_osm_node ON cross_layer_entry_edges(from_osm_node_id)")
+    conn.execute(f"""
+      CREATE TEMP TABLE cross_layer_adjacency_candidates AS
+      WITH candidates AS (
+        SELECT
+          from_edge.road_id AS from_road_id,
+          to_edge.road_id AS to_road_id,
+          from_edge.road_osm_id AS from_osm_id,
+          to_edge.road_osm_id AS to_osm_id,
+          from_edge.to_osm_node_id AS via_osm_node_id,
+          from_edge.road_priority AS from_priority,
+          to_edge.road_priority AS to_priority,
+          from_edge.is_ramp AS from_is_ramp,
+          to_edge.is_ramp AS to_is_ramp,
+          ABS(from_edge.layer_int - to_edge.layer_int) AS layer_delta,
+          {turn_angle_sql} AS turn_angle_deg,
+          CASE WHEN {same_identity_sql} THEN 1 ELSE 0 END AS same_identity,
+          CASE WHEN {route_continuity_sql} THEN 1 ELSE 0 END AS route_continuity,
+          CASE WHEN {link_continuity_sql} THEN 1 ELSE 0 END AS link_continuity
+        FROM cross_layer_exit_edges AS from_edge
+        JOIN cross_layer_entry_edges AS to_edge ON to_edge.from_osm_node_id = from_edge.to_osm_node_id
+        WHERE from_edge.road_id != to_edge.road_id
+          AND from_edge.layer_int != to_edge.layer_int
+          AND ABS(from_edge.layer_int - to_edge.layer_int) <= {CROSS_LAYER_SHARED_NODE_MAX_LAYER_DELTA}
+      )
+      SELECT *
+      FROM candidates
+      WHERE turn_angle_deg <= {CROSS_LAYER_SHARED_NODE_MAX_TURN_DEG}
+        AND (
+          same_identity = 1
+          OR route_continuity = 1
+          OR (from_priority >= 60 AND to_priority >= 60 AND turn_angle_deg <= {CROSS_LAYER_SHARED_NODE_MAJOR_TURN_DEG})
+          OR (link_continuity = 1 AND turn_angle_deg <= {CROSS_LAYER_SHARED_NODE_LINK_TURN_DEG})
+        )
+    """)
+    conn.execute("CREATE INDEX idx_cross_layer_adjacency_candidates_from_to ON cross_layer_adjacency_candidates(from_road_id, to_road_id)")
+  finally:
+    conn.set_progress_handler(None, 0)
+
+  candidate_count = int(conn.execute("SELECT COUNT(*) FROM cross_layer_adjacency_candidates").fetchone()[0])
+  before_changes = conn.total_changes
+  conn.set_progress_handler(progress.heartbeat("layer_adjacency", 80, "inserting cross-layer shared-node adjacency"), 100000)
+  try:
+    conn.execute(f"""
+      INSERT OR IGNORE INTO road_adjacency(
+        from_road_id, to_road_id, turn_angle_deg, blocked_transition, transition_cost, transition_probability,
+        preferred_transition_score, flow_probability, connectivity_confidence
+      )
+      SELECT
+        from_road_id,
+        to_road_id,
+        turn_angle_deg,
+        CASE
+          WHEN EXISTS (
+            SELECT 1
+            FROM turn_restrictions
+            WHERE restriction LIKE 'no_%'
+              AND from_osm_id = cross_layer_adjacency_candidates.from_osm_id
+              AND to_osm_id = cross_layer_adjacency_candidates.to_osm_id
+              AND (via_osm_id = 0 OR via_osm_id = cross_layer_adjacency_candidates.via_osm_node_id)
+          ) THEN 1
+          ELSE 0
+        END AS blocked_transition,
+        MAX(
+          0.0,
+          turn_angle_deg
+          + 8.0
+          + CASE WHEN to_is_ramp = 1 AND from_is_ramp = 0 THEN 10.0 ELSE 0.0 END
+          - CASE WHEN same_identity = 1 THEN 18.0 ELSE 0.0 END
+          - CASE WHEN route_continuity = 1 THEN 10.0 ELSE 0.0 END
+          - to_priority * 0.04
+        ) AS transition_cost,
+        CASE
+          WHEN same_identity = 1 THEN 0.88
+          WHEN route_continuity = 1 THEN 0.78
+          WHEN turn_angle_deg <= 15.0 THEN 0.72
+          ELSE 0.55
+        END AS transition_probability,
+        CASE
+          WHEN same_identity = 1 THEN 0.88
+          WHEN route_continuity = 1 THEN 0.80
+          WHEN turn_angle_deg <= 15.0 THEN 0.72
+          ELSE 0.58
+        END AS preferred_transition_score,
+        CASE
+          WHEN turn_angle_deg <= 15.0 THEN 0.82
+          WHEN turn_angle_deg <= 30.0 THEN 0.68
+          ELSE 0.50
+        END AS flow_probability,
+        {CROSS_LAYER_SHARED_NODE_CONNECTIVITY_CONFIDENCE} AS connectivity_confidence
+      FROM cross_layer_adjacency_candidates
+    """)
+  finally:
+    conn.set_progress_handler(None, 0)
+  inserted_count = max(0, conn.total_changes - before_changes)
+
+  conn.execute("""
+    INSERT INTO road_topology(from_road_id, to_road_id, topology_type, topology_inferred, inferred_reason)
+    SELECT DISTINCT candidates.from_road_id, candidates.to_road_id, 'layer_transition', 1, 'shared_osm_node_cross_layer'
+    FROM cross_layer_adjacency_candidates AS candidates
+    JOIN road_adjacency AS adjacency
+      ON adjacency.from_road_id = candidates.from_road_id
+     AND adjacency.to_road_id = candidates.to_road_id
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM road_topology
+      WHERE road_topology.from_road_id = candidates.from_road_id
+        AND road_topology.to_road_id = candidates.to_road_id
+    )
+  """)
+  conn.execute("DROP TABLE IF EXISTS cross_layer_adjacency_candidates")
+  conn.execute("DROP TABLE IF EXISTS cross_layer_entry_edges")
+  conn.execute("DROP TABLE IF EXISTS cross_layer_exit_edges")
+  conn.execute("DROP TABLE IF EXISTS cross_layer_osm_nodes")
+  conn.commit()
+  progress.emit(
+    "layer_adjacency",
+    80,
+    f"cross-layer shared-node adjacency candidates={candidate_count:,} inserted={inserted_count:,}",
+    force=True,
+    candidates=candidate_count,
+    inserted_rows=inserted_count,
+  )
+  return inserted_count
+
+
 def _build_graph(conn: sqlite3.Connection, progress: ProgressReporter) -> None:
   progress.emit("graph_index", 60, "indexing directed graph edges", force=True)
   _execute_script_with_progress(conn, progress, """
     CREATE INDEX idx_directed_edges_from ON directed_edges(from_node_id);
     CREATE INDEX idx_directed_edges_to ON directed_edges(to_node_id);
+    CREATE INDEX idx_directed_edges_from_osm_node ON directed_edges(from_osm_node_id);
+    CREATE INDEX idx_directed_edges_to_osm_node ON directed_edges(to_osm_node_id);
     CREATE INDEX IF NOT EXISTS idx_turn_restrictions_from_to ON turn_restrictions(from_osm_id, to_osm_id);
 
     CREATE TEMP TABLE node_degrees AS
@@ -762,6 +948,8 @@ def _build_graph(conn: sqlite3.Connection, progress: ProgressReporter) -> None:
     SELECT from_road_id, to_road_id, 'shared_node', 0, ''
     FROM road_adjacency;
   """, "topology", 79, "building road topology")
+
+  _build_cross_layer_shared_node_adjacency(conn, progress)
 
   progress.emit("successor_rank", 81, "ranking road successors", force=True)
   _execute_script_with_progress(conn, progress, """
