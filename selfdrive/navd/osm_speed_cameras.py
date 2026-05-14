@@ -21,16 +21,25 @@ METERS_PER_DEG_LAT = 111320.0
 DEFAULT_CAMERA_MATCH_RADIUS_M = 65.0
 DEFAULT_CAMERA_MAX_MATCHES = 3
 
-ID_COLUMNS = ("external_id", "camera_id", "cam_id", "id", "관리번호", "번호")
-LAT_COLUMNS = ("lat", "latitude", "y", "위도")
-LON_COLUMNS = ("lon", "lng", "longitude", "x", "경도")
-SPEED_COLUMNS = ("speed_limit_kph", "speed_limit", "limit_speed", "camlimitspeed", "제한속도")
-TYPE_COLUMNS = ("camera_type", "cam_type", "type", "종류", "카메라종류")
+ID_COLUMNS = (
+  "external_id", "camera_id", "cam_id", "id", "관리번호", "번호",
+  "무인교통단속카메라관리번호", "무인교통단속카메라 관리번호", "MNLSS_REGLT_CAMERA_MANAGE_NO", "manage_no",
+)
+LAT_COLUMNS = ("lat", "latitude", "y", "위도", "LATITUDE")
+LON_COLUMNS = ("lon", "lng", "longitude", "x", "경도", "LONGITUDE")
+SPEED_COLUMNS = (
+  "speed_limit_kph", "speed_limit", "limit_speed", "camlimitspeed", "제한속도", "제한속도(km/h)",
+  "LMTT_VE", "lmttVe",
+)
+TYPE_COLUMNS = (
+  "camera_type", "cam_type", "type", "종류", "카메라종류", "단속구분", "단속유형", "단속종류",
+  "REGLT_SE", "regltSe",
+)
 BEARING_COLUMNS = ("bearing_deg", "bearing", "heading", "direction_deg", "방향각")
-DIRECTION_COLUMNS = ("direction", "dir", "방향")
-ROAD_NAME_COLUMNS = ("road_name", "road", "roadname", "도로명")
-ADDRESS_COLUMNS = ("address", "addr", "주소")
-UPDATED_COLUMNS = ("source_updated_at", "updated_at", "update_date", "갱신일", "수정일")
+DIRECTION_COLUMNS = ("direction", "dir", "방향", "도로노선방향", "ROAD_ROUTE_DRC")
+ROAD_NAME_COLUMNS = ("road_name", "road", "roadname", "도로명", "도로노선명", "소재지도로명주소", "ROAD_ROUTE_NM", "RDNMADR")
+ADDRESS_COLUMNS = ("address", "addr", "주소", "설치장소", "소재지지번주소", "ITLPC", "LNMADR", "place")
+UPDATED_COLUMNS = ("source_updated_at", "updated_at", "update_date", "갱신일", "수정일", "데이터기준일자", "최종수정일", "REFERENCE_DATE")
 
 ROAD_NAME_SUFFIXES = ("EXPRESSWAY", "HIGHWAY", "ROAD", "RO", "GIL", "DAERO", "STREET")
 

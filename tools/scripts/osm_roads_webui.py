@@ -33,8 +33,9 @@ except ModuleNotFoundError:
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HTML_PATH = REPO_ROOT / "tools" / "osm_roads_webui" / "index.html"
 DEFAULT_PBF = DEFAULT_NAVD_SOURCE_DIR / "south-korea-latest.osm.pbf"
+DEFAULT_SPEED_CAMERA_CSV = DEFAULT_NAVD_SOURCE_DIR / "speed_cameras.csv"
 DEFAULT_TMP_DB = DEFAULT_NAVD_TMP_DIR / "osm_roads_build" / "osm_roads_kr.sqlite3.build"
-TASK_ORDER = ("download", "build", "import_cameras", "validate", "upload_dry_run", "upload_push")
+TASK_ORDER = ("download", "generate_cameras", "build", "import_cameras", "validate", "upload_dry_run", "upload_push")
 PROGRESS_PREFIX = "__osm_progress__ "
 BUILD_PROFILES = ("full", "camera-balanced", "major")
 BUILD_PROFILE_ALIASES = {
@@ -47,6 +48,7 @@ BUILD_PROFILE_ALIASES = {
 }
 TASK_LABELS = {
   "download": "PBF 다운로드",
+  "generate_cameras": "단속카메라 생성",
   "build": "DB 생성",
   "import_cameras": "카메라 매칭",
   "validate": "DB 검증",
@@ -113,6 +115,10 @@ class OSMRoadsTaskRunner:
         "active_task": self.active_task,
         "sequence": self.sequence,
         "busy": self.active_task is not None,
+        "defaults": {
+          "speed_cameras": str(self.args.speed_cameras),
+          "build_profile": self.args.build_profile,
+        },
         "tasks": {key: self.tasks[key].snapshot() for key in TASK_ORDER},
       }
 
@@ -139,7 +145,7 @@ class OSMRoadsTaskRunner:
       task.details = {}
       if task_key == "build":
         task.details["build_profile"] = selected_build_profile
-      if task_key in ("build", "import_cameras") and selected_speed_cameras:
+      if task_key in ("generate_cameras", "build", "import_cameras") and selected_speed_cameras:
         task.details["speed_cameras"] = selected_speed_cameras
       task.command = self._command_for(task_key, selected_build_profile, selected_speed_cameras)
       task.log.clear()
@@ -178,6 +184,22 @@ class OSMRoadsTaskRunner:
       command = [sys.executable, "tools/scripts/download_osm_roads_source.py", "--output", pbf_path]
       if self.args.skip_md5:
         command.append("--skip-md5")
+      return command
+    if task_key == "generate_cameras":
+      command = [
+        sys.executable,
+        "tools/scripts/download_speed_cameras_source.py",
+        "--output",
+        str(Path(speed_cameras or self.args.speed_cameras).expanduser()),
+        "--tmp-dir",
+        str(Path(self.args.speed_camera_tmp_dir).expanduser()),
+        "--public-data-pk",
+        self.args.speed_camera_public_data_pk,
+        "--per-page",
+        str(self.args.speed_camera_per_page),
+      ]
+      if self.args.speed_camera_max_pages is not None:
+        command.extend(["--max-pages", str(self.args.speed_camera_max_pages)])
       return command
     if task_key == "build":
       profile = _normalize_build_profile(build_profile or self.args.build_profile)
@@ -351,6 +373,14 @@ def _progress_from_line(task_key: str, line: str, current: int) -> tuple[int, st
       return 100, line
     if "downloading" in lower:
       return 15, line
+  elif task_key == "generate_cameras":
+    match = re.search(r"progress\s+(\d+)%", lower)
+    if match:
+      return min(99, max(current, int(match.group(1)))), line
+    if "fetching public speed camera metadata" in lower:
+      return max(current, 5), line
+    if "downloaded" in lower and "speed camera rows" in lower:
+      return 100, line
   elif task_key == "build":
     stages = (
       ("collecting osm relations", 5),
@@ -491,7 +521,11 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--db", type=Path, default=DEFAULT_OSM_ROADS_DB_PATH, help=f"SQLite DB path (default: {DEFAULT_OSM_ROADS_DB_PATH})")
   parser.add_argument("--skip-md5", action="store_true", help="Pass --skip-md5 to the download task")
   parser.add_argument("--build-profile", default="camera-balanced", help="Default DB build profile for the web UI")
-  parser.add_argument("--speed-cameras", type=Path, default=None, help="Default speed camera CSV path for build/import tasks")
+  parser.add_argument("--speed-cameras", type=Path, default=DEFAULT_SPEED_CAMERA_CSV, help=f"Default speed camera CSV path for generate/build/import tasks (default: {DEFAULT_SPEED_CAMERA_CSV})")
+  parser.add_argument("--speed-camera-tmp-dir", type=Path, default=DEFAULT_NAVD_TMP_DIR, help=f"Temporary directory for speed camera downloads (default: {DEFAULT_NAVD_TMP_DIR})")
+  parser.add_argument("--speed-camera-public-data-pk", default="15028200", help="Public data portal PK for speed camera CSV generation")
+  parser.add_argument("--speed-camera-per-page", type=int, default=10000, help="Rows per speed camera public data request")
+  parser.add_argument("--speed-camera-max-pages", type=int, default=None, help="Limit speed camera public data pages for testing")
   parser.add_argument("--speed-camera-match-radius-m", type=float, default=65.0, help="Road snapping radius for speed cameras")
   parser.add_argument("--no-require-road-graph", action="store_true", help="Do not pass --require-road-graph to build/validate/upload tasks")
   parser.add_argument("--upload-repo", type=Path, default=None, help="Existing local Git LFS data repo for upload tasks")

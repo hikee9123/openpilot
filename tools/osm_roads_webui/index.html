@@ -294,6 +294,7 @@
       </div>
       <div class="toolbar">
         <button data-task="download">PBF 다운로드</button>
+        <button data-task="generate_cameras">단속카메라 생성</button>
         <button class="primary" data-task="build">DB 생성</button>
         <button data-task="import_cameras">카메라 매칭</button>
         <button data-task="validate">DB 검증</button>
@@ -325,7 +326,7 @@
   </main>
 
   <script>
-    const taskOrder = ["download", "build", "import_cameras", "validate", "upload_dry_run", "upload_push"];
+    const taskOrder = ["download", "generate_cameras", "build", "import_cameras", "validate", "upload_dry_run", "upload_push"];
     const statusText = {
       idle: "대기",
       running: "실행",
@@ -346,6 +347,7 @@
     const apiBase = location.protocol === "file:" ? "http://127.0.0.1:8765" : "";
     let state = null;
     let selectedTask = "download";
+    let speedCameraTouched = false;
 
     if (location.protocol === "file:") {
       notice.classList.add("show");
@@ -409,15 +411,11 @@
           return;
         }
         selectedTask = task;
-        if (task === "import_cameras" && !speedCameras.value.trim()) {
-          alert("단속카메라 CSV 경로를 입력하세요.");
-          return;
-        }
         const params = new URLSearchParams();
         if (task === "build") {
           params.set("profile", buildProfile.value);
         }
-        if ((task === "build" || task === "import_cameras") && speedCameras.value.trim()) {
+        if ((task === "generate_cameras" || task === "build" || task === "import_cameras") && speedCameras.value.trim()) {
           params.set("speed_cameras", speedCameras.value.trim());
         }
         const query = params.toString();
@@ -427,11 +425,17 @@
     });
 
     stopButton.addEventListener("click", () => post("/api/stop"));
+    speedCameras.addEventListener("input", () => {
+      speedCameraTouched = true;
+    });
 
     function render(nextState) {
       state = nextState;
       const busy = Boolean(state.busy);
       const active = state.active_task;
+      if (!speedCameraTouched && !speedCameras.value && state.defaults && state.defaults.speed_cameras) {
+        speedCameras.value = state.defaults.speed_cameras;
+      }
       summary.textContent = busy ? `${state.tasks[active].label} 실행 중` : "대기 중";
       stopButton.disabled = !busy;
       buildProfile.disabled = busy;
