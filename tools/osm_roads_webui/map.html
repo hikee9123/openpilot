@@ -529,6 +529,16 @@
       const host = server.host && server.port ? `${server.host}:${server.port}` : "서버";
       const pathMode = db.uses_default_path ? "기본 DB" : "사용자 DB";
       const sizeText = db.size_bytes ? ` | ${formatBytes(db.size_bytes)}` : "";
+      if (db.read_blocked) {
+        setHealth(
+          "warn",
+          `${host} 온라인 | DB 교체 중 | DB 조회 일시 중지${sizeText}`,
+          `${db.configured_path || ""}`,
+          false,
+          true,
+        );
+        return;
+      }
       if (data.ok) {
         setHealth(
           db.uses_default_path ? "ok" : "warn",

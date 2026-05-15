@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import shutil
 import sqlite3
+import time
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
@@ -127,6 +128,33 @@ class OSMRoadsDBValidation:
   speed_camera_count: int = 0
   speed_camera_match_count: int = 0
   route_camera_lookup_count: int = 0
+
+
+class OSMRoadsDBReplaceError(RuntimeError):
+  def __init__(
+    self,
+    operation: str,
+    source_path: Path,
+    target_path: Path,
+    pending_db: Path,
+    final_db: Path,
+    backup_path: Path,
+    attempts: int,
+    original_error: OSError,
+  ) -> None:
+    self.operation = operation
+    self.source_path = source_path
+    self.target_path = target_path
+    self.pending_db = pending_db
+    self.final_db = final_db
+    self.backup_path = backup_path
+    self.attempts = attempts
+    self.original_error = original_error
+    super().__init__(
+      f"OSM roads DB replace failed while {operation} after {attempts} attempt(s): "
+      f"{source_path} -> {target_path}: {original_error}. "
+      f"Pending DB preserved at {pending_db}."
+    )
 
 
 def road_row(values: dict[str, object]) -> tuple[object, ...]:
@@ -577,28 +605,119 @@ def _move_or_copy(source: Path, target: Path) -> None:
     source.unlink()
 
 
-def replace_osm_roads_db(source_db: Path, final_db: Path, require_road_graph: bool = False) -> OSMRoadsDBValidation:
+def pending_osm_roads_db_path(final_db: Path) -> Path:
+  final_db = Path(final_db)
+  return final_db.with_suffix(final_db.suffix + ".tmp")
+
+
+def _same_path(left: Path, right: Path) -> bool:
+  return os.path.normcase(os.path.abspath(str(left))) == os.path.normcase(os.path.abspath(str(right)))
+
+
+def _replace_with_retries(
+  source: Path,
+  target: Path,
+  operation: str,
+  pending_db: Path,
+  final_db: Path,
+  backup_path: Path,
+  retry_attempts: int,
+  retry_delay_s: float,
+) -> None:
+  attempts = max(1, int(retry_attempts))
+  delay_s = max(0.0, float(retry_delay_s))
+  last_error: OSError | None = None
+  for attempt in range(1, attempts + 1):
+    try:
+      os.replace(source, target)
+      return
+    except OSError as e:
+      last_error = e
+      if attempt < attempts and delay_s > 0.0:
+        time.sleep(delay_s)
+
+  assert last_error is not None
+  raise OSMRoadsDBReplaceError(operation, source, target, pending_db, final_db, backup_path, attempts, last_error) from last_error
+
+
+def install_pending_osm_roads_db(
+  pending_db: Path,
+  final_db: Path,
+  require_road_graph: bool = False,
+  require_speed_cameras: bool = False,
+  retry_attempts: int = 15,
+  retry_delay_s: float = 1.0,
+) -> OSMRoadsDBValidation:
+  pending_db = Path(pending_db)
+  final_db = Path(final_db)
+  backup_path = final_db.with_suffix(final_db.suffix + ".bak")
+  final_db.parent.mkdir(parents=True, exist_ok=True)
+
+  validation = validate_osm_roads_db(
+    pending_db,
+    require_road_graph=require_road_graph,
+    require_speed_cameras=require_speed_cameras,
+  )
+
+  backed_up = False
+  if final_db.exists():
+    _replace_with_retries(
+      final_db,
+      backup_path,
+      "moving current DB to backup",
+      pending_db,
+      final_db,
+      backup_path,
+      retry_attempts,
+      retry_delay_s,
+    )
+    backed_up = True
+
+  try:
+    _replace_with_retries(
+      pending_db,
+      final_db,
+      "installing pending DB",
+      pending_db,
+      final_db,
+      backup_path,
+      retry_attempts,
+      retry_delay_s,
+    )
+  except Exception:
+    if backed_up and backup_path.exists() and not final_db.exists():
+      os.replace(backup_path, final_db)
+    raise
+  return validation
+
+
+def replace_osm_roads_db(
+  source_db: Path,
+  final_db: Path,
+  require_road_graph: bool = False,
+  require_speed_cameras: bool = False,
+  retry_attempts: int = 15,
+  retry_delay_s: float = 1.0,
+) -> OSMRoadsDBValidation:
   source_db = Path(source_db)
   final_db = Path(final_db)
   final_db.parent.mkdir(parents=True, exist_ok=True)
-  install_tmp = final_db.with_suffix(final_db.suffix + ".tmp")
-  backup_path = final_db.with_suffix(final_db.suffix + ".bak")
-  _unlink_if_exists(install_tmp)
-  _move_or_copy(source_db, install_tmp)
+  install_tmp = pending_osm_roads_db_path(final_db)
+  if not _same_path(source_db, install_tmp):
+    _unlink_if_exists(install_tmp)
+    _move_or_copy(source_db, install_tmp)
 
   try:
-    validation = validate_osm_roads_db(install_tmp, require_road_graph=require_road_graph)
+    return install_pending_osm_roads_db(
+      install_tmp,
+      final_db,
+      require_road_graph=require_road_graph,
+      require_speed_cameras=require_speed_cameras,
+      retry_attempts=retry_attempts,
+      retry_delay_s=retry_delay_s,
+    )
+  except OSMRoadsDBReplaceError:
+    raise
   except Exception:
     _unlink_if_exists(install_tmp)
     raise
-
-  if final_db.exists():
-    os.replace(final_db, backup_path)
-  try:
-    os.replace(install_tmp, final_db)
-  except Exception:
-    if backup_path.exists() and not final_db.exists():
-      os.replace(backup_path, final_db)
-    _unlink_if_exists(install_tmp)
-    raise
-  return validation

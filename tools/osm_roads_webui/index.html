@@ -530,6 +530,7 @@
         <button data-task="download">PBF 다운로드</button>
         <button data-task="generate_cameras">단속카메라 생성</button>
         <button class="primary" data-task="build">DB 생성</button>
+        <button data-task="replace">DB 교체 재시도</button>
         <button data-task="import_cameras">카메라 매칭</button>
         <button data-task="validate">DB 검증</button>
         <button id="db-view">DB 보기</button>
@@ -592,7 +593,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const taskOrder = ["download", "generate_cameras", "build", "import_cameras", "validate", "upload_dry_run", "upload_push"];
+    const taskOrder = ["download", "generate_cameras", "build", "replace", "import_cameras", "validate", "upload_dry_run", "upload_push"];
     const statusText = {
       idle: "대기",
       running: "실행",
@@ -732,6 +733,16 @@
       const host = server.host && server.port ? `${server.host}:${server.port}` : "서버";
       const pathMode = db.uses_default_path ? "기본 DB" : "사용자 DB";
       const sizeText = db.size_bytes ? ` | ${formatBytes(db.size_bytes)}` : "";
+      if (db.read_blocked) {
+        setHealth(
+          "warn",
+          `${host} 온라인 | DB 교체 중 | DB 조회 일시 중지${sizeText}`,
+          `${db.configured_path || ""}`,
+          false,
+          true,
+        );
+        return;
+      }
       if (data.ok) {
         setHealth(
           db.uses_default_path ? "ok" : "warn",

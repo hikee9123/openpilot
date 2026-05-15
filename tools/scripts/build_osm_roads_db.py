@@ -23,6 +23,9 @@ try:
     configure_build_connection,
     create_osm_roads_indexes,
     create_osm_roads_schema,
+    install_pending_osm_roads_db,
+    OSMRoadsDBReplaceError,
+    pending_osm_roads_db_path,
     put_metadata,
     replace_osm_roads_db,
     road_row,
@@ -40,6 +43,9 @@ except ModuleNotFoundError:
   configure_build_connection = osm_roads_db.configure_build_connection
   create_osm_roads_indexes = osm_roads_db.create_osm_roads_indexes
   create_osm_roads_schema = osm_roads_db.create_osm_roads_schema
+  install_pending_osm_roads_db = osm_roads_db.install_pending_osm_roads_db
+  OSMRoadsDBReplaceError = osm_roads_db.OSMRoadsDBReplaceError
+  pending_osm_roads_db_path = osm_roads_db.pending_osm_roads_db_path
   put_metadata = osm_roads_db.put_metadata
   replace_osm_roads_db = osm_roads_db.replace_osm_roads_db
   road_row = osm_roads_db.road_row
@@ -1081,6 +1087,8 @@ def build_db(
   speed_camera_source: str,
   speed_camera_match_radius_m: float,
   speed_camera_max_matches: int,
+  replace_retries: int,
+  replace_retry_delay_s: float,
 ) -> None:
   build_profile = _normalize_build_profile(build_profile)
   included_highways = BUILD_PROFILE_HIGHWAYS[build_profile]
@@ -1196,7 +1204,16 @@ def build_db(
     speed_camera_count=validation.speed_camera_count,
     route_camera_lookup_count=validation.route_camera_lookup_count,
   )
-  final_validation = replace_osm_roads_db(tmp_db, final_db, require_road_graph=require_road_graph)
+  progress.emit("replace", 98, f"installing built DB {final_db}", force=True)
+  final_validation = replace_osm_roads_db(
+    tmp_db,
+    final_db,
+    require_road_graph=require_road_graph,
+    require_speed_cameras=require_speed_cameras,
+    retry_attempts=replace_retries,
+    retry_delay_s=replace_retry_delay_s,
+  )
+  progress.db_path = final_db
   progress.emit(
     "replace",
     100,
@@ -1204,6 +1221,51 @@ def build_db(
     force=True,
     segments=final_validation.segment_count,
     speed_camera_count=final_validation.speed_camera_count,
+  )
+
+
+def _replace_error_lines(error: OSMRoadsDBReplaceError) -> list[str]:
+  return [
+    "OSM roads DB build/validation succeeded, but final replacement failed.",
+    str(error),
+    f"current DB: {error.final_db}",
+    f"backup DB: {error.backup_path}",
+    f"pending DB: {error.pending_db}",
+    "Close processes that may be reading the current DB, then rerun with --replace-only.",
+  ]
+
+
+def replace_pending_db(
+  pending_db: Path,
+  final_db: Path,
+  require_road_graph: bool,
+  require_speed_cameras: bool,
+  progress_json: bool,
+  replace_retries: int,
+  replace_retry_delay_s: float,
+) -> None:
+  progress = ProgressReporter(enabled=progress_json, db_path=pending_db)
+  progress.emit("validate", 94, f"validating pending DB {pending_db}", force=True)
+  validation = install_pending_osm_roads_db(
+    pending_db,
+    final_db,
+    require_road_graph=require_road_graph,
+    require_speed_cameras=require_speed_cameras,
+    retry_attempts=replace_retries,
+    retry_delay_s=replace_retry_delay_s,
+  )
+  progress.db_path = final_db
+  progress.emit(
+    "replace",
+    100,
+    f"installed pending DB {final_db} ({validation.segment_count:,} segments, {validation.speed_camera_count:,} speed cameras)",
+    force=True,
+    segments=validation.segment_count,
+    graph_nodes=validation.graph_node_count,
+    graph_edges=validation.graph_edge_count,
+    graph_adjacency=validation.graph_adjacency_count,
+    speed_camera_count=validation.speed_camera_count,
+    route_camera_lookup_count=validation.route_camera_lookup_count,
   )
 
 
@@ -1228,49 +1290,76 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--speed-camera-max-matches", type=int, default=3, help="Store up to this many road matches per speed camera")
   parser.add_argument("--require-speed-cameras", action="store_true", help="Fail validation if matched speed camera lookup data is missing")
   parser.add_argument("--validate-only", action="store_true", help="Validate --db and exit without building")
+  parser.add_argument("--replace-only", action="store_true", help="Validate and install the pending built DB without rebuilding")
+  parser.add_argument("--pending-db", type=Path, default=None, help="Pending DB to install with --replace-only (default: <db>.tmp)")
+  parser.add_argument("--replace-retries", type=int, default=15, help="Number of final DB replace attempts")
+  parser.add_argument("--replace-retry-delay-s", type=float, default=1.0, help="Seconds to wait between final DB replace attempts")
   return parser.parse_args()
 
 
 def main() -> int:
   args = parse_args()
-  if args.validate_only:
-    validation = validate_osm_roads_db(
-      args.db.expanduser(),
-      require_road_graph=args.require_road_graph,
-      require_speed_cameras=args.require_speed_cameras,
-      run_quick_check=args.quick_check,
-    )
-    print(
-      f"validated {validation.db_path}: segments={validation.segment_count:,} graph={int(validation.has_road_graph)} "
-      f"nodes={validation.graph_node_count:,} edges={validation.graph_edge_count:,} adjacency={validation.graph_adjacency_count:,} "
-      f"speed_cameras={validation.speed_camera_count:,} camera_lookup={validation.route_camera_lookup_count:,}",
-      flush=True,
-    )
-    return 0
-
-  build_graph = not args.skip_road_graph
-  if args.require_road_graph and not build_graph:
-    raise RuntimeError("--require-road-graph cannot be used with --skip-road-graph")
   try:
-    build_profile = _normalize_build_profile(args.profile)
-  except ValueError as e:
-    raise SystemExit(str(e)) from e
-  speed_cameras_csv = args.speed_cameras.expanduser() if args.speed_cameras is not None else None
-  build_db(
-    args.pbf.expanduser(),
-    args.tmp_db.expanduser(),
-    args.db.expanduser(),
-    build_graph,
-    args.require_road_graph,
-    args.require_speed_cameras,
-    args.quick_check,
-    args.progress_json,
-    build_profile,
-    speed_cameras_csv,
-    args.speed_camera_source,
-    args.speed_camera_match_radius_m,
-    args.speed_camera_max_matches,
-  )
+    if args.validate_only:
+      validation = validate_osm_roads_db(
+        args.db.expanduser(),
+        require_road_graph=args.require_road_graph,
+        require_speed_cameras=args.require_speed_cameras,
+        run_quick_check=args.quick_check,
+      )
+      print(
+        f"validated {validation.db_path}: segments={validation.segment_count:,} graph={int(validation.has_road_graph)} "
+        f"nodes={validation.graph_node_count:,} edges={validation.graph_edge_count:,} adjacency={validation.graph_adjacency_count:,} "
+        f"speed_cameras={validation.speed_camera_count:,} camera_lookup={validation.route_camera_lookup_count:,}",
+        flush=True,
+      )
+      return 0
+
+    if args.replace_only:
+      final_db = args.db.expanduser()
+      pending_db = args.pending_db.expanduser() if args.pending_db is not None else pending_osm_roads_db_path(final_db)
+      if not pending_db.exists():
+        raise SystemExit(f"pending DB missing: {pending_db}")
+      replace_pending_db(
+        pending_db,
+        final_db,
+        args.require_road_graph,
+        args.require_speed_cameras,
+        args.progress_json,
+        args.replace_retries,
+        args.replace_retry_delay_s,
+      )
+      return 0
+
+    build_graph = not args.skip_road_graph
+    if args.require_road_graph and not build_graph:
+      raise RuntimeError("--require-road-graph cannot be used with --skip-road-graph")
+    try:
+      build_profile = _normalize_build_profile(args.profile)
+    except ValueError as e:
+      raise SystemExit(str(e)) from e
+    speed_cameras_csv = args.speed_cameras.expanduser() if args.speed_cameras is not None else None
+    build_db(
+      args.pbf.expanduser(),
+      args.tmp_db.expanduser(),
+      args.db.expanduser(),
+      build_graph,
+      args.require_road_graph,
+      args.require_speed_cameras,
+      args.quick_check,
+      args.progress_json,
+      build_profile,
+      speed_cameras_csv,
+      args.speed_camera_source,
+      args.speed_camera_match_radius_m,
+      args.speed_camera_max_matches,
+      args.replace_retries,
+      args.replace_retry_delay_s,
+    )
+  except OSMRoadsDBReplaceError as e:
+    for line in _replace_error_lines(e):
+      print(line, file=sys.stderr, flush=True)
+    return 1
   return 0
 
 

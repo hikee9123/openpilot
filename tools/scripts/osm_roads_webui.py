@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 from collections import deque
+from contextlib import closing
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -41,7 +42,7 @@ UBUNTU_START_SCRIPT_PATH = REPO_ROOT / "tools" / "osm_roads_webui" / "start_serv
 DEFAULT_PBF = DEFAULT_NAVD_SOURCE_DIR / "south-korea-latest.osm.pbf"
 DEFAULT_SPEED_CAMERA_CSV = DEFAULT_NAVD_SOURCE_DIR / "speed_cameras.csv"
 DEFAULT_TMP_DB = DEFAULT_NAVD_TMP_DIR / "osm_roads_build" / "osm_roads_kr.sqlite3.build"
-TASK_ORDER = ("download", "generate_cameras", "build", "import_cameras", "validate", "upload_dry_run", "upload_push")
+TASK_ORDER = ("download", "generate_cameras", "build", "replace", "import_cameras", "validate", "upload_dry_run", "upload_push")
 PROGRESS_PREFIX = "__osm_progress__ "
 CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
 BUILD_PROFILES = ("full", "camera-balanced", "major")
@@ -57,6 +58,7 @@ TASK_LABELS = {
   "download": "PBF 다운로드",
   "generate_cameras": "단속카메라 생성",
   "build": "DB 생성",
+  "replace": "DB 교체 재시도",
   "import_cameras": "카메라 매칭",
   "validate": "DB 검증",
   "upload_dry_run": "GitHub 업로드 확인",
@@ -130,6 +132,14 @@ class OSMRoadsTaskRunner:
         "tasks": {key: self.tasks[key].snapshot() for key in TASK_ORDER},
       }
 
+  def db_reads_blocked(self) -> bool:
+    with self.lock:
+      if self.active_task == "replace":
+        return True
+      if self.active_task == "build" and self.tasks["build"].stage in ("validate", "replace"):
+        return True
+    return False
+
   def start(self, task_key: str, build_profile: str = "", speed_cameras: str = "") -> tuple[bool, str]:
     if task_key not in self.tasks:
       return False, f"unknown task: {task_key}"
@@ -153,6 +163,9 @@ class OSMRoadsTaskRunner:
       task.details = {}
       if task_key == "build":
         task.details["build_profile"] = selected_build_profile
+      if task_key == "replace":
+        db_path = Path(self.args.db).expanduser()
+        task.details["pending_db"] = str(db_path.with_suffix(db_path.suffix + ".tmp"))
       if task_key in ("generate_cameras", "build", "import_cameras") and selected_speed_cameras:
         task.details["speed_cameras"] = selected_speed_cameras
       task.command = self._command_for(task_key, selected_build_profile, selected_speed_cameras)
@@ -231,6 +244,16 @@ class OSMRoadsTaskRunner:
           str(self.args.speed_camera_match_radius_m),
         ])
       return command
+    if task_key == "replace":
+      return [
+        sys.executable,
+        "tools/scripts/build_osm_roads_db.py",
+        "--db",
+        db_path,
+        "--replace-only",
+        "--progress-json",
+        *require_graph,
+      ]
     if task_key == "import_cameras":
       return [
         sys.executable,
@@ -403,7 +426,18 @@ def _progress_from_line(task_key: str, line: str, current: int) -> tuple[int, st
       ("creating indexes", 88),
       ("validating built db", 92),
       ("validated built db", 96),
+      ("installing built db", 98),
       ("installed built db", 100),
+    )
+    for token, progress in stages:
+      if token in lower:
+        return progress, line
+  elif task_key == "replace":
+    stages = (
+      ("validating pending db", 50),
+      ("installed pending db", 100),
+      ("final replacement failed", 95),
+      ("replace failed", 95),
     )
     for token, progress in stages:
       if token in lower:
@@ -498,7 +532,7 @@ def _start_scripts_payload() -> dict[str, str]:
   }
 
 
-def server_health(args: argparse.Namespace, started_monotonic: float) -> dict[str, object]:
+def server_health(args: argparse.Namespace, started_monotonic: float, db_read_blocked: bool = False) -> dict[str, object]:
   db_path = Path(args.db).expanduser()
   default_db_path = Path(DEFAULT_OSM_ROADS_DB_PATH).expanduser()
   uses_default_path = os.path.normcase(os.path.abspath(str(db_path))) == os.path.normcase(os.path.abspath(str(default_db_path)))
@@ -517,6 +551,7 @@ def server_health(args: argparse.Namespace, started_monotonic: float) -> dict[st
     "modified_at": 0,
     "tables": {table: False for table in required_tables},
     "error": "",
+    "read_blocked": db_read_blocked,
   }
 
   try:
@@ -524,18 +559,21 @@ def server_health(args: argparse.Namespace, started_monotonic: float) -> dict[st
     db["exists"] = True
     db["size_bytes"] = stat_result.st_size
     db["modified_at"] = int(stat_result.st_mtime)
-    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
-      db["readable"] = True
-      tables = {table: _table_exists(conn, table) for table in required_tables}
-      db["tables"] = tables
-      db["schema_ok"] = all(tables.values())
-      if tables["roads"]:
-        conn.execute("SELECT 1 FROM roads LIMIT 1").fetchone()
-        db["smoke_ok"] = True
-      else:
-        db["error"] = "roads table missing"
+    if db_read_blocked:
+      db["error"] = "DB replacement is in progress; read checks are temporarily blocked"
+    else:
+      with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
+        db["readable"] = True
+        tables = {table: _table_exists(conn, table) for table in required_tables}
+        db["tables"] = tables
+        db["schema_ok"] = all(tables.values())
+        if tables["roads"]:
+          conn.execute("SELECT 1 FROM roads LIMIT 1").fetchone()
+          db["smoke_ok"] = True
+        else:
+          db["error"] = "roads table missing"
   except OSError as e:
-    db["error"] = str(e)
+    db["error"] = "DB replacement is in progress; read checks are temporarily blocked" if db_read_blocked else str(e)
   except sqlite3.Error as e:
     db["error"] = str(e)
 
@@ -556,6 +594,17 @@ def server_health(args: argparse.Namespace, started_monotonic: float) -> dict[st
     "start_script_path": str(start_script_path),
     "start_scripts": _start_scripts_payload(),
     "db": db,
+  }
+
+
+def db_read_blocked_payload(args: argparse.Namespace) -> dict[str, object]:
+  db_path = Path(args.db).expanduser()
+  return {
+    "ok": False,
+    "read_blocked": True,
+    "message": "DB replacement is in progress; DB reads are temporarily blocked",
+    "db_path": str(db_path),
+    "pending_db": str(db_path.with_suffix(db_path.suffix + ".tmp")),
   }
 
 
@@ -585,7 +634,7 @@ def db_summary(db_path: Path) -> dict[str, object]:
     return {"ok": False, "message": f"DB 파일이 없습니다: {db_path}", "db_path": str(db_path)}
 
   stat_result = db_path.stat()
-  with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+  with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
     metadata = dict(conn.execute("SELECT key, value FROM metadata").fetchall()) if _table_exists(conn, "metadata") else {}
     counts = {
       "roads": _count_or_metadata(conn, metadata, "roads", "segment_count"),
@@ -675,7 +724,7 @@ def db_map(db_path: Path, query: dict[str, list[str]]) -> dict[str, object]:
   camera_limit = _parse_int(query.get("camera_limit", ["800"])[0], 800, 1, 3000)
   road_limit = _parse_int(query.get("road_limit", ["1200"])[0], 1200, 1, 5000)
 
-  with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+  with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
     if not all(_table_exists(conn, table) for table in ("speed_cameras", "route_camera_lookup", "roads")):
       return {"ok": False, "message": "지도에 필요한 speed_cameras/route_camera_lookup/roads 테이블이 없습니다", "db_path": str(db_path)}
 
@@ -785,7 +834,7 @@ def db_roads(db_path: Path, query: dict[str, list[str]]) -> dict[str, object]:
   road_limit = _parse_int(query.get("road_limit", ["12000"])[0], 12000, 1, 50000)
   min_priority = _parse_float(query.get("min_priority", ["0"])[0], 0.0)
 
-  with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+  with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
     if not all(_table_exists(conn, table) for table in ("roads", "roads_rtree")):
       return {"ok": False, "message": "전체 도로망에 필요한 roads/roads_rtree 테이블이 없습니다", "db_path": str(db_path)}
 
@@ -850,19 +899,28 @@ class OSMRoadsWebHandler(BaseHTTPRequestHandler):
     elif parsed.path in ("/map", "/map.html"):
       self._serve_file(MAP_HTML_PATH)
     elif parsed.path == "/api/health":
-      payload = server_health(self.runner.args, self.runner.started_monotonic)
+      payload = server_health(self.runner.args, self.runner.started_monotonic, db_read_blocked=self.runner.db_reads_blocked())
       _json_response(self, HTTPStatus.OK, payload)
     elif parsed.path == "/api/state":
       _json_response(self, HTTPStatus.OK, self.runner.snapshot())
     elif parsed.path == "/api/db/summary":
-      payload = db_summary(Path(self.runner.args.db))
-      _json_response(self, HTTPStatus.OK if payload.get("ok") else HTTPStatus.NOT_FOUND, payload)
+      if self.runner.db_reads_blocked():
+        _json_response(self, HTTPStatus.CONFLICT, db_read_blocked_payload(self.runner.args))
+      else:
+        payload = db_summary(Path(self.runner.args.db))
+        _json_response(self, HTTPStatus.OK if payload.get("ok") else HTTPStatus.NOT_FOUND, payload)
     elif parsed.path == "/api/db/map":
-      payload = db_map(Path(self.runner.args.db), parse_qs(parsed.query))
-      _json_response(self, HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_REQUEST, payload)
+      if self.runner.db_reads_blocked():
+        _json_response(self, HTTPStatus.CONFLICT, db_read_blocked_payload(self.runner.args))
+      else:
+        payload = db_map(Path(self.runner.args.db), parse_qs(parsed.query))
+        _json_response(self, HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_REQUEST, payload)
     elif parsed.path == "/api/db/roads":
-      payload = db_roads(Path(self.runner.args.db), parse_qs(parsed.query))
-      _json_response(self, HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_REQUEST, payload)
+      if self.runner.db_reads_blocked():
+        _json_response(self, HTTPStatus.CONFLICT, db_read_blocked_payload(self.runner.args))
+      else:
+        payload = db_roads(Path(self.runner.args.db), parse_qs(parsed.query))
+        _json_response(self, HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_REQUEST, payload)
     elif parsed.path == "/api/events":
       self._serve_events()
     else:
