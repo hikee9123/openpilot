@@ -43,6 +43,7 @@ DEFAULT_SPEED_CAMERA_CSV = DEFAULT_NAVD_SOURCE_DIR / "speed_cameras.csv"
 DEFAULT_TMP_DB = DEFAULT_NAVD_TMP_DIR / "osm_roads_build" / "osm_roads_kr.sqlite3.build"
 TASK_ORDER = ("download", "generate_cameras", "build", "import_cameras", "validate", "upload_dry_run", "upload_push")
 PROGRESS_PREFIX = "__osm_progress__ "
+CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
 BUILD_PROFILES = ("full", "camera-balanced", "major")
 BUILD_PROFILE_ALIASES = {
   "balanced": "camera-balanced",
@@ -444,7 +445,8 @@ def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[s
     handler.send_header("Access-Control-Allow-Origin", "*")
     handler.end_headers()
     handler.wfile.write(body)
-  except (BrokenPipeError, ConnectionResetError):
+  except CLIENT_DISCONNECT_ERRORS:
+    handler.close_connection = True
     return
 
 
@@ -832,6 +834,12 @@ def db_roads(db_path: Path, query: dict[str, list[str]]) -> dict[str, object]:
 class OSMRoadsWebHandler(BaseHTTPRequestHandler):
   runner: OSMRoadsTaskRunner
 
+  def handle(self) -> None:
+    try:
+      super().handle()
+    except CLIENT_DISCONNECT_ERRORS:
+      self.close_connection = True
+
   def log_message(self, fmt: str, *args: object) -> None:
     print(f"[osm_roads_webui] {self.address_string()} {fmt % args}", flush=True)
 
@@ -899,16 +907,22 @@ class OSMRoadsWebHandler(BaseHTTPRequestHandler):
     try:
       self.end_headers()
       self.wfile.write(body)
-    except (BrokenPipeError, ConnectionResetError):
+    except CLIENT_DISCONNECT_ERRORS:
+      self.close_connection = True
       return
 
   def _serve_events(self) -> None:
-    self.send_response(HTTPStatus.OK)
-    self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-    self.send_header("Cache-Control", "no-cache")
-    self.send_header("Connection", "keep-alive")
-    self.send_header("Access-Control-Allow-Origin", "*")
-    self.end_headers()
+    try:
+      self.send_response(HTTPStatus.OK)
+      self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+      self.send_header("Cache-Control", "no-cache")
+      self.send_header("Connection", "keep-alive")
+      self.send_header("Access-Control-Allow-Origin", "*")
+      self.end_headers()
+    except CLIENT_DISCONNECT_ERRORS:
+      self.close_connection = True
+      return
+
     last_sequence = -1
     while True:
       snapshot = self.runner.snapshot()
@@ -918,7 +932,8 @@ class OSMRoadsWebHandler(BaseHTTPRequestHandler):
         try:
           self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
           self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError):
+        except CLIENT_DISCONNECT_ERRORS:
+          self.close_connection = True
           return
         last_sequence = sequence
       time.sleep(0.5)
