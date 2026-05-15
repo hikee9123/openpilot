@@ -86,6 +86,13 @@ MAX_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE = 0.30
 MAX_VERIFIED_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE = 0.45
 DEBUG_SELECTED_LIMIT = 6
 DEBUG_CANDIDATE_LIMIT = 3
+SHORT_EXTENSION_STOP_REASONS = {"no_candidates", "assist_chain"}
+HIGH_SPEED_LOCAL_REMATCH_MPS = 60.0 / 3.6
+HIGH_SPEED_LOCAL_REMATCH_RADIUS_M = 170.0
+HIGH_SPEED_LOCAL_REMATCH_MAX_DISTANCE_M = 160.0
+HIGH_SPEED_LOCAL_REMATCH_MAX_HEADING_DIFF_DEG = 45.0
+HIGH_SPEED_LOCAL_REMATCH_SCORE_MARGIN = 20.0
+HIGH_SPEED_UNNAMED_LOCAL_REMATCH_MAX_SCORE = 155.0
 LOW_SPEED_HEADING_IGNORE_MPS = 2.0
 LOW_SPEED_LOOKUP_RADIUS_M = 95.0
 LOW_SPEED_PREVIOUS_HOLD_MPS = 3.0
@@ -111,6 +118,7 @@ MAJOR_FLOW_HIGHWAYS = {
   "secondary", "secondary_link", "tertiary", "tertiary_link",
 }
 LOCAL_FLOW_HIGHWAYS = {"service", "residential", "living_street", "track", "path", "footway", "cycleway", "pedestrian"}
+LOCAL_CONTINUATION_HIGHWAYS = {"residential", "unclassified", "service", "living_street", "road"}
 
 
 @dataclass(frozen=True)
@@ -410,6 +418,15 @@ def _short_extension_candidate_allowed(from_road: OSMRoadSegment, road: OSMRoadS
     return True
   if speed_mps >= MED_SPEED_TARGET_MIN_MPS and from_road.highway in MAJOR_FLOW_HIGHWAYS and road.highway in LOCAL_FLOW_HIGHWAYS:
     return False
+  if speed_mps >= MED_SPEED_TARGET_MIN_MPS and from_road.highway in LOCAL_FLOW_HIGHWAYS and road.highway in MAJOR_FLOW_HIGHWAYS and not road.is_ramp:
+    return True
+  if (
+    speed_mps < HIGH_SPEED_TARGET_MIN_MPS
+    and from_road.highway in LOCAL_CONTINUATION_HIGHWAYS
+    and road.highway in LOCAL_CONTINUATION_HIGHWAYS
+    and not road.is_ramp
+  ):
+    return True
   if from_road.highway in LINK_HIGHWAYS and road.highway in LINK_HIGHWAYS:
     return True
   if from_road.highway in LINK_HIGHWAYS and road.highway in MAJOR_FLOW_HIGHWAYS and not road.is_ramp:
@@ -693,7 +710,7 @@ class OSMRoadPredictor:
     current = find_current_road(conn, gps.lat, gps.lon, gps.bearing_deg, self.lookup_radius_m,
                                 previous_name, previous_road_id, previous_osm_id)
     if current is not None:
-      return current
+      return self._high_speed_flow_match(conn, gps, current)
 
     if previous_road_id is not None and gps.speed_mps <= LOW_SPEED_PREVIOUS_HOLD_MPS:
       current = self._previous_current_hold_match(conn, gps, previous_road_id)
@@ -718,6 +735,72 @@ class OSMRoadPredictor:
     if relaxed.distance_m > RELAXED_LOOKUP_MAX_DISTANCE_M or relaxed.score > RELAXED_LOOKUP_MAX_SCORE:
       return None
     return relaxed
+
+  def _high_speed_flow_match(self, conn: sqlite3.Connection, gps: GPSFix, current: OSMRoadMatch) -> OSMRoadMatch:
+    if gps.speed_mps < HIGH_SPEED_LOCAL_REMATCH_MPS or current.highway not in LOCAL_CONTINUATION_HIGHWAYS:
+      return current
+
+    best: tuple[float, OSMRoadSegment, float, float] | None = None
+    for road in nearby_road_segments(conn, gps.lat, gps.lon, HIGH_SPEED_LOCAL_REMATCH_RADIUS_M, limit=80):
+      if road.road_id == current.road_id or road.highway not in MAJOR_FLOW_HIGHWAYS:
+        continue
+      if road.ramp_type in ENDPOINT_ASSIST_BLOCKED_RAMP_TYPES:
+        continue
+      if (road.is_ramp or road.highway in LINK_HIGHWAYS) and not self._flow_candidate_has_major_successor(conn, road.road_id):
+        continue
+      if road.distance_m > HIGH_SPEED_LOCAL_REMATCH_MAX_DISTANCE_M:
+        continue
+      driving_bearing = driving_bearing_for_oneway(road.bearing_deg, road.oneway, gps.bearing_deg)
+      heading_diff = angle_diff_deg(driving_bearing, gps.bearing_deg)
+      if heading_diff > HIGH_SPEED_LOCAL_REMATCH_MAX_HEADING_DIFF_DEG:
+        continue
+      score = (
+        road.distance_m
+        + heading_diff * 1.2
+        - _clamp(road.road_priority / 100.0, 0.0, 1.0) * 35.0
+        - _clamp(road.main_flow_bias, 0.0, 1.0) * 10.0
+      )
+      if best is None or score < best[0]:
+        best = (score, road, heading_diff, driving_bearing)
+
+    max_score = current.score + HIGH_SPEED_LOCAL_REMATCH_SCORE_MARGIN
+    if not current.name and not current.ref:
+      max_score = max(max_score, HIGH_SPEED_UNNAMED_LOCAL_REMATCH_MAX_SCORE)
+    if best is None or best[0] > max_score:
+      return current
+
+    _, road, heading_diff, driving_bearing = best
+    return OSMRoadMatch(
+      road_id=road.road_id,
+      osm_id=road.osm_id,
+      name=road.name,
+      ref=road.ref,
+      highway=road.highway,
+      road_class=road.road_class,
+      oneway=road.oneway,
+      distance_m=road.distance_m,
+      heading_diff_deg=heading_diff,
+      bearing_deg=road.bearing_deg,
+      driving_bearing_deg=driving_bearing,
+      score=best[0],
+    )
+
+  def _flow_candidate_has_major_successor(self, conn: sqlite3.Connection, road_id: int) -> bool:
+    frontier: list[tuple[int, int]] = [(road_id, 0)]
+    seen = {road_id}
+    while frontier:
+      current_id, depth = frontier.pop(0)
+      if depth >= 3:
+        return True
+      for transition in road_successors(conn, current_id, limit=8):
+        road = transition.road
+        if road.road_id in seen:
+          continue
+        seen.add(road.road_id)
+        if road.highway not in MAJOR_FLOW_HIGHWAYS or road.ramp_type in ENDPOINT_ASSIST_BLOCKED_RAMP_TYPES:
+          continue
+        frontier.append((road.road_id, depth + 1))
+    return False
 
   def _previous_current_hold_match(self, conn: sqlite3.Connection, gps: GPSFix, road_id: int) -> OSMRoadMatch | None:
     road = self._road_segment(conn, road_id)
@@ -1271,7 +1354,7 @@ class OSMRoadPredictor:
       return predicted[:80], False, graph_gap_assist, assist_road_ids, debug_text
 
     predicted_distance_m = _prediction_distance_m(predicted)
-    if predicted_distance_m < target_distance_m and stop_reason == "no_candidates":
+    if predicted_distance_m < target_distance_m and stop_reason in SHORT_EXTENSION_STOP_REASONS:
       extension, short_extension_endpoint_hits, short_extension_forward_hits = self._extend_short_prediction(
         conn, gps, current, predicted, visited, bearing, score_context_road,
         target_distance_m, predicted_distance_m,
