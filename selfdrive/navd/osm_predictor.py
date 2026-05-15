@@ -84,6 +84,7 @@ SHORT_GRAPH_EXTENSION_SEGMENT_LIMIT = 80
 SHORT_GRAPH_FORWARD_ASSIST_M = 700.0
 MAX_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE = 0.30
 MAX_VERIFIED_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE = 0.45
+VERIFIED_ENDPOINT_ASSIST_WEIGHT = 0.35
 DEBUG_SELECTED_LIMIT = 6
 DEBUG_CANDIDATE_LIMIT = 3
 SHORT_EXTENSION_STOP_REASONS = {"no_candidates", "assist_chain"}
@@ -1112,9 +1113,9 @@ class OSMRoadPredictor:
   def _extend_short_prediction(self, conn: sqlite3.Connection, gps: GPSFix, current: OSMRoadMatch,
                                predicted: list[OSMRoadSegment], visited: set[int],
                                reference_bearing_deg: float, current_road: OSMRoadSegment | None,
-                               target_distance_m: float, predicted_distance_m: float) -> tuple[list[OSMRoadSegment], int, int]:
+                               target_distance_m: float, predicted_distance_m: float) -> tuple[list[OSMRoadSegment], int, int, int]:
     if not predicted:
-      return [], 0, 0
+      return [], 0, 0, 0
 
     added: list[OSMRoadSegment] = []
     extension_visited = set(visited)
@@ -1123,6 +1124,7 @@ class OSMRoadPredictor:
     context_road = current_road or from_road
     endpoint_hits = 0
     forward_hits = 0
+    verified_hits = 0
 
     while (
       predicted_distance_m < target_distance_m
@@ -1145,6 +1147,8 @@ class OSMRoadPredictor:
         break
 
       road = candidate.road
+      if _strong_endpoint_assist_candidate(from_road, road, candidate.heading_diff_deg):
+        verified_hits += 1
       added.append(road)
       extension_visited.add(road.road_id)
       predicted_distance_m += max(0.0, road.segment_length)
@@ -1152,7 +1156,7 @@ class OSMRoadPredictor:
       bearing = candidate.driving_bearing_deg
       context_road = road
 
-    return added, endpoint_hits, forward_hits
+    return added, endpoint_hits, forward_hits, verified_hits
 
   def _fallback_prediction(self, conn: sqlite3.Connection, gps: GPSFix, target_distance_m: float) -> list[OSMRoadSegment]:
     return forward_road_segments(
@@ -1225,6 +1229,7 @@ class OSMRoadPredictor:
     total_skip_ahead = 0
     skip_ahead_hits = 0
     endpoint_assist_hits = 0
+    verified_endpoint_assist_hits = 0
     consecutive_endpoint_assist = 0
     consecutive_strong_endpoint_assist = 0
     rejects: dict[str, int] = {}
@@ -1307,6 +1312,7 @@ class OSMRoadPredictor:
       if best.road_id in assist_road_ids:
         consecutive_endpoint_assist += 1
         if previous_context_road is not None and _strong_endpoint_assist_candidate(previous_context_road, best, best_candidate.heading_diff_deg):
+          verified_endpoint_assist_hits += 1
           consecutive_strong_endpoint_assist += 1
         else:
           consecutive_strong_endpoint_assist = 0
@@ -1367,7 +1373,7 @@ class OSMRoadPredictor:
 
     predicted_distance_m = _prediction_distance_m(predicted)
     if predicted_distance_m < target_distance_m and stop_reason in SHORT_EXTENSION_STOP_REASONS:
-      extension, short_extension_endpoint_hits, short_extension_forward_hits = self._extend_short_prediction(
+      extension, short_extension_endpoint_hits, short_extension_forward_hits, short_extension_verified_hits = self._extend_short_prediction(
         conn, gps, current, predicted, visited, bearing, score_context_road,
         target_distance_m, predicted_distance_m,
       )
@@ -1377,6 +1383,7 @@ class OSMRoadPredictor:
         assist_road_ids.update(road.road_id for road in extension)
         visited.update(road.road_id for road in extension)
         endpoint_assist_hits += short_extension_endpoint_hits
+        verified_endpoint_assist_hits += short_extension_verified_hits
         predicted_distance_m = _prediction_distance_m(predicted)
 
     if predicted_distance_m < target_distance_m:
@@ -1395,7 +1402,9 @@ class OSMRoadPredictor:
     else:
       range_mode = "curve_extended"
     final_assist_ratio = endpoint_assist_hits / max(1, len(predicted))
-    assist_ratio_confident = final_assist_ratio <= MAX_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE
+    effective_assist_hits = max(0.0, endpoint_assist_hits - verified_endpoint_assist_hits * (1.0 - VERIFIED_ENDPOINT_ASSIST_WEIGHT))
+    effective_assist_ratio = effective_assist_hits / max(1, len(predicted))
+    assist_ratio_confident = effective_assist_ratio <= MAX_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE
     verified_assist_ratio_confident = (
       match_good
       and final_assist_ratio <= MAX_VERIFIED_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE
@@ -1410,14 +1419,16 @@ class OSMRoadPredictor:
       confidence_reason = "fallback_fill"
     elif predicted_distance_m < target_distance_m:
       confidence_reason = "short_prediction"
-    elif verified_assist_ratio_confident and not assist_ratio_confident:
+    elif (assist_ratio_confident or verified_assist_ratio_confident) and final_assist_ratio > MAX_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE:
       confidence_reason = "assist_verified"
-    elif final_assist_ratio > MAX_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE:
+    elif effective_assist_ratio > MAX_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE:
       confidence_reason = "assist_uncertain"
     debug_text = (
       f"current={current.display_name or '-'} road_id={current.road_id} "
       f"graph_count={len(predicted)} successors={total_successors} accepted={total_accepted} "
-      f"skip_ahead={total_skip_ahead}/{skip_ahead_hits} endpoint_assist={endpoint_assist_hits} assist_ratio={final_assist_ratio:.2f} "
+      f"skip_ahead={total_skip_ahead}/{skip_ahead_hits} endpoint_assist={endpoint_assist_hits} "
+      f"verified_assist={verified_endpoint_assist_hits} assist_ratio={final_assist_ratio:.2f} "
+      f"effective_assist_ratio={effective_assist_ratio:.2f} "
       f"quality={quality:.2f} match={match_quality:.2f}/{len(self._prediction_match_samples)} range={range_mode} stop={stop_reason or '-'} "
       f"predicted_len={predicted_distance_m:.1f} target_len={target_distance_m:.0f} short={int(predicted_distance_m < target_distance_m)} "
       f"short_extend={short_extension_count}/{short_extension_endpoint_hits}/{short_extension_forward_hits} "

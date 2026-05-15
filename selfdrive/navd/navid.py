@@ -149,14 +149,14 @@ def _prediction_failure_reason(prediction: RoadPrediction) -> str:
   if prediction.predicted_from_graph and not short:
     return ""
   if "confidence=assist_uncertain" in prediction.debug_text:
-    return "assist_uncertain"
+    return "assist_uncertain_short" if short else ""
   if "confidence=fallback_fill" in prediction.debug_text:
-    return "fallback_fill_short" if short else "fallback_fill_len_ok"
+    return "fallback_fill_short" if short else ""
   if "confidence=short_prediction" in prediction.debug_text or short:
     return "graph_short"
   if "stop=no_candidates" in prediction.debug_text:
-    return "graph_no_candidates_short" if short else "graph_no_candidates_len_ok"
-  return "fallback_short" if short else "fallback_len_ok"
+    return "graph_no_candidates_short" if short else ""
+  return "fallback_short" if short else ""
 
 
 def _prediction_log_allowed(prediction: RoadPrediction) -> bool:
