@@ -436,13 +436,16 @@ def _progress_from_line(task_key: str, line: str, current: int) -> tuple[int, st
 
 def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, object]) -> None:
   body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-  handler.send_response(status)
-  handler.send_header("Content-Type", "application/json; charset=utf-8")
-  handler.send_header("Content-Length", str(len(body)))
-  handler.send_header("Cache-Control", "no-store")
-  handler.send_header("Access-Control-Allow-Origin", "*")
-  handler.end_headers()
-  handler.wfile.write(body)
+  try:
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.end_headers()
+    handler.wfile.write(body)
+  except (BrokenPipeError, ConnectionResetError):
+    return
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
@@ -893,8 +896,11 @@ class OSMRoadsWebHandler(BaseHTTPRequestHandler):
     self.send_header("Content-Length", str(len(body)))
     self.send_header("Cache-Control", "no-store")
     self.send_header("Access-Control-Allow-Origin", "*")
-    self.end_headers()
-    self.wfile.write(body)
+    try:
+      self.end_headers()
+      self.wfile.write(body)
+    except (BrokenPipeError, ConnectionResetError):
+      return
 
   def _serve_events(self) -> None:
     self.send_response(HTTPStatus.OK)
