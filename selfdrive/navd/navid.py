@@ -21,8 +21,8 @@ HISTORY_SEGMENT_LIMIT = 40
 OSM_TRACE_LOG_MAX_BYTES = 10 * 1024 * 1024
 OSM_LOG_MIN_SPEED_MPS = 1.0
 OSM_LOG_REPEAT_SKIP_AFTER = 2
-HISTORY_HOLD_MIN_LEN_RATIO = 0.60
-HISTORY_HOLD_MIN_LEN_M = 100.0
+HISTORY_HOLD_MIN_LEN_RATIO = 0.70
+HISTORY_HOLD_MIN_LEN_M = 1000.0
 OSM_TRACE_LOG_PATH = DEFAULT_NAVD_LOG_DIR / "osm_prediction_trace.csv"
 OSM_FAILURE_LOG_PATH = DEFAULT_NAVD_LOG_DIR / "osm_prediction_failures.csv"
 OSM_TRACE_FIELDS = (
@@ -37,6 +37,7 @@ OSM_TRACE_FIELDS = (
   "current_name",
   "current_distance_m",
   "current_heading_diff_deg",
+  "predicted_len_m",
   "predicted_road_ids",
   "assist_road_ids",
   "nearby_road_ids",
@@ -290,6 +291,7 @@ class OsmPredictionLogWriter:
       "current_name": "" if current is None else current.display_name,
       "current_distance_m": "" if current is None else f"{current.distance_m:.1f}",
       "current_heading_diff_deg": "" if current is None else f"{current.heading_diff_deg:.1f}",
+      "predicted_len_m": f"{_prediction_distance_m(prediction):.1f}",
       "predicted_road_ids": _road_ids(prediction.predicted),
       "assist_road_ids": " ".join(str(road_id) for road_id in sorted(prediction.assist_road_ids)),
       "nearby_road_ids": _road_ids(prediction.nearby, limit=40),

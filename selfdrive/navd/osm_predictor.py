@@ -103,7 +103,8 @@ RELAXED_LOOKUP_HEADING_DIFF_DEG = 85.0
 RELAXED_LOOKUP_MAX_DISTANCE_M = 80.0
 RELAXED_LOOKUP_MAX_SCORE = 105.0
 PREVIOUS_PREDICTION_HOLD_MAX_AGE_S = 8.0
-PREVIOUS_PREDICTION_MIN_TAIL_DISTANCE_M = 100.0
+PREVIOUS_PREDICTION_MIN_TAIL_DISTANCE_M = 1000.0
+PREVIOUS_PREDICTION_MIN_TAIL_TARGET_RATIO = 0.70
 PREVIOUS_PREDICTION_MIN_TAIL_SEGMENTS = 3
 PREVIOUS_PREDICTION_SCORE_MARGIN = 0.15
 PREVIOUS_PREDICTION_GRAPH_GAP_SCORE_BONUS = 0.12
@@ -606,6 +607,10 @@ class OSMRoadPredictor:
   def _prediction_needs_history_hold(self, prediction: RoadPrediction) -> bool:
     if prediction.current is None or not prediction.predicted:
       return False
+    predicted_distance_m = _prediction_distance_m(prediction.predicted)
+    target_distance_m = _target_prediction_distance_m(prediction.gps.speed_mps)
+    if predicted_distance_m >= target_distance_m and "confidence=short_prediction" not in prediction.debug_text and "short=1" not in prediction.debug_text:
+      return False
     return (
       not prediction.predicted_from_graph
       or "successors=0" in prediction.debug_text
@@ -625,6 +630,7 @@ class OSMRoadPredictor:
     )
 
   def _previous_prediction_tail(self, current: OSMRoadMatch | None, now: float,
+                                min_tail_distance_m: float,
                                 allow_related_current: bool = False) -> tuple[list[OSMRoadSegment], set[int], bool] | None:
     previous = self._last_prediction
     if current is None or previous is None or previous.current is None:
@@ -654,7 +660,7 @@ class OSMRoadPredictor:
     tail = [road for road in tail if road.road_id != current.road_id]
     if len(tail) < PREVIOUS_PREDICTION_MIN_TAIL_SEGMENTS:
       return None
-    if _prediction_distance_m(tail) < PREVIOUS_PREDICTION_MIN_TAIL_DISTANCE_M:
+    if _prediction_distance_m(tail) < min_tail_distance_m:
       return None
 
     tail_ids = {road.road_id for road in tail}
@@ -666,7 +672,13 @@ class OSMRoadPredictor:
       return prediction
 
     graph_gap = self._prediction_has_graph_gap(prediction)
-    previous_tail = self._previous_prediction_tail(prediction.current, now, allow_related_current=graph_gap)
+    target_distance_m = _target_prediction_distance_m(prediction.gps.speed_mps)
+    min_tail_distance_m = max(
+      PREVIOUS_PREDICTION_MIN_TAIL_DISTANCE_M,
+      target_distance_m * PREVIOUS_PREDICTION_MIN_TAIL_TARGET_RATIO,
+    )
+    previous_tail = self._previous_prediction_tail(prediction.current, now, min_tail_distance_m,
+                                                  allow_related_current=graph_gap)
     previous = self._last_prediction
     if previous_tail is None or previous is None:
       return prediction
