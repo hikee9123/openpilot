@@ -527,18 +527,18 @@
         <div class="health warn" id="server-health">서버 상태 확인 중</div>
       </div>
       <div class="toolbar">
-        <button data-task="download">PBF 다운로드</button>
-        <button data-task="generate_cameras">단속카메라 생성</button>
-        <button class="primary" data-task="build">DB 생성</button>
-        <button data-task="replace">DB 교체 재시도</button>
-        <button data-task="import_cameras">카메라 매칭</button>
-        <button data-task="validate">DB 검증</button>
-        <button id="db-view">DB 보기</button>
-        <button id="map-view">지도 보기</button>
-        <button id="map-page">지도 전용</button>
-        <button data-task="upload_dry_run">업로드 확인</button>
-        <button class="primary" data-task="upload_push">GitHub 업로드</button>
-        <button class="danger" id="stop" disabled>중지</button>
+        <button data-task="download" title="OSM 도로 원본 south-korea-latest.osm.pbf를 다운로드합니다">PBF 다운로드</button>
+        <button data-task="generate_cameras" title="공공데이터에서 단속카메라 목록을 받아 speed_cameras.csv를 생성합니다">단속카메라 생성</button>
+        <button class="primary" data-task="build" title="PBF 도로 원본과 카메라 CSV를 읽어 OSM 도로 DB를 생성하고 검증합니다">DB 생성</button>
+        <button data-task="replace" title="생성은 끝났지만 파일 잠금으로 교체 실패한 pending DB를 최종 DB로 다시 교체합니다">DB 교체 재시도</button>
+        <button data-task="import_cameras" title="기존 OSM 도로 DB에 speed_cameras.csv를 매칭해 카메라 테이블을 갱신합니다">카메라 매칭</button>
+        <button data-task="validate" title="현재 설정된 OSM 도로 DB의 스키마, 도로 그래프, 카메라 데이터를 검증합니다">DB 검증</button>
+        <button id="db-view" title="현재 OSM 도로 DB의 메타데이터, 건수, 샘플 데이터를 표시합니다">DB 보기</button>
+        <button id="map-view" title="현재 화면 안에서 카메라와 매칭 도로를 지도 패널로 표시합니다">지도 보기</button>
+        <button id="map-page" title="지도 전용 화면을 열어 카메라와 도로 데이터를 더 크게 확인합니다">지도 전용</button>
+        <button data-task="upload_dry_run" title="GitHub 업로드 전에 DB 검증과 Git 작업 가능 상태를 dry-run으로 확인합니다">업로드 확인</button>
+        <button class="primary" data-task="upload_push" title="검증된 OSM 도로 DB를 GitHub 데이터 저장소에 커밋하고 업로드합니다">GitHub 업로드</button>
+        <button class="danger" id="stop" title="현재 실행 중인 다운로드, 생성, 검증, 업로드 작업을 중지합니다" disabled>중지</button>
       </div>
       <div class="build-options">
         <label for="build-profile">DB 생성 모드</label>
