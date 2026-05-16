@@ -107,6 +107,34 @@ def _camera_to_overlay(
   }
 
 
+def _camera_display_rank(display_class: str) -> int:
+  if display_class == "normal":
+    return 0
+  if display_class == "suspicious":
+    return 1
+  return 2
+
+
+def _better_camera_overlay(candidate: dict, current: dict | None) -> bool:
+  if current is None:
+    return True
+  candidate_key = (
+    _camera_display_rank(str(candidate.get("displayClass", ""))),
+    -int(bool(candidate.get("primaryMatch", False))),
+    -float(candidate.get("matchConfidence", 0.0)),
+    float(candidate.get("matchDistanceM", 0.0)),
+    float(candidate.get("x", 0.0)),
+  )
+  current_key = (
+    _camera_display_rank(str(current.get("displayClass", ""))),
+    -int(bool(current.get("primaryMatch", False))),
+    -float(current.get("matchConfidence", 0.0)),
+    float(current.get("matchDistanceM", 0.0)),
+    float(current.get("x", 0.0)),
+  )
+  return candidate_key < current_key
+
+
 def _speed_camera_overlay(prediction: RoadPrediction, prediction_distance_m: float) -> list[dict]:
   road_ids = _route_road_ids(prediction)
   if not road_ids:
@@ -117,16 +145,14 @@ def _speed_camera_overlay(prediction: RoadPrediction, prediction_distance_m: flo
   )
   route_bearings = _route_bearings(prediction)
   cameras = speed_cameras_for_road_ids(road_ids=road_ids[:CAMERA_LOOKUP_LIMIT], limit=MAX_CAMERA_OVERLAY_ITEMS * 3)
-  overlays: list[dict] = []
-  seen_camera_ids: set[int] = set()
+  overlays_by_camera_id: dict[int, dict] = {}
   for camera in cameras:
-    if camera.camera_id in seen_camera_ids:
-      continue
     overlay = _camera_to_overlay(camera, prediction, route_bearings, max_forward_m)
     if overlay is None:
       continue
-    seen_camera_ids.add(camera.camera_id)
-    overlays.append(overlay)
+    if _better_camera_overlay(overlay, overlays_by_camera_id.get(camera.camera_id)):
+      overlays_by_camera_id[camera.camera_id] = overlay
+  overlays = list(overlays_by_camera_id.values())
   overlays.sort(key=lambda item: (item["x"], -int(item["primaryMatch"]), -float(item["matchConfidence"]), item["cameraId"]))
   return overlays[:MAX_CAMERA_OVERLAY_ITEMS]
 

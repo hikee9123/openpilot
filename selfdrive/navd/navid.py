@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import math
+import re
 import time
 from collections import OrderedDict
 from pathlib import Path
@@ -33,6 +34,13 @@ OSM_TRACE_FIELDS = (
   "speed_mps",
   "mode",
   "failure_reason",
+  "target_len_m",
+  "stop_reason",
+  "confidence_reason",
+  "endpoint_assist_ratio",
+  "short_extend_count",
+  "fallback_fill_count",
+  "corridor_fill_count",
   "current_road_id",
   "current_name",
   "current_distance_m",
@@ -41,6 +49,13 @@ OSM_TRACE_FIELDS = (
   "predicted_road_ids",
   "assist_road_ids",
   "nearby_road_ids",
+  "normal_camera_id",
+  "normal_camera_speed_kph",
+  "normal_camera_forward_m",
+  "nearest_camera_id",
+  "nearest_camera_display_class",
+  "nearest_camera_reject_reason",
+  "nearest_camera_forward_m",
   "debug",
 )
 
@@ -155,6 +170,8 @@ def _prediction_failure_reason(prediction: RoadPrediction) -> str:
     return "assist_uncertain_short" if short else ""
   if "confidence=fallback_fill" in prediction.debug_text:
     return "fallback_fill_short" if short else ""
+  if "confidence=corridor_fill" in prediction.debug_text:
+    return "corridor_fill_short" if short else ""
   if "confidence=short_prediction" in prediction.debug_text or short:
     return "graph_short"
   if "stop=no_candidates" in prediction.debug_text:
@@ -165,6 +182,16 @@ def _prediction_failure_reason(prediction: RoadPrediction) -> str:
 def _prediction_log_allowed(prediction: RoadPrediction) -> bool:
   # GPS can report small non-zero speeds while the car is stationary.
   return prediction.gps.speed_mps >= OSM_LOG_MIN_SPEED_MPS
+
+
+def _debug_value(debug_text: str, key: str) -> str:
+  match = re.search(rf"(?:^| ){re.escape(key)}=([^ ]+)", debug_text)
+  return "" if match is None else match.group(1)
+
+
+def _debug_count(debug_text: str, key: str) -> str:
+  value = _debug_value(debug_text, key)
+  return value.split("/", 1)[0] if value else ""
 
 
 class CsvLogWriter:
@@ -276,7 +303,32 @@ class OsmPredictionLogWriter:
       self._repeat_count = 1
     return self._repeat_count > OSM_LOG_REPEAT_SKIP_AFTER
 
-  def log(self, prediction: RoadPrediction) -> None:
+  def _camera_log_fields(self, cameras: list[dict] | None) -> dict[str, str]:
+    sorted_cameras = sorted(cameras or [], key=lambda item: (float(item.get("x", 0.0)), int(item.get("cameraId", 0))))
+    normal_camera = next((camera for camera in sorted_cameras if camera.get("displayClass") == "normal"), None)
+    nearest_camera = sorted_cameras[0] if sorted_cameras else None
+    return {
+      "normal_camera_id": "" if normal_camera is None else str(normal_camera.get("cameraId", "")),
+      "normal_camera_speed_kph": "" if normal_camera is None else str(normal_camera.get("speedLimitKph", "")),
+      "normal_camera_forward_m": "" if normal_camera is None else f"{float(normal_camera.get('x', 0.0)):.1f}",
+      "nearest_camera_id": "" if nearest_camera is None else str(nearest_camera.get("cameraId", "")),
+      "nearest_camera_display_class": "" if nearest_camera is None else str(nearest_camera.get("displayClass", "")),
+      "nearest_camera_reject_reason": "" if nearest_camera is None else str(nearest_camera.get("rejectReason", "")),
+      "nearest_camera_forward_m": "" if nearest_camera is None else f"{float(nearest_camera.get('x', 0.0)):.1f}",
+    }
+
+  def _prediction_debug_fields(self, prediction: RoadPrediction) -> dict[str, str]:
+    return {
+      "target_len_m": f"{_target_prediction_distance_m(prediction.gps.speed_mps):.0f}",
+      "stop_reason": _debug_value(prediction.debug_text, "stop"),
+      "confidence_reason": _debug_value(prediction.debug_text, "confidence"),
+      "endpoint_assist_ratio": _debug_value(prediction.debug_text, "assist_ratio"),
+      "short_extend_count": _debug_count(prediction.debug_text, "short_extend"),
+      "fallback_fill_count": _debug_value(prediction.debug_text, "fallback_fill"),
+      "corridor_fill_count": _debug_value(prediction.debug_text, "corridor_fill"),
+    }
+
+  def log(self, prediction: RoadPrediction, cameras: list[dict] | None = None) -> None:
     if not self.enabled or not _prediction_log_allowed(prediction):
       return
 
@@ -290,6 +342,7 @@ class OsmPredictionLogWriter:
       "speed_mps": f"{prediction.gps.speed_mps:.2f}",
       "mode": _prediction_mode(prediction),
       "failure_reason": failure_reason,
+      **self._prediction_debug_fields(prediction),
       "current_road_id": "" if current is None else current.road_id,
       "current_name": "" if current is None else current.display_name,
       "current_distance_m": "" if current is None else f"{current.distance_m:.1f}",
@@ -298,6 +351,7 @@ class OsmPredictionLogWriter:
       "predicted_road_ids": _road_ids(prediction.predicted),
       "assist_road_ids": " ".join(str(road_id) for road_id in sorted(prediction.assist_road_ids)),
       "nearby_road_ids": _road_ids(prediction.nearby, limit=40),
+      **self._camera_log_fields(cameras),
       "debug": prediction.debug_text,
     }
     if self._repeated_row(row):
@@ -358,7 +412,6 @@ def main() -> None:
       prediction = predictor.update(gps)
       now = time.monotonic()
       if prediction is not None:
-        log_writer.log(prediction)
         if osm_logging_enabled and _prediction_log_allowed(prediction) and prediction.debug_text:
           prediction_debug = f"{_prediction_mode(prediction)} {prediction.debug_text}"
           log_interval_s = 30.0 if prediction.predicted_from_graph else 5.0
@@ -374,6 +427,8 @@ def main() -> None:
         while len(history_segments) > HISTORY_SEGMENT_LIMIT:
           history_segments.popitem(last=False)
       road_name, bearing, prediction_distance_m, roads, cameras = build_minimap_overlay(prediction, list(history_segments.values()))
+      if prediction is not None:
+        log_writer.log(prediction, cameras)
       overlay_key = (
         road_name,
         bearing,
