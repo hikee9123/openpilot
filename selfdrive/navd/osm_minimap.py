@@ -14,11 +14,12 @@ from openpilot.selfdrive.navd.osm_roads import (
 
 MAX_CAMERA_OVERLAY_ITEMS = 32
 CAMERA_LOOKUP_LIMIT = 96
-CAMERA_FORWARD_BACK_TOLERANCE_M = 10.0
+CAMERA_FORWARD_BACK_TOLERANCE_M = 30.0
 CAMERA_FORWARD_EXTRA_M = 120.0
 CAMERA_MIN_FORWARD_WINDOW_M = 350.0
 CAMERA_MAX_FORWARD_WINDOW_M = 1000.0
 CAMERA_MAX_SIDE_M = 120.0
+CAMERA_MAX_NORMAL_SIDE_M = 260.0
 CAMERA_MAX_BEARING_DIFF_DEG = 105.0
 SIGNAL_CAMERA_TYPES = ("2", "02", "1+02", "01+02", "1+2", "01/02", "1/02", "01/2")
 INTERSECTION_CAMERA_KEYWORDS = ("교차로", "사거리", "삼거리", "오거리", "로터리")
@@ -104,7 +105,8 @@ def _camera_to_overlay(
   forward_m, right_m = latlon_to_car_space_m(prediction.gps.lat, prediction.gps.lon, prediction.gps.bearing_deg, camera.lat, camera.lon)
   if forward_m < -CAMERA_FORWARD_BACK_TOLERANCE_M or forward_m > max_forward_m:
     return None
-  if abs(right_m) > CAMERA_MAX_SIDE_M:
+  side_limit_m = CAMERA_MAX_NORMAL_SIDE_M if camera.display_class == "normal" else CAMERA_MAX_SIDE_M
+  if abs(right_m) > side_limit_m:
     return None
   if not _camera_direction_matches(camera, route_bearings, prediction.gps.bearing_deg):
     return None

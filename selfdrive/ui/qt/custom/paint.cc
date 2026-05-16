@@ -16,6 +16,20 @@
 #include "common/util.h"
 #include "selfdrive/ui/qt/util.h"
 
+namespace {
+
+constexpr float kOsmCameraSelectBehindM = -10.0f;
+constexpr float kOsmCameraHoldBehindM = -30.0f;
+
+bool alertableOsmCamera(const OsmMinimapCamera &camera, float behind_limit_m) {
+  return camera.display_class == QStringLiteral("normal")
+      && camera.speed_limit_kph > 0
+      && std::isfinite(camera.x)
+      && camera.x >= behind_limit_m;
+}
+
+}  // namespace
+
 
 
 
@@ -554,9 +568,10 @@ void OnPaint::drawSpeed(QPainter &p, int x, QString speedStr, QString speedUnit 
   drawText3(p, x, 335, str, QColor(255,255,255,200) );
 }
 
-bool OnPaint::speedCameraAlert(int &cam_type, int &limit_speed, int &distance_m, bool &signal_camera) const
+bool OnPaint::speedCameraAlert(int &cam_type, int &limit_speed, int &distance_m, bool &signal_camera)
 {
   if (m_nda.camType != 0 && m_nda.camLimitSpeedLeftDist > 0) {
+    osm_active_camera_id = 0;
     cam_type = m_nda.camType;
     limit_speed = std::max(0, m_nda.camLimitSpeed);
     distance_m = std::max(0, m_nda.camLimitSpeedLeftDist);
@@ -565,26 +580,38 @@ bool OnPaint::speedCameraAlert(int &cam_type, int &limit_speed, int &distance_m,
   }
 
   const OsmMinimapCamera *nearest_camera = nullptr;
+  const OsmMinimapCamera *active_camera = nullptr;
   float nearest_forward_m = std::numeric_limits<float>::max();
   for (const OsmMinimapCamera &camera : m_nda.osmRoadOverlay.cameras) {
-    if (camera.display_class != QStringLiteral("normal")) continue;
-    if (camera.speed_limit_kph <= 0) continue;
-    if (!std::isfinite(camera.x) || camera.x < -10.0f) continue;
+    if (!alertableOsmCamera(camera, kOsmCameraHoldBehindM)) continue;
+    if (osm_active_camera_id != 0 && camera.camera_id == osm_active_camera_id) {
+      active_camera = &camera;
+    }
+    if (camera.x < kOsmCameraSelectBehindM) continue;
     if (camera.x < nearest_forward_m) {
       nearest_forward_m = camera.x;
       nearest_camera = &camera;
     }
   }
-  if (nearest_camera == nullptr) {
+
+  const OsmMinimapCamera *selected_camera = nullptr;
+  if (active_camera != nullptr) {
+    selected_camera = active_camera;
+  } else {
+    osm_active_camera_id = 0;
+    selected_camera = nearest_camera;
+  }
+  if (selected_camera == nullptr) {
     return false;
   }
 
-  signal_camera = nearest_camera->signal_camera;
+  signal_camera = selected_camera->signal_camera;
   bool type_ok = false;
-  const int parsed_type = nearest_camera->camera_type.toInt(&type_ok);
+  const int parsed_type = selected_camera->camera_type.toInt(&type_ok);
   cam_type = signal_camera ? 3 : (type_ok ? parsed_type : 1);
-  limit_speed = nearest_camera->speed_limit_kph;
-  distance_m = std::max(0, static_cast<int>(std::round(nearest_forward_m)));
+  limit_speed = selected_camera->speed_limit_kph;
+  distance_m = std::max(0, static_cast<int>(std::round(selected_camera->x)));
+  osm_active_camera_id = selected_camera->camera_id;
   return true;
 }
 

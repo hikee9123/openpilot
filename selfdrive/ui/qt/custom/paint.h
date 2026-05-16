@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <QStackedLayout>
 #include <QWidget>
 
@@ -56,7 +58,7 @@ private:
 
 private:
   void   ui_main_navi( QPainter &p );
-  bool   speedCameraAlert(int &cam_type, int &limit_speed, int &distance_m, bool &signal_camera) const;
+  bool   speedCameraAlert(int &cam_type, int &limit_speed, int &distance_m, bool &signal_camera);
   QString cameraTypeLabel(int cam_type, bool signal_camera) const;
   void   drawSpeedLimitSign(QPainter &p, const QPointF &center, int radius, int cam_type, int limit_speed, bool signal_camera) const;
   void   drawSignalBadge(QPainter &p, double center_x, double top_y) const;
@@ -142,6 +144,8 @@ private:
      int cntIdx;
      OsmMinimapData osmRoadOverlay;
   } m_nda;
+
+  uint64_t osm_active_camera_id = 0;
 
 
 private:
