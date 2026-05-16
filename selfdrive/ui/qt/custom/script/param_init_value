@@ -103,6 +103,7 @@ OSMCustomSpeedLimitT:30,40,65,72,80,95
 StockNaviSpeedEnabled:0
 OSMEnable:0
 OsmShowSuspiciousCameras:1
+OsmCameraDisplayDistanceM:1000
 OSMSpeedLimitEnable:0
 RESCountatStandstill:18
 KisaSpeedLimitOffsetOption:0

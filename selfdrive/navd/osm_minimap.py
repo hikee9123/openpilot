@@ -17,9 +17,11 @@ CAMERA_LOOKUP_LIMIT = 96
 CAMERA_FORWARD_BACK_TOLERANCE_M = 10.0
 CAMERA_FORWARD_EXTRA_M = 120.0
 CAMERA_MIN_FORWARD_WINDOW_M = 350.0
-CAMERA_MAX_FORWARD_WINDOW_M = 2200.0
+CAMERA_MAX_FORWARD_WINDOW_M = 1000.0
 CAMERA_MAX_SIDE_M = 120.0
 CAMERA_MAX_BEARING_DIFF_DEG = 105.0
+SIGNAL_CAMERA_TYPES = ("2", "02", "1+02", "01+02", "1+2", "01/02", "1/02", "01/2")
+INTERSECTION_CAMERA_KEYWORDS = ("교차로", "사거리", "삼거리", "오거리", "로터리")
 
 
 def _segment_to_overlay(segment: OSMRoadSegment, prediction: RoadPrediction, current_id: int | None,
@@ -75,6 +77,22 @@ def _camera_direction_matches(camera: OSMSpeedCamera, route_bearings: dict[int, 
   return angle_diff_deg(camera.bearing_deg, route_bearing) <= CAMERA_MAX_BEARING_DIFF_DEG
 
 
+def _signal_camera_type(camera_type: str) -> bool:
+  text = str(camera_type or "").strip()
+  compact = text.replace(" ", "")
+  normalized = compact.lstrip("0") or compact
+  return compact in SIGNAL_CAMERA_TYPES or normalized in SIGNAL_CAMERA_TYPES
+
+
+def _intersection_camera_context(camera: OSMSpeedCamera) -> bool:
+  text = f"{camera.address or ''} {camera.road_name or ''}"
+  return any(keyword in text for keyword in INTERSECTION_CAMERA_KEYWORDS)
+
+
+def _signal_camera_overlay(camera: OSMSpeedCamera) -> bool:
+  return _signal_camera_type(camera.camera_type) and _intersection_camera_context(camera)
+
+
 def _camera_to_overlay(
   camera: OSMSpeedCamera,
   prediction: RoadPrediction,
@@ -104,6 +122,7 @@ def _camera_to_overlay(
     "displayClass": camera.display_class or "suspicious",
     "directionVerdict": camera.direction_verdict or "unknown",
     "rejectReason": camera.reject_reason,
+    "signalCamera": _signal_camera_overlay(camera),
   }
 
 
@@ -135,12 +154,13 @@ def _better_camera_overlay(candidate: dict, current: dict | None) -> bool:
   return candidate_key < current_key
 
 
-def _speed_camera_overlay(prediction: RoadPrediction, prediction_distance_m: float) -> list[dict]:
+def _speed_camera_overlay(prediction: RoadPrediction, prediction_distance_m: float,
+                          camera_max_forward_m: float = CAMERA_MAX_FORWARD_WINDOW_M) -> list[dict]:
   road_ids = _route_road_ids(prediction)
   if not road_ids:
     return []
   max_forward_m = min(
-    CAMERA_MAX_FORWARD_WINDOW_M,
+    camera_max_forward_m,
     max(CAMERA_MIN_FORWARD_WINDOW_M, prediction_distance_m + CAMERA_FORWARD_EXTRA_M),
   )
   route_bearings = _route_bearings(prediction)
@@ -157,7 +177,10 @@ def _speed_camera_overlay(prediction: RoadPrediction, prediction_distance_m: flo
   return overlays[:MAX_CAMERA_OVERLAY_ITEMS]
 
 
-def build_minimap_overlay(prediction: RoadPrediction | None, history_segments: list[OSMRoadSegment] | None = None, max_segments: int = 220) -> tuple[str, float, float, list[dict], list[dict]]:
+def build_minimap_overlay(prediction: RoadPrediction | None,
+                          history_segments: list[OSMRoadSegment] | None = None,
+                          max_segments: int = 220,
+                          camera_max_forward_m: float = CAMERA_MAX_FORWARD_WINDOW_M) -> tuple[str, float, float, list[dict], list[dict]]:
   if prediction is None:
     return "", 0.0, 0.0, [], []
 
@@ -185,7 +208,7 @@ def build_minimap_overlay(prediction: RoadPrediction | None, history_segments: l
       round(prediction.gps.bearing_deg, 1),
       prediction_distance_m,
       [],
-      _speed_camera_overlay(prediction, prediction_distance_m),
+      _speed_camera_overlay(prediction, prediction_distance_m, camera_max_forward_m),
     )
 
   roads = [
@@ -198,5 +221,5 @@ def build_minimap_overlay(prediction: RoadPrediction | None, history_segments: l
     round(prediction.gps.bearing_deg, 1),
     prediction_distance_m,
     roads,
-    _speed_camera_overlay(prediction, prediction_distance_m),
+    _speed_camera_overlay(prediction, prediction_distance_m, camera_max_forward_m),
   )

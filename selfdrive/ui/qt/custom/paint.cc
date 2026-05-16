@@ -251,6 +251,7 @@ void OnPaint::updateState(const UIState &s)
         QString::fromUtf8(camera.getDisplayClass().cStr()),
         QString::fromUtf8(camera.getDirectionVerdict().cStr()),
         QString::fromUtf8(camera.getRejectReason().cStr()),
+        camera.getSignalCamera(),
       });
     }
   }
@@ -553,12 +554,13 @@ void OnPaint::drawSpeed(QPainter &p, int x, QString speedStr, QString speedUnit 
   drawText3(p, x, 335, str, QColor(255,255,255,200) );
 }
 
-bool OnPaint::speedCameraAlert(int &cam_type, int &limit_speed, int &distance_m) const
+bool OnPaint::speedCameraAlert(int &cam_type, int &limit_speed, int &distance_m, bool &signal_camera) const
 {
   if (m_nda.camType != 0 && m_nda.camLimitSpeedLeftDist > 0) {
     cam_type = m_nda.camType;
     limit_speed = std::max(0, m_nda.camLimitSpeed);
     distance_m = std::max(0, m_nda.camLimitSpeedLeftDist);
+    signal_camera = cam_type == 3;
     return true;
   }
 
@@ -577,16 +579,20 @@ bool OnPaint::speedCameraAlert(int &cam_type, int &limit_speed, int &distance_m)
     return false;
   }
 
+  signal_camera = nearest_camera->signal_camera;
   bool type_ok = false;
   const int parsed_type = nearest_camera->camera_type.toInt(&type_ok);
-  cam_type = type_ok ? parsed_type : 1;
+  cam_type = signal_camera ? 3 : (type_ok ? parsed_type : 1);
   limit_speed = nearest_camera->speed_limit_kph;
   distance_m = std::max(0, static_cast<int>(std::round(nearest_forward_m)));
   return true;
 }
 
-QString OnPaint::cameraTypeLabel(int cam_type) const
+QString OnPaint::cameraTypeLabel(int cam_type, bool signal_camera) const
 {
+  if (signal_camera) {
+    return QStringLiteral("Speed+Signal");
+  }
   switch (cam_type) {
     case 3:
       return QStringLiteral("Speed+Signal");
@@ -622,7 +628,7 @@ void OnPaint::drawSignalBadge(QPainter &p, double center_x, double top_y) const
   p.drawEllipse(QPointF(start_x + 22.0, lamp_y), 5.0, 5.0);
 }
 
-void OnPaint::drawSpeedLimitSign(QPainter &p, const QPointF &center, int radius, int cam_type, int limit_speed) const
+void OnPaint::drawSpeedLimitSign(QPainter &p, const QPointF &center, int radius, int cam_type, int limit_speed, bool signal_camera) const
 {
   const bool speed_camera = limit_speed > 0 || cam_type == 1 || cam_type == 2 || cam_type == 4;
   const QColor ring_color = speed_camera ? QColor(210, 32, 42, 255) : QColor(52, 120, 246, 255);
@@ -640,7 +646,7 @@ void OnPaint::drawSpeedLimitSign(QPainter &p, const QPointF &center, int radius,
   p.setPen(QColor(18, 18, 18, 255));
   p.drawText(QRectF(center.x() - radius + 4.0, center.y() - 36.0, radius * 2.0 - 8.0, 72.0), Qt::AlignCenter, text);
 
-  if (cam_type == 3) {
+  if (signal_camera) {
     drawSignalBadge(p, center.x(), center.y() - radius + 2.0);
   }
 }
@@ -650,7 +656,8 @@ void OnPaint::drawSpeedCameraAlert(QPainter &p, const QRect &set_speed_rect)
   int cam_type = 0;
   int limit_speed = 0;
   int distance_m = 0;
-  if (!speedCameraAlert(cam_type, limit_speed, distance_m)) {
+  bool signal_camera = false;
+  if (!speedCameraAlert(cam_type, limit_speed, distance_m, signal_camera)) {
     return;
   }
 
@@ -662,7 +669,7 @@ void OnPaint::drawSpeedCameraAlert(QPainter &p, const QRect &set_speed_rect)
 
   p.save();
   p.setRenderHint(QPainter::Antialiasing, true);
-  drawSpeedLimitSign(p, sign_center, sign_radius, cam_type, limit_speed);
+  drawSpeedLimitSign(p, sign_center, sign_radius, cam_type, limit_speed, signal_camera);
 
   const QString distance_text = distance_m >= 1000
       ? QStringLiteral("%1km").arg(distance_m / 1000.0, 0, 'f', 1)
@@ -675,7 +682,7 @@ void OnPaint::drawSpeedCameraAlert(QPainter &p, const QRect &set_speed_rect)
   QRectF label_rect(x, y + 206.0, width, 30.0);
   p.setFont(InterFont(22, QFont::Normal));
   p.setPen(QColor(255, 198, 77, 255));
-  p.drawText(label_rect, Qt::AlignCenter, cameraTypeLabel(cam_type));
+  p.drawText(label_rect, Qt::AlignCenter, cameraTypeLabel(cam_type, signal_camera));
   p.restore();
 }
 

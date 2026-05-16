@@ -56,9 +56,9 @@ private:
 
 private:
   void   ui_main_navi( QPainter &p );
-  bool   speedCameraAlert(int &cam_type, int &limit_speed, int &distance_m) const;
-  QString cameraTypeLabel(int cam_type) const;
-  void   drawSpeedLimitSign(QPainter &p, const QPointF &center, int radius, int cam_type, int limit_speed) const;
+  bool   speedCameraAlert(int &cam_type, int &limit_speed, int &distance_m, bool &signal_camera) const;
+  QString cameraTypeLabel(int cam_type, bool signal_camera) const;
+  void   drawSpeedLimitSign(QPainter &p, const QPointF &center, int radius, int cam_type, int limit_speed, bool signal_camera) const;
   void   drawSignalBadge(QPainter &p, double center_x, double top_y) const;
 
 private:

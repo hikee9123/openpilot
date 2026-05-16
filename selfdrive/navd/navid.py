@@ -26,6 +26,10 @@ HISTORY_HOLD_MIN_LEN_RATIO = 0.70
 HISTORY_HOLD_MIN_LEN_M = 1000.0
 OSM_TRACE_LOG_PATH = DEFAULT_NAVD_LOG_DIR / "osm_prediction_trace.csv"
 OSM_FAILURE_LOG_PATH = DEFAULT_NAVD_LOG_DIR / "osm_prediction_failures.csv"
+OSM_CAMERA_DISPLAY_DISTANCE_PARAM = "OsmCameraDisplayDistanceM"
+OSM_CAMERA_DISPLAY_DISTANCE_DEFAULT_M = 1000.0
+OSM_CAMERA_DISPLAY_DISTANCE_MIN_M = 350.0
+OSM_CAMERA_DISPLAY_DISTANCE_MAX_M = 3000.0
 OSM_TRACE_FIELDS = (
   "wall_time",
   "lat",
@@ -121,6 +125,7 @@ def _send_overlay(pm: messaging.PubMaster, available: bool, road_name: str = "",
     camera_items[i].displayClass = camera.get("displayClass", "suspicious")
     camera_items[i].directionVerdict = camera.get("directionVerdict", "unknown")
     camera_items[i].rejectReason = camera.get("rejectReason", "")
+    camera_items[i].signalCamera = bool(camera.get("signalCamera", False))
   pm.send("naviCustom", msg)
 
 
@@ -203,6 +208,17 @@ def _prediction_failure_reason(prediction: RoadPrediction) -> str:
 def _prediction_log_allowed(prediction: RoadPrediction) -> bool:
   # GPS can report small non-zero speeds while the car is stationary.
   return prediction.gps.speed_mps >= OSM_LOG_MIN_SPEED_MPS
+
+
+def _camera_display_distance_m(params: Params) -> float:
+  value = OSM_CAMERA_DISPLAY_DISTANCE_DEFAULT_M
+  try:
+    param_value = params.get(OSM_CAMERA_DISPLAY_DISTANCE_PARAM, return_default=True)
+    if param_value not in (None, ""):
+      value = float(param_value)
+  except Exception:
+    value = OSM_CAMERA_DISPLAY_DISTANCE_DEFAULT_M
+  return min(OSM_CAMERA_DISPLAY_DISTANCE_MAX_M, max(OSM_CAMERA_DISPLAY_DISTANCE_MIN_M, value))
 
 
 def _debug_value(debug_text: str, key: str) -> str:
@@ -451,7 +467,11 @@ def main() -> None:
         history_segments[current_segment.road_id] = current_segment
         while len(history_segments) > HISTORY_SEGMENT_LIMIT:
           history_segments.popitem(last=False)
-      road_name, bearing, prediction_distance_m, roads, cameras = build_minimap_overlay(prediction, list(history_segments.values()))
+      road_name, bearing, prediction_distance_m, roads, cameras = build_minimap_overlay(
+        prediction,
+        list(history_segments.values()),
+        camera_max_forward_m=_camera_display_distance_m(params),
+      )
       if prediction is not None:
         log_writer.log(prediction, cameras)
       overlay_key = (

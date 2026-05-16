@@ -37,6 +37,7 @@ struct OsmMinimapCamera {
   QString display_class = QStringLiteral("suspicious");
   QString direction_verdict = QStringLiteral("unknown");
   QString reject_reason;
+  bool signal_camera = false;
 };
 
 struct OsmMinimapData {

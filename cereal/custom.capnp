@@ -78,6 +78,7 @@ struct NaviCustom @0xf35cc4560bbf6ec2 {
             displayClass @10 :Text;
             directionVerdict @11 :Text;
             rejectReason @12 :Text;
+            signalCamera @13 :Bool;
         }
     }
 }
