@@ -1339,6 +1339,9 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
   osmSection->addWidget(osmEnable);
   toggles["OSMEnable"] = osmEnable;
 
+  auto *osmCameraSection = new CollapsibleSection(tr("OSM speed camera"), this);
+  addItem(osmCameraSection);
+
   if (params.get("OsmShowSuspiciousCameras").empty()) {
     params.putBool("OsmShowSuspiciousCameras", true);
   }
@@ -1348,8 +1351,19 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
       tr("Show suspicious OSM speed camera candidates on the mini map for validation. When disabled, only verified normal speed camera icons are shown."),
       "../assets/offroad/icon_openpilot.png",
       this);
-  osmSection->addWidget(osmShowSuspiciousCameras);
+  osmCameraSection->addWidget(osmShowSuspiciousCameras);
   toggles["OsmShowSuspiciousCameras"] = osmShowSuspiciousCameras;
+
+  if (params.get("OsmCameraDisplayDistanceM").empty()) {
+    params.put("OsmCameraDisplayDistanceM", "1000");
+  }
+  auto *osmCameraDisplayDistance = new CValueControl2(
+      "OsmCameraDisplayDistanceM",
+      tr("OSM camera icon distance"),
+      tr("Set how far ahead OSM speed camera icons are shown on the mini map and HUD camera alert."),
+      "../assets/offroad/icon_openpilot.png",
+      350, 3000, 100);
+  osmCameraSection->addWidget(osmCameraDisplayDistance);
 
   auto *navdLogging = new ParamControl(
       "NavdLogging",
