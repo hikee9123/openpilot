@@ -9,7 +9,10 @@
 #include <cstdio>
 #include <algorithm>   // std::clamp
 
+#include <QMouseEvent>
 #include <QTabWidget>
+#include <QTabBar>
+#include <QWheelEvent>
 #include <QObject>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -82,7 +85,90 @@ static const char *kTabStyle = R"(
     background: black;
     color: white;
   }
+  QTabBar QToolButton {
+    min-width: 92px;
+    min-height: 64px;
+    margin: 2px;
+    border: 1px solid #666;
+    border-radius: 4px;
+    background-color: #393939;
+  }
+  QTabBar QToolButton:pressed {
+    background-color: #4a4a4a;
+  }
 )";
+
+class SwipeableTabBar : public QTabBar {
+public:
+  explicit SwipeableTabBar(QWidget *parent = nullptr) : QTabBar(parent) {
+    setUsesScrollButtons(true);
+    setExpanding(false);
+    setElideMode(Qt::ElideNone);
+  }
+
+protected:
+  void mousePressEvent(QMouseEvent *event) override {
+    dragStartPos = event->pos();
+    dragSwitched = false;
+    QTabBar::mousePressEvent(event);
+  }
+
+  void mouseMoveEvent(QMouseEvent *event) override {
+    const int dx = event->pos().x() - dragStartPos.x();
+    if (std::abs(dx) >= kSwipeThresholdPx) {
+      stepCurrentTab(dx < 0 ? 1 : -1);
+      dragStartPos = event->pos();
+      dragSwitched = true;
+      event->accept();
+      return;
+    }
+    QTabBar::mouseMoveEvent(event);
+  }
+
+  void mouseReleaseEvent(QMouseEvent *event) override {
+    if (dragSwitched) {
+      dragSwitched = false;
+      event->accept();
+      return;
+    }
+    QTabBar::mouseReleaseEvent(event);
+  }
+
+  void wheelEvent(QWheelEvent *event) override {
+    const QPoint delta = event->angleDelta();
+    if (!delta.isNull()) {
+      const int step = std::abs(delta.x()) > std::abs(delta.y()) ? -delta.x() : -delta.y();
+      if (step != 0) {
+        stepCurrentTab(step > 0 ? 1 : -1);
+        event->accept();
+        return;
+      }
+    }
+    QTabBar::wheelEvent(event);
+  }
+
+private:
+  void stepCurrentTab(int step) {
+    if (count() <= 0) {
+      return;
+    }
+    const int next = std::clamp(currentIndex() + step, 0, count() - 1);
+    if (next != currentIndex()) {
+      setCurrentIndex(next);
+    }
+  }
+
+  static constexpr int kSwipeThresholdPx = 90;
+  QPoint dragStartPos;
+  bool dragSwitched = false;
+};
+
+class SwipeableTabWidget : public QTabWidget {
+public:
+  explicit SwipeableTabWidget(QWidget *parent = nullptr) : QTabWidget(parent) {
+    setTabBar(new SwipeableTabBar(this));
+  }
+};
 
 inline void applyListWidgetBaseStyle(QWidget *w) {
   w->setStyleSheet(R"(
@@ -515,7 +601,7 @@ CustomPanel::CustomPanel(SettingsWindow *parent) : QWidget(parent) {
   };
 
   // 탭 위젯
-  auto *tabWidget = new QTabWidget(this);
+  auto *tabWidget = new SwipeableTabWidget(this);
   tabWidget->setStyleSheet(kTabStyle);
   for (auto &[name, panel] : panels) {
     panel->setContentsMargins(50, 25, 50, 25);
