@@ -35,6 +35,8 @@ OSM_TRACE_FIELDS = (
   "mode",
   "failure_reason",
   "target_len_m",
+  "short_ratio",
+  "short_severity",
   "stop_reason",
   "confidence_reason",
   "endpoint_assist_ratio",
@@ -152,6 +154,25 @@ def _target_prediction_distance_m(speed_mps: float) -> float:
   if speed_mps >= 10.0:
     return 1500.0
   return 1000.0
+
+
+def _short_ratio(predicted_len_m: float, target_len_m: float) -> float:
+  if target_len_m <= 0.0:
+    return 1.0
+  return min(1.0, max(0.0, predicted_len_m / target_len_m))
+
+
+def _short_severity(predicted_len_m: float, target_len_m: float) -> str:
+  ratio = _short_ratio(predicted_len_m, target_len_m)
+  if ratio >= 1.0:
+    return ""
+  if ratio < 0.50:
+    return "critical"
+  if ratio < 0.70:
+    return "severe"
+  if ratio < 0.90:
+    return "moderate"
+  return "minor"
 
 
 def _prediction_failure_reason(prediction: RoadPrediction) -> str:
@@ -318,8 +339,12 @@ class OsmPredictionLogWriter:
     }
 
   def _prediction_debug_fields(self, prediction: RoadPrediction) -> dict[str, str]:
+    predicted_len_m = _prediction_distance_m(prediction)
+    target_len_m = _target_prediction_distance_m(prediction.gps.speed_mps)
     return {
-      "target_len_m": f"{_target_prediction_distance_m(prediction.gps.speed_mps):.0f}",
+      "target_len_m": f"{target_len_m:.0f}",
+      "short_ratio": f"{_short_ratio(predicted_len_m, target_len_m):.3f}",
+      "short_severity": _short_severity(predicted_len_m, target_len_m),
       "stop_reason": _debug_value(prediction.debug_text, "stop"),
       "confidence_reason": _debug_value(prediction.debug_text, "confidence"),
       "endpoint_assist_ratio": _debug_value(prediction.debug_text, "assist_ratio"),

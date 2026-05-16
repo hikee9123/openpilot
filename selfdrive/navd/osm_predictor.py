@@ -75,6 +75,8 @@ PREDICTION_MATCH_MIN_SPEED_MPS = 5.0
 CURVE_EXTENSION_MIN_TURN_DEG = 18.0
 CURVE_EXTENSION_MIN_SIDE_M = 140.0
 HIGH_SPEED_EXTENSION_MIN_MPS = 80.0 / 3.6
+HIGH_SPEED_DISTANCE_EXTENSION_MIN_QUALITY = 0.45
+HIGH_SPEED_DISTANCE_EXTENSION_LIMIT = 60
 MED_SPEED_TARGET_MIN_MPS = 10.0
 HIGH_SPEED_TARGET_MIN_MPS = 20.0
 BASE_TARGET_PREDICTION_DISTANCE_M = 1000.0
@@ -1309,6 +1311,13 @@ class OSMRoadPredictor:
     high_quality = self._good_prediction_quality()
     extension_quality_ok = high_quality and (not match_ready or match_good)
     graph_segment_limit = _graph_prediction_limit(high_quality, extension_quality_ok, gps.speed_mps)
+    high_speed_distance_extension_allowed = (
+      gps.speed_mps >= HIGH_SPEED_EXTENSION_MIN_MPS
+      and quality >= HIGH_SPEED_DISTANCE_EXTENSION_MIN_QUALITY
+      and (not match_ready or match_good)
+    )
+    if high_speed_distance_extension_allowed:
+      graph_segment_limit = max(graph_segment_limit, HIGH_SPEED_DISTANCE_EXTENSION_LIMIT)
     high_speed_extension_allowed = extension_quality_ok and gps.speed_mps >= HIGH_SPEED_EXTENSION_MIN_MPS
     curve_turn_total_deg = 0.0
     max_route_side_m = 0.0
@@ -1406,7 +1415,13 @@ class OSMRoadPredictor:
           or max_route_side_m >= CURVE_EXTENSION_MIN_SIDE_M
         )
       )
-      high_speed_extension_active = high_speed_extension_allowed and assist_extension_ok
+      high_speed_extension_active = (
+        high_speed_extension_allowed
+        or (
+          high_speed_distance_extension_allowed
+          and _prediction_distance_m(predicted) < target_distance_m
+        )
+      ) and assist_extension_ok
       assist_chain_limit = (
         MAX_STRONG_CONSECUTIVE_ENDPOINT_ASSIST
         if consecutive_endpoint_assist == consecutive_strong_endpoint_assist
@@ -1476,7 +1491,7 @@ class OSMRoadPredictor:
 
     if len(predicted) <= BASE_GRAPH_SEGMENT_LIMIT:
       range_mode = "base"
-    elif high_speed_extension_allowed:
+    elif high_speed_extension_allowed or high_speed_distance_extension_allowed:
       range_mode = "speed_extended"
     else:
       range_mode = "curve_extended"
