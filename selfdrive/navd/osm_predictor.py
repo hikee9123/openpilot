@@ -82,6 +82,7 @@ HIGH_SPEED_TARGET_MIN_MPS = 20.0
 BASE_TARGET_PREDICTION_DISTANCE_M = 1000.0
 MED_SPEED_TARGET_PREDICTION_DISTANCE_M = 1500.0
 HIGH_SPEED_TARGET_PREDICTION_DISTANCE_M = 2000.0
+ACCEPTABLE_SHORT_TARGET_RATIO = 0.85
 SHORT_GRAPH_EXTENSION_SEGMENT_LIMIT = 80
 SHORT_GRAPH_FORWARD_ASSIST_M = 700.0
 CORRIDOR_FILL_MIN_MISSING_M = 450.0
@@ -419,6 +420,10 @@ def _target_prediction_distance_m(speed_mps: float) -> float:
   return BASE_TARGET_PREDICTION_DISTANCE_M
 
 
+def _prediction_distance_ok(predicted_distance_m: float, target_distance_m: float) -> bool:
+  return predicted_distance_m >= target_distance_m * ACCEPTABLE_SHORT_TARGET_RATIO
+
+
 def _short_extension_candidate_allowed(from_road: OSMRoadSegment, road: OSMRoadSegment, speed_mps: float) -> bool:
   if road.ramp_type in ENDPOINT_ASSIST_BLOCKED_RAMP_TYPES:
     return False
@@ -613,6 +618,9 @@ class OSMRoadPredictor:
 
     score = 0.25
     history_hold = "history_hold=1" in prediction.debug_text
+    predicted_distance_m = _prediction_distance_m(prediction.predicted)
+    target_distance_m = _target_prediction_distance_m(prediction.gps.speed_mps)
+    near_target = _prediction_distance_ok(predicted_distance_m, target_distance_m)
     if prediction.predicted_from_graph:
       score += 0.45
     if prediction.predicted_from_assist:
@@ -625,7 +633,11 @@ class OSMRoadPredictor:
       score -= 0.12
     if "confidence=fallback_fill" in prediction.debug_text and not history_hold:
       score -= 0.30
-    if ("confidence=short_prediction" in prediction.debug_text or "short=1" in prediction.debug_text) and not history_hold:
+    if (
+      ("confidence=short_prediction" in prediction.debug_text or "short=1" in prediction.debug_text)
+      and not history_hold
+      and not near_target
+    ):
       score -= 0.25
     return _clamp(score, 0.0, 1.0)
 
@@ -634,7 +646,7 @@ class OSMRoadPredictor:
       return False
     predicted_distance_m = _prediction_distance_m(prediction.predicted)
     target_distance_m = _target_prediction_distance_m(prediction.gps.speed_mps)
-    if predicted_distance_m >= target_distance_m and "confidence=short_prediction" not in prediction.debug_text and "short=1" not in prediction.debug_text:
+    if _prediction_distance_ok(predicted_distance_m, target_distance_m) and "confidence=short_prediction" not in prediction.debug_text:
       return False
     return (
       not prediction.predicted_from_graph
@@ -647,6 +659,10 @@ class OSMRoadPredictor:
     )
 
   def _prediction_has_graph_gap(self, prediction: RoadPrediction) -> bool:
+    predicted_distance_m = _prediction_distance_m(prediction.predicted)
+    target_distance_m = _target_prediction_distance_m(prediction.gps.speed_mps)
+    if _prediction_distance_ok(predicted_distance_m, target_distance_m):
+      return False
     return (
       "successors=0" in prediction.debug_text
       or "stop=no_candidates" in prediction.debug_text
@@ -1503,9 +1519,11 @@ class OSMRoadPredictor:
       match_good
       and final_assist_ratio <= MAX_VERIFIED_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE
     )
+    distance_ok = _prediction_distance_ok(predicted_distance_m, target_distance_m)
+    near_target_short = predicted_distance_m < target_distance_m and distance_ok
     graph_confident = (
       fallback_fill_count == 0
-      and predicted_distance_m >= target_distance_m
+      and distance_ok
       and (assist_ratio_confident or verified_assist_ratio_confident)
     )
     confidence_reason = "-"
@@ -1513,7 +1531,7 @@ class OSMRoadPredictor:
       confidence_reason = "fallback_fill"
     elif corridor_fill_count > 0:
       confidence_reason = "corridor_fill"
-    elif predicted_distance_m < target_distance_m:
+    elif not distance_ok:
       confidence_reason = "short_prediction"
     elif (assist_ratio_confident or verified_assist_ratio_confident) and final_assist_ratio > MAX_ASSIST_RATIO_FOR_GRAPH_CONFIDENCE:
       confidence_reason = "assist_verified"
@@ -1526,7 +1544,8 @@ class OSMRoadPredictor:
       f"verified_assist={verified_endpoint_assist_hits} assist_ratio={final_assist_ratio:.2f} "
       f"effective_assist_ratio={effective_assist_ratio:.2f} "
       f"quality={quality:.2f} match={match_quality:.2f}/{len(self._prediction_match_samples)} range={range_mode} stop={stop_reason or '-'} "
-      f"predicted_len={predicted_distance_m:.1f} target_len={target_distance_m:.0f} short={int(predicted_distance_m < target_distance_m)} "
+      f"predicted_len={predicted_distance_m:.1f} target_len={target_distance_m:.0f} "
+      f"short={int(not distance_ok)} near_target={int(near_target_short)} "
       f"short_extend={short_extension_count}/{short_extension_endpoint_hits}/{short_extension_forward_hits} "
       f"fallback_fill={fallback_fill_count} corridor_fill={corridor_fill_count} confidence={confidence_reason} "
       f"selected={';'.join(selected_samples) or '-'} candidates={';'.join(candidate_samples) or '-'} "

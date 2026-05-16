@@ -656,7 +656,7 @@ def _build_cross_layer_shared_node_adjacency(conn: sqlite3.Connection, progress:
         CAST((ROW_NUMBER() OVER (ORDER BY to_osm_node_id) - 1) / {CROSS_LAYER_SHARED_NODE_BATCH_SIZE} AS INTEGER) AS batch_id
       FROM (SELECT DISTINCT to_osm_node_id FROM directed_edges)
     """)
-    conn.execute("CREATE INDEX idx_cross_layer_osm_node_batches_batch ON cross_layer_osm_node_batches(batch_id, osm_node_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cross_layer_osm_node_batches_batch ON cross_layer_osm_node_batches(batch_id, osm_node_id)")
     conn.execute("DROP TABLE IF EXISTS cross_layer_exit_edges")
     conn.execute("DROP TABLE IF EXISTS cross_layer_entry_edges")
     conn.execute("""
@@ -736,7 +736,7 @@ def _build_cross_layer_shared_node_adjacency(conn: sqlite3.Connection, progress:
         100000,
       )
       conn.execute(candidate_sql, (batch,))
-    conn.execute("CREATE INDEX idx_cross_layer_adjacency_candidates_from_to ON cross_layer_adjacency_candidates(from_road_id, to_road_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cross_layer_adjacency_candidates_from_to ON cross_layer_adjacency_candidates(from_road_id, to_road_id)")
   finally:
     conn.set_progress_handler(None, 0)
 
@@ -832,14 +832,15 @@ def _build_cross_layer_shared_node_adjacency(conn: sqlite3.Connection, progress:
 def _build_graph(conn: sqlite3.Connection, progress: ProgressReporter) -> None:
   progress.emit("graph_index", 60, "indexing directed graph edges", force=True)
   _execute_script_with_progress(conn, progress, """
-    CREATE INDEX idx_directed_edges_from ON directed_edges(from_node_id);
-    CREATE INDEX idx_directed_edges_to ON directed_edges(to_node_id);
-    CREATE INDEX idx_directed_edges_from_osm_node ON directed_edges(from_osm_node_id);
-    CREATE INDEX idx_directed_edges_to_osm_node ON directed_edges(to_osm_node_id);
-    CREATE INDEX idx_directed_edges_from_osm_layer ON directed_edges(from_osm_node_id, layer_int);
-    CREATE INDEX idx_directed_edges_to_osm_layer ON directed_edges(to_osm_node_id, layer_int);
+    CREATE INDEX IF NOT EXISTS idx_directed_edges_from ON directed_edges(from_node_id);
+    CREATE INDEX IF NOT EXISTS idx_directed_edges_to ON directed_edges(to_node_id);
+    CREATE INDEX IF NOT EXISTS idx_directed_edges_from_osm_node ON directed_edges(from_osm_node_id);
+    CREATE INDEX IF NOT EXISTS idx_directed_edges_to_osm_node ON directed_edges(to_osm_node_id);
+    CREATE INDEX IF NOT EXISTS idx_directed_edges_from_osm_layer ON directed_edges(from_osm_node_id, layer_int);
+    CREATE INDEX IF NOT EXISTS idx_directed_edges_to_osm_layer ON directed_edges(to_osm_node_id, layer_int);
     CREATE INDEX IF NOT EXISTS idx_turn_restrictions_from_to ON turn_restrictions(from_osm_id, to_osm_id);
 
+    DROP TABLE IF EXISTS node_degrees;
     CREATE TEMP TABLE node_degrees AS
       SELECT node_id, COUNT(*) AS degree
       FROM (
@@ -848,7 +849,7 @@ def _build_graph(conn: sqlite3.Connection, progress: ProgressReporter) -> None:
         SELECT end_node_id AS node_id FROM road_edges
       )
       GROUP BY node_id;
-    CREATE INDEX idx_node_degrees_node ON node_degrees(node_id);
+    CREATE INDEX IF NOT EXISTS idx_node_degrees_node ON node_degrees(node_id);
 
     UPDATE road_nodes
     SET node_degree = COALESCE((SELECT degree FROM node_degrees WHERE node_degrees.node_id = road_nodes.id), 0);
@@ -857,6 +858,7 @@ def _build_graph(conn: sqlite3.Connection, progress: ProgressReporter) -> None:
   progress.emit("adjacency_prepare", 62, "preparing road adjacency batches", force=True)
   conn.set_progress_handler(progress.heartbeat("adjacency_prepare", 63, "preparing road adjacency batches"), 100000)
   try:
+    conn.execute("DROP TABLE IF EXISTS adjacency_node_batches")
     conn.execute(f"""
       CREATE TEMP TABLE adjacency_node_batches AS
       SELECT
@@ -864,7 +866,7 @@ def _build_graph(conn: sqlite3.Connection, progress: ProgressReporter) -> None:
         CAST((ROW_NUMBER() OVER (ORDER BY from_node_id) - 1) / {ADJACENCY_NODE_BATCH_SIZE} AS INTEGER) AS batch_id
       FROM (SELECT DISTINCT from_node_id FROM directed_edges)
     """)
-    conn.execute("CREATE INDEX idx_adjacency_node_batches_batch ON adjacency_node_batches(batch_id, from_node_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_adjacency_node_batches_batch ON adjacency_node_batches(batch_id, from_node_id)")
   finally:
     conn.set_progress_handler(None, 0)
   total_from_nodes = int(conn.execute("SELECT COUNT(*) FROM adjacency_node_batches").fetchone()[0])
@@ -989,6 +991,7 @@ def _build_graph(conn: sqlite3.Connection, progress: ProgressReporter) -> None:
 
   progress.emit("successor_rank", 81, "ranking road successors", force=True)
   _execute_script_with_progress(conn, progress, """
+    DROP TABLE IF EXISTS ranked_successors;
     CREATE TEMP TABLE ranked_successors AS
       SELECT
         from_road_id,
@@ -999,7 +1002,7 @@ def _build_graph(conn: sqlite3.Connection, progress: ProgressReporter) -> None:
         ) AS successor_rank
       FROM road_adjacency
       WHERE blocked_transition = 0;
-    CREATE INDEX idx_ranked_successors_from_rank ON ranked_successors(from_road_id, successor_rank);
+    CREATE INDEX IF NOT EXISTS idx_ranked_successors_from_rank ON ranked_successors(from_road_id, successor_rank);
   """, "successor_rank", 82, "ranking road successors")
 
   progress.emit("successor_update", 83, "updating preferred road successors", force=True)

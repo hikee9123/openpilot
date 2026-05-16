@@ -24,6 +24,7 @@ OSM_LOG_MIN_SPEED_MPS = 1.0
 OSM_LOG_REPEAT_SKIP_AFTER = 2
 HISTORY_HOLD_MIN_LEN_RATIO = 0.70
 HISTORY_HOLD_MIN_LEN_M = 1000.0
+OSM_SHORT_FAILURE_RATIO_THRESHOLD = 0.85
 OSM_TRACE_LOG_PATH = DEFAULT_NAVD_LOG_DIR / "osm_prediction_trace.csv"
 OSM_FAILURE_LOG_PATH = DEFAULT_NAVD_LOG_DIR / "osm_prediction_failures.csv"
 OSM_CAMERA_DISPLAY_DISTANCE_PARAM = "OsmCameraDisplayDistanceM"
@@ -47,6 +48,7 @@ OSM_TRACE_FIELDS = (
   "short_extend_count",
   "fallback_fill_count",
   "corridor_fill_count",
+  "camera_display_distance_m",
   "current_road_id",
   "current_name",
   "current_distance_m",
@@ -56,9 +58,13 @@ OSM_TRACE_FIELDS = (
   "assist_road_ids",
   "nearby_road_ids",
   "normal_camera_id",
+  "normal_camera_type",
+  "normal_camera_signal",
   "normal_camera_speed_kph",
   "normal_camera_forward_m",
   "nearest_camera_id",
+  "nearest_camera_type",
+  "nearest_camera_signal",
   "nearest_camera_display_class",
   "nearest_camera_reject_reason",
   "nearest_camera_forward_m",
@@ -190,6 +196,8 @@ def _prediction_failure_reason(prediction: RoadPrediction) -> str:
   if history_hold:
     history_min_len_m = max(HISTORY_HOLD_MIN_LEN_M, target_len_m * HISTORY_HOLD_MIN_LEN_RATIO)
     return "" if predicted_len_m >= history_min_len_m else "history_hold_short"
+  if short and _short_ratio(predicted_len_m, target_len_m) >= OSM_SHORT_FAILURE_RATIO_THRESHOLD:
+    return ""
   if prediction.predicted_from_graph and not short:
     return ""
   if "confidence=assist_uncertain" in prediction.debug_text:
@@ -346,9 +354,13 @@ class OsmPredictionLogWriter:
     nearest_camera = sorted_cameras[0] if sorted_cameras else None
     return {
       "normal_camera_id": "" if normal_camera is None else str(normal_camera.get("cameraId", "")),
+      "normal_camera_type": "" if normal_camera is None else str(normal_camera.get("cameraType", "")),
+      "normal_camera_signal": "" if normal_camera is None else str(int(bool(normal_camera.get("signalCamera", False)))),
       "normal_camera_speed_kph": "" if normal_camera is None else str(normal_camera.get("speedLimitKph", "")),
       "normal_camera_forward_m": "" if normal_camera is None else f"{float(normal_camera.get('x', 0.0)):.1f}",
       "nearest_camera_id": "" if nearest_camera is None else str(nearest_camera.get("cameraId", "")),
+      "nearest_camera_type": "" if nearest_camera is None else str(nearest_camera.get("cameraType", "")),
+      "nearest_camera_signal": "" if nearest_camera is None else str(int(bool(nearest_camera.get("signalCamera", False)))),
       "nearest_camera_display_class": "" if nearest_camera is None else str(nearest_camera.get("displayClass", "")),
       "nearest_camera_reject_reason": "" if nearest_camera is None else str(nearest_camera.get("rejectReason", "")),
       "nearest_camera_forward_m": "" if nearest_camera is None else f"{float(nearest_camera.get('x', 0.0)):.1f}",
@@ -369,7 +381,8 @@ class OsmPredictionLogWriter:
       "corridor_fill_count": _debug_value(prediction.debug_text, "corridor_fill"),
     }
 
-  def log(self, prediction: RoadPrediction, cameras: list[dict] | None = None) -> None:
+  def log(self, prediction: RoadPrediction, cameras: list[dict] | None = None,
+          camera_display_distance_m: float = OSM_CAMERA_DISPLAY_DISTANCE_DEFAULT_M) -> None:
     if not self.enabled or not _prediction_log_allowed(prediction):
       return
 
@@ -384,6 +397,7 @@ class OsmPredictionLogWriter:
       "mode": _prediction_mode(prediction),
       "failure_reason": failure_reason,
       **self._prediction_debug_fields(prediction),
+      "camera_display_distance_m": f"{camera_display_distance_m:.0f}",
       "current_road_id": "" if current is None else current.road_id,
       "current_name": "" if current is None else current.display_name,
       "current_distance_m": "" if current is None else f"{current.distance_m:.1f}",
@@ -467,13 +481,14 @@ def main() -> None:
         history_segments[current_segment.road_id] = current_segment
         while len(history_segments) > HISTORY_SEGMENT_LIMIT:
           history_segments.popitem(last=False)
+      camera_display_distance_m = _camera_display_distance_m(params)
       road_name, bearing, prediction_distance_m, roads, cameras = build_minimap_overlay(
         prediction,
         list(history_segments.values()),
-        camera_max_forward_m=_camera_display_distance_m(params),
+        camera_max_forward_m=camera_display_distance_m,
       )
       if prediction is not None:
-        log_writer.log(prediction, cameras)
+        log_writer.log(prediction, cameras, camera_display_distance_m)
       overlay_key = (
         road_name,
         bearing,
