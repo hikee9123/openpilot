@@ -34,6 +34,9 @@ struct OsmMinimapCamera {
   float match_confidence = 0.0f;
   bool primary_match = false;
   float bearing_deg = -1.0f;
+  QString display_class = QStringLiteral("suspicious");
+  QString direction_verdict = QStringLiteral("unknown");
+  QString reject_reason;
 };
 
 struct OsmMinimapData {

@@ -442,9 +442,30 @@ def create_speed_camera_schema(conn: sqlite3.Connection) -> None:
       speed_limit_kph INTEGER NOT NULL DEFAULT 0,
       camera_type TEXT NOT NULL DEFAULT '',
       camera_bearing_deg REAL NOT NULL DEFAULT -1.0,
+      display_class TEXT NOT NULL DEFAULT 'suspicious',
+      direction_verdict TEXT NOT NULL DEFAULT 'unknown',
+      reject_reason TEXT NOT NULL DEFAULT '',
+      opposite_road_id INTEGER NOT NULL DEFAULT 0,
+      opposite_match_distance_m REAL NOT NULL DEFAULT 0.0,
+      opposite_match_confidence REAL NOT NULL DEFAULT 0.0,
       PRIMARY KEY (road_id, camera_id)
     );
   """)
+  _ensure_columns(conn, "route_camera_lookup", {
+    "display_class": "TEXT NOT NULL DEFAULT 'suspicious'",
+    "direction_verdict": "TEXT NOT NULL DEFAULT 'unknown'",
+    "reject_reason": "TEXT NOT NULL DEFAULT ''",
+    "opposite_road_id": "INTEGER NOT NULL DEFAULT 0",
+    "opposite_match_distance_m": "REAL NOT NULL DEFAULT 0.0",
+    "opposite_match_confidence": "REAL NOT NULL DEFAULT 0.0",
+  })
+
+
+def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+  existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+  for name, definition in columns.items():
+    if name not in existing:
+      conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
 
 
 def create_osm_roads_indexes(conn: sqlite3.Connection) -> None:
@@ -480,6 +501,7 @@ def create_speed_camera_indexes(conn: sqlite3.Connection) -> None:
     CREATE INDEX IF NOT EXISTS idx_speed_camera_matches_primary ON speed_camera_road_matches(primary_match, match_confidence);
     CREATE INDEX IF NOT EXISTS idx_route_camera_lookup_road ON route_camera_lookup(road_id);
     CREATE INDEX IF NOT EXISTS idx_route_camera_lookup_camera ON route_camera_lookup(camera_id);
+    CREATE INDEX IF NOT EXISTS idx_route_camera_lookup_display ON route_camera_lookup(display_class, direction_verdict);
   """)
 
 

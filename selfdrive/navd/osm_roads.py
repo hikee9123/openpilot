@@ -129,6 +129,12 @@ class OSMSpeedCamera:
   match_distance_m: float
   match_confidence: float
   primary_match: int
+  display_class: str = "suspicious"
+  direction_verdict: str = "unknown"
+  reject_reason: str = ""
+  opposite_road_id: int = 0
+  opposite_match_distance_m: float = 0.0
+  opposite_match_confidence: float = 0.0
 
 
 def normalize_road_name(value: str) -> str:
@@ -500,6 +506,9 @@ def speed_cameras_for_road_ids(
   try:
     if not all(_table_exists(conn, table) for table in ("speed_cameras", "route_camera_lookup")):
       return []
+    lookup_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(route_camera_lookup)")}
+    def lookup_column(name: str, default_sql: str) -> str:
+      return f"route_camera_lookup.{name}" if name in lookup_columns else f"{default_sql} AS {name}"
     placeholders = ",".join("?" for _ in ordered_road_ids)
     rows = conn.execute(f"""
       SELECT
@@ -507,7 +516,13 @@ def speed_cameras_for_road_ids(
         route_camera_lookup.road_id,
         route_camera_lookup.match_distance_m,
         route_camera_lookup.match_confidence,
-        route_camera_lookup.primary_match
+        route_camera_lookup.primary_match,
+        {lookup_column("display_class", "'suspicious'")},
+        {lookup_column("direction_verdict", "'unknown'")},
+        {lookup_column("reject_reason", "'legacy_lookup_missing_display_class'")},
+        {lookup_column("opposite_road_id", "0")},
+        {lookup_column("opposite_match_distance_m", "0.0")},
+        {lookup_column("opposite_match_confidence", "0.0")}
       FROM route_camera_lookup
       JOIN speed_cameras ON speed_cameras.id = route_camera_lookup.camera_id
       WHERE route_camera_lookup.road_id IN ({placeholders})
@@ -537,6 +552,12 @@ def speed_cameras_for_road_ids(
       match_distance_m=_row_float(row, "match_distance_m"),
       match_confidence=_row_float(row, "match_confidence"),
       primary_match=_row_int(row, "primary_match"),
+      display_class=_row_text(row, "display_class") or "suspicious",
+      direction_verdict=_row_text(row, "direction_verdict") or "unknown",
+      reject_reason=_row_text(row, "reject_reason"),
+      opposite_road_id=_row_int(row, "opposite_road_id"),
+      opposite_match_distance_m=_row_float(row, "opposite_match_distance_m"),
+      opposite_match_confidence=_row_float(row, "opposite_match_confidence"),
     )
     for row in rows
   ]

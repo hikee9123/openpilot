@@ -20,6 +20,10 @@ except ModuleNotFoundError:
 METERS_PER_DEG_LAT = 111320.0
 DEFAULT_CAMERA_MATCH_RADIUS_M = 65.0
 DEFAULT_CAMERA_MAX_MATCHES = 3
+OPPOSITE_PARALLEL_BEARING_DIFF_DEG = 150.0
+NORMAL_DISPLAY_MIN_CONFIDENCE = 0.75
+NORMAL_DISPLAY_MAX_DISTANCE_M = 35.0
+SPEED_ICON_CAMERA_TYPES = ("1", "2", "1+02")
 
 ID_COLUMNS = (
   "external_id", "camera_id", "cam_id", "id", "관리번호", "번호",
@@ -83,6 +87,53 @@ def _distance_point_to_segment_m(lat: float, lon: float, lat1: float, lon1: floa
 
 def _angle_diff_deg(a: float, b: float) -> float:
   return abs((a - b + 180.0) % 360.0 - 180.0)
+
+
+def _normalize_code(value: Any) -> str:
+  text = str(value or "").strip()
+  stripped = text.lstrip("0")
+  return stripped or text
+
+
+def _speed_icon_camera_type(camera_type: Any) -> bool:
+  return _normalize_code(camera_type) in SPEED_ICON_CAMERA_TYPES
+
+
+def _opposite_parallel_match(match: dict[str, Any], matches: list[dict[str, Any]]) -> dict[str, Any] | None:
+  opposite: list[dict[str, Any]] = []
+  for other in matches:
+    if int(other["road_id"]) == int(match["road_id"]):
+      continue
+    if _angle_diff_deg(float(match["road_bearing_deg"]), float(other["road_bearing_deg"])) >= OPPOSITE_PARALLEL_BEARING_DIFF_DEG:
+      opposite.append(other)
+  if not opposite:
+    return None
+  opposite.sort(key=lambda item: (-float(item["match_confidence"]), float(item["distance_m"]), int(item["road_id"])))
+  return opposite[0]
+
+
+def _classify_lookup_match(camera: sqlite3.Row, match: dict[str, Any],
+                           matches: list[dict[str, Any]]) -> tuple[str, str, str, int, float, float]:
+  opposite = _opposite_parallel_match(match, matches)
+  opposite_road_id = int(opposite["road_id"]) if opposite is not None else 0
+  opposite_distance_m = float(opposite["distance_m"]) if opposite is not None else 0.0
+  opposite_confidence = float(opposite["match_confidence"]) if opposite is not None else 0.0
+
+  if int(camera["speed_limit_kph"]) <= 0:
+    return "rejected", "unknown", "speed_limit_missing", opposite_road_id, opposite_distance_m, opposite_confidence
+  if not _speed_icon_camera_type(camera["camera_type"]):
+    return "suspicious", "unknown", "unsupported_camera_type", opposite_road_id, opposite_distance_m, opposite_confidence
+  if not int(match["primary_match"]):
+    return "suspicious", "unknown", "secondary_match", opposite_road_id, opposite_distance_m, opposite_confidence
+  if float(match["match_confidence"]) < NORMAL_DISPLAY_MIN_CONFIDENCE:
+    return "suspicious", "unknown", "low_confidence", opposite_road_id, opposite_distance_m, opposite_confidence
+  if float(match["distance_m"]) > NORMAL_DISPLAY_MAX_DISTANCE_M:
+    return "suspicious", "unknown", "far_match", opposite_road_id, opposite_distance_m, opposite_confidence
+  if opposite is not None:
+    return "suspicious", "ambiguous_parallel", "parallel_road_ambiguous", opposite_road_id, opposite_distance_m, opposite_confidence
+  if _normalize_code(camera["direction"]) not in ("1", "2"):
+    return "suspicious", "unknown", "unknown_direction", opposite_road_id, opposite_distance_m, opposite_confidence
+  return "normal", "verified", "", opposite_road_id, opposite_distance_m, opposite_confidence
 
 
 def _driving_heading_diff_deg(road_bearing_deg: float, oneway: int, camera_bearing_deg: float) -> float:
@@ -257,6 +308,7 @@ def _match_speed_cameras_to_roads(conn: sqlite3.Connection, radius_m: float, max
       confidence += min(0.10, priority / 1000.0)
       candidates.append((score, distance_m, heading_diff, same_name, int(road["id"]), road))
     candidates.sort(key=lambda item: (item[0], item[1], item[4]))
+    selected_matches: list[dict[str, Any]] = []
     for index, (score, distance_m, heading_diff, same_name, road_id, road) in enumerate(candidates[:max(1, max_matches_per_camera)]):
       primary_match = 1 if index == 0 else 0
       confidence = 1.0 - min(1.0, distance_m / max(1.0, radius_m))
@@ -264,6 +316,29 @@ def _match_speed_cameras_to_roads(conn: sqlite3.Connection, radius_m: float, max
       confidence += 0.12 if 0.0 <= heading_diff <= 35.0 else 0.0
       confidence += min(0.10, max(0.0, float(road["road_priority"])) / 1000.0)
       confidence = _clamp(confidence, 0.0, 1.0)
+      selected_matches.append({
+        "score": score,
+        "distance_m": distance_m,
+        "heading_diff": heading_diff,
+        "same_name": same_name,
+        "road_id": road_id,
+        "road": road,
+        "road_bearing_deg": float(road["bearing_deg"]),
+        "primary_match": primary_match,
+        "match_confidence": confidence,
+      })
+
+    for match in selected_matches:
+      road_id = int(match["road_id"])
+      distance_m = float(match["distance_m"])
+      heading_diff = float(match["heading_diff"])
+      score = float(match["score"])
+      same_name = int(match["same_name"])
+      confidence = float(match["match_confidence"])
+      primary_match = int(match["primary_match"])
+      display_class, direction_verdict, reject_reason, opposite_road_id, opposite_distance_m, opposite_confidence = _classify_lookup_match(
+        camera, match, selected_matches
+      )
       cursor = conn.execute(
         """
         INSERT INTO speed_camera_road_matches(
@@ -278,8 +353,9 @@ def _match_speed_cameras_to_roads(conn: sqlite3.Connection, radius_m: float, max
         """
         INSERT OR REPLACE INTO route_camera_lookup(
           road_id, camera_id, match_id, match_distance_m, match_confidence, primary_match,
-          speed_limit_kph, camera_type, camera_bearing_deg
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          speed_limit_kph, camera_type, camera_bearing_deg, display_class, direction_verdict,
+          reject_reason, opposite_road_id, opposite_match_distance_m, opposite_match_confidence
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
           road_id,
@@ -291,6 +367,12 @@ def _match_speed_cameras_to_roads(conn: sqlite3.Connection, radius_m: float, max
           int(camera["speed_limit_kph"]),
           str(camera["camera_type"]),
           camera_bearing,
+          display_class,
+          direction_verdict,
+          reject_reason,
+          opposite_road_id,
+          opposite_distance_m,
+          opposite_confidence,
         ),
       )
       matched_camera_ids.add(int(camera["id"]))

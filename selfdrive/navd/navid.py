@@ -101,6 +101,9 @@ def _send_overlay(pm: messaging.PubMaster, available: bool, road_name: str = "",
     camera_items[i].matchConfidence = camera["matchConfidence"]
     camera_items[i].primaryMatch = camera["primaryMatch"]
     camera_items[i].bearingDeg = camera["bearingDeg"]
+    camera_items[i].displayClass = camera.get("displayClass", "suspicious")
+    camera_items[i].directionVerdict = camera.get("directionVerdict", "unknown")
+    camera_items[i].rejectReason = camera.get("rejectReason", "")
   pm.send("naviCustom", msg)
 
 

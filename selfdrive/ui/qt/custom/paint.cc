@@ -244,6 +244,9 @@ void OnPaint::updateState(const UIState &s)
         camera.getMatchConfidence(),
         camera.getPrimaryMatch(),
         camera.getBearingDeg(),
+        QString::fromUtf8(camera.getDisplayClass().cStr()),
+        QString::fromUtf8(camera.getDirectionVerdict().cStr()),
+        QString::fromUtf8(camera.getRejectReason().cStr()),
       });
     }
   }

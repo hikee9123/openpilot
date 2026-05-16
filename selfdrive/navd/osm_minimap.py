@@ -81,6 +81,8 @@ def _camera_to_overlay(
   route_bearings: dict[int, float],
   max_forward_m: float,
 ) -> dict | None:
+  if camera.display_class == "rejected":
+    return None
   forward_m, right_m = latlon_to_car_space_m(prediction.gps.lat, prediction.gps.lon, prediction.gps.bearing_deg, camera.lat, camera.lon)
   if forward_m < -CAMERA_FORWARD_BACK_TOLERANCE_M or forward_m > max_forward_m:
     return None
@@ -99,6 +101,9 @@ def _camera_to_overlay(
     "matchConfidence": round(camera.match_confidence, 3),
     "primaryMatch": bool(camera.primary_match),
     "bearingDeg": round(camera.bearing_deg, 1),
+    "displayClass": camera.display_class or "suspicious",
+    "directionVerdict": camera.direction_verdict or "unknown",
+    "rejectReason": camera.reject_reason,
   }
 
 

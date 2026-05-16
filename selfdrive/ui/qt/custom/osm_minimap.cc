@@ -545,29 +545,34 @@ void OsmMinimapRenderer::drawCamera(QPainter &p, const QRectF &panel, double sca
   if (!panel.adjusted(-40.0, -40.0, 40.0, 40.0).contains(pt)) return;
 
   p.save();
+  const bool normal = camera.display_class == QStringLiteral("normal");
+  const bool rejected = camera.display_class == QStringLiteral("rejected");
+  const QColor marker_color = normal ? QColor(239, 68, 68) : (rejected ? QColor(148, 163, 184) : QColor(245, 158, 11));
+  const QColor label_text_color = normal ? QColor(190, 32, 32, 245) : (rejected ? QColor(91, 103, 120, 235) : QColor(146, 64, 14, 245));
   const int marker_alpha = camera.primary_match ? 240 : 190;
-  p.setPen(QPen(QColor(10, 10, 10, 210), 3));
-  p.setBrush(QColor(239, 68, 68, marker_alpha));
+  p.setPen(QPen(QColor(10, 10, 10, 210), 3, normal ? Qt::SolidLine : Qt::DashLine));
+  p.setBrush(QColor(marker_color.red(), marker_color.green(), marker_color.blue(), marker_alpha));
   p.drawEllipse(pt, 12.0, 12.0);
 
   p.setPen(Qt::NoPen);
   p.setBrush(QColor(255, 255, 255, 245));
   p.drawEllipse(pt, 4.0, 4.0);
 
-  const QString label = cameraSpeedLabel(camera);
+  const QString label = normal ? cameraSpeedLabel(camera)
+                               : (camera.speed_limit_kph > 0 ? QStringLiteral("%1?").arg(camera.speed_limit_kph) : QStringLiteral("?"));
   if (!label.isEmpty()) {
-    QRectF label_rect(pt.x() + 14.0, pt.y() - 28.0, label.size() > 2 ? 50.0 : 42.0, 24.0);
+    QRectF label_rect(pt.x() + 14.0, pt.y() - 28.0, label.size() > 2 ? 56.0 : 42.0, 24.0);
     if (label_rect.right() > panel.right() - 8.0) {
       label_rect.moveLeft(pt.x() - label_rect.width() - 14.0);
     }
     if (label_rect.top() < panel.top() + 42.0) {
       label_rect.moveTop(pt.y() + 14.0);
     }
-    p.setPen(QPen(QColor(239, 68, 68, 235), 1));
+    p.setPen(QPen(QColor(marker_color.red(), marker_color.green(), marker_color.blue(), 235), 1));
     p.setBrush(QColor(255, 255, 255, 232));
     p.drawRoundedRect(label_rect, 5.0, 5.0);
     p.setFont(InterFont(17, QFont::DemiBold));
-    p.setPen(QColor(190, 32, 32, 245));
+    p.setPen(label_text_color);
     p.drawText(label_rect, Qt::AlignCenter, label);
   }
   p.restore();

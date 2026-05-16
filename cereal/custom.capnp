@@ -75,6 +75,9 @@ struct NaviCustom @0xf35cc4560bbf6ec2 {
             matchConfidence @7 :Float32;
             primaryMatch @8 :Bool;
             bearingDeg @9 :Float32;
+            displayClass @10 :Text;
+            directionVerdict @11 :Text;
+            rejectReason @12 :Text;
         }
     }
 }
