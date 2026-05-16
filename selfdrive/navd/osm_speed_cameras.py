@@ -27,7 +27,11 @@ UNKNOWN_DIRECTION_CLEAR_MAX_DISTANCE_M = 12.0
 UNKNOWN_DIRECTION_CLEAR_MIN_CONFIDENCE = 0.95
 UNKNOWN_DIRECTION_CLEAR_CODES = ("3",)
 PARALLEL_CLEAR_PRIMARY_MAX_DISTANCE_M = 12.0
+PARALLEL_CLEAR_PRIMARY_VERY_CLOSE_M = 4.0
 PARALLEL_CLEAR_OPPOSITE_MIN_DISTANCE_M = 20.0
+PARALLEL_CLEAR_OPPOSITE_DISTANCE_MARGIN_M = 6.0
+PARALLEL_CLEAR_OPPOSITE_STRONG_DISTANCE_MARGIN_M = 10.0
+PARALLEL_CLEAR_PRIMARY_MIN_CONFIDENCE = 0.95
 PARALLEL_CLEAR_CONFIDENCE_MARGIN = 0.12
 SPEED_ICON_CAMERA_TYPES = ("1", "2", "1+02")
 INTERSECTION_CAMERA_KEYWORDS = ("교차로", "사거리", "삼거리", "오거리", "로터리")
@@ -118,10 +122,24 @@ def _intersection_camera_context(camera: sqlite3.Row) -> bool:
 def _primary_match_clearly_better_than_opposite(match: dict[str, Any],
                                                 opposite_distance_m: float,
                                                 opposite_confidence: float) -> bool:
+  primary_distance_m = float(match["distance_m"])
+  primary_confidence = float(match["match_confidence"])
+  if primary_distance_m > PARALLEL_CLEAR_PRIMARY_MAX_DISTANCE_M:
+    return False
   return (
-    float(match["distance_m"]) <= PARALLEL_CLEAR_PRIMARY_MAX_DISTANCE_M
-    and opposite_distance_m >= PARALLEL_CLEAR_OPPOSITE_MIN_DISTANCE_M
-    and float(match["match_confidence"]) - opposite_confidence >= PARALLEL_CLEAR_CONFIDENCE_MARGIN
+    (
+      opposite_distance_m >= PARALLEL_CLEAR_OPPOSITE_MIN_DISTANCE_M
+      and primary_confidence - opposite_confidence >= PARALLEL_CLEAR_CONFIDENCE_MARGIN
+    )
+    or (
+      primary_distance_m <= PARALLEL_CLEAR_PRIMARY_VERY_CLOSE_M
+      and opposite_distance_m - primary_distance_m >= PARALLEL_CLEAR_OPPOSITE_DISTANCE_MARGIN_M
+    )
+    or (
+      opposite_distance_m >= PARALLEL_CLEAR_OPPOSITE_MIN_DISTANCE_M
+      and opposite_distance_m - primary_distance_m >= PARALLEL_CLEAR_OPPOSITE_STRONG_DISTANCE_MARGIN_M
+      and primary_confidence >= PARALLEL_CLEAR_PRIMARY_MIN_CONFIDENCE
+    )
   )
 
 
@@ -138,7 +156,7 @@ def _clear_parallel_match(camera: sqlite3.Row, match: dict[str, Any],
                           opposite_distance_m: float, opposite_confidence: float) -> bool:
   return (
     _signal_speed_camera_type(camera["camera_type"])
-    and _intersection_camera_context(camera)
+    and (int(match["same_name"]) > 0 or _intersection_camera_context(camera))
     and _primary_match_clearly_better_than_opposite(match, opposite_distance_m, opposite_confidence)
   )
 
