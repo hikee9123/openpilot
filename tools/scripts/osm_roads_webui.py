@@ -727,8 +727,11 @@ def db_map(db_path: Path, query: dict[str, list[str]]) -> dict[str, object]:
   with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
     if not all(_table_exists(conn, table) for table in ("speed_cameras", "route_camera_lookup", "roads")):
       return {"ok": False, "message": "지도에 필요한 speed_cameras/route_camera_lookup/roads 테이블이 없습니다", "db_path": str(db_path)}
+    lookup_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(route_camera_lookup)").fetchall()}
+    def lookup_column(name: str, default_sql: str) -> str:
+      return f"lookup.{name}" if name in lookup_columns else f"{default_sql} AS {name}"
 
-    camera_rows = _rows(conn, """
+    camera_rows = _rows(conn, f"""
       SELECT
         cameras.id,
         cameras.lat,
@@ -742,7 +745,13 @@ def db_map(db_path: Path, query: dict[str, list[str]]) -> dict[str, object]:
         best.road_ref AS matched_road_ref,
         best.highway,
         ROUND(best.match_distance_m, 1) AS match_distance_m,
-        ROUND(best.match_confidence, 3) AS match_confidence
+        ROUND(best.match_confidence, 3) AS match_confidence,
+        best.display_class,
+        best.direction_verdict,
+        best.reject_reason,
+        best.opposite_road_id,
+        ROUND(best.opposite_match_distance_m, 1) AS opposite_match_distance_m,
+        ROUND(best.opposite_match_confidence, 3) AS opposite_match_confidence
       FROM speed_cameras AS cameras
       LEFT JOIN (
         SELECT
@@ -752,7 +761,13 @@ def db_map(db_path: Path, query: dict[str, list[str]]) -> dict[str, object]:
           roads.ref AS road_ref,
           roads.highway,
           lookup.match_distance_m,
-          lookup.match_confidence
+          lookup.match_confidence,
+          {lookup_column("display_class", "'suspicious'")},
+          {lookup_column("direction_verdict", "'unknown'")},
+          {lookup_column("reject_reason", "'legacy_lookup_missing_display_class'")},
+          {lookup_column("opposite_road_id", "0")},
+          {lookup_column("opposite_match_distance_m", "0.0")},
+          {lookup_column("opposite_match_confidence", "0.0")}
         FROM route_camera_lookup AS lookup
         JOIN roads ON roads.id = lookup.road_id
         WHERE lookup.primary_match = 1
@@ -763,7 +778,7 @@ def db_map(db_path: Path, query: dict[str, list[str]]) -> dict[str, object]:
       LIMIT ?
     """, (min_lat, max_lat, min_lon, max_lon, camera_limit))
 
-    road_cursor = conn.execute("""
+    road_cursor = conn.execute(f"""
       SELECT
         lookup.road_id,
         lookup.camera_id,
@@ -775,7 +790,10 @@ def db_map(db_path: Path, query: dict[str, list[str]]) -> dict[str, object]:
         roads.lat2,
         roads.lon2,
         ROUND(lookup.match_distance_m, 1) AS match_distance_m,
-        ROUND(lookup.match_confidence, 3) AS match_confidence
+        ROUND(lookup.match_confidence, 3) AS match_confidence,
+        {lookup_column("display_class", "'suspicious'")},
+        {lookup_column("direction_verdict", "'unknown'")},
+        {lookup_column("reject_reason", "'legacy_lookup_missing_display_class'")}
       FROM route_camera_lookup AS lookup
       JOIN speed_cameras AS cameras ON cameras.id = lookup.camera_id
       JOIN roads ON roads.id = lookup.road_id

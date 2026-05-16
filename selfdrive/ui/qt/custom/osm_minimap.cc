@@ -346,7 +346,7 @@ void OsmMinimapRenderer::drawStatus(QPainter &p, const QRect &surface, const QSt
 
 void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinimapData &data, bool enabled,
                               int position, float speed_mps, int debug_zoom, int sim_speed_kph,
-                              bool debug_zoom_controls, bool debug_speed_controls) {
+                              bool show_suspicious_cameras, bool debug_zoom_controls, bool debug_speed_controls) {
   if (!enabled) return;
   if (!data.available) {
     drawStatus(p, surface, QStringLiteral("Waiting for GPS"), position);
@@ -413,6 +413,7 @@ void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinima
     if (road.current) drawRoad(p, panel, scale, road, centered);
   }
   for (const OsmMinimapCamera &camera : data.cameras) {
+    if (!show_suspicious_cameras && camera.display_class != QStringLiteral("normal")) continue;
     drawCamera(p, panel, scale, camera, centered);
   }
 
@@ -574,6 +575,22 @@ void OsmMinimapRenderer::drawCamera(QPainter &p, const QRectF &panel, double sca
     p.setFont(InterFont(17, QFont::DemiBold));
     p.setPen(label_text_color);
     p.drawText(label_rect, Qt::AlignCenter, label);
+  }
+  if (centered && !normal && !camera.reject_reason.isEmpty()) {
+    const QString reason = camera.reject_reason.left(30);
+    QRectF reason_rect(pt.x() + 14.0, pt.y() + 2.0, 210.0, 22.0);
+    if (reason_rect.right() > panel.right() - 8.0) {
+      reason_rect.moveLeft(pt.x() - reason_rect.width() - 14.0);
+    }
+    if (reason_rect.bottom() > panel.bottom() - 8.0) {
+      reason_rect.moveTop(pt.y() - 52.0);
+    }
+    p.setPen(QPen(QColor(marker_color.red(), marker_color.green(), marker_color.blue(), 210), 1));
+    p.setBrush(QColor(255, 255, 255, 225));
+    p.drawRoundedRect(reason_rect, 5.0, 5.0);
+    p.setFont(InterFont(13, QFont::DemiBold));
+    p.setPen(label_text_color);
+    p.drawText(reason_rect.adjusted(6.0, 0.0, -6.0, 0.0), Qt::AlignVCenter | Qt::AlignLeft, reason);
   }
   p.restore();
 }

@@ -1339,6 +1339,18 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
   osmSection->addWidget(osmEnable);
   toggles["OSMEnable"] = osmEnable;
 
+  if (params.get("OsmShowSuspiciousCameras").empty()) {
+    params.putBool("OsmShowSuspiciousCameras", true);
+  }
+  auto *osmShowSuspiciousCameras = new ParamControl(
+      "OsmShowSuspiciousCameras",
+      tr("Show suspicious OSM cameras"),
+      tr("Show suspicious OSM speed camera candidates on the mini map for validation. When disabled, only verified normal speed camera icons are shown."),
+      "../assets/offroad/icon_openpilot.png",
+      this);
+  osmSection->addWidget(osmShowSuspiciousCameras);
+  toggles["OsmShowSuspiciousCameras"] = osmShowSuspiciousCameras;
+
   auto *navdLogging = new ParamControl(
       "NavdLogging",
       tr("Navigation logging"),

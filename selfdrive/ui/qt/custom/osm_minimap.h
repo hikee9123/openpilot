@@ -60,7 +60,8 @@ struct OsmMinimapData {
 class OsmMinimapRenderer {
 public:
   void draw(QPainter &p, const QRect &surface, const OsmMinimapData &data, bool enabled, int position,
-            float speed_mps, int debug_zoom, int sim_speed_kph, bool debug_zoom_controls, bool debug_speed_controls);
+            float speed_mps, int debug_zoom, int sim_speed_kph, bool show_suspicious_cameras,
+            bool debug_zoom_controls, bool debug_speed_controls);
   bool debugZoomControlAt(const QRect &surface, int position, const QPoint &pt, bool debug_zoom_controls, int &delta) const;
   bool debugSpeedControlAt(const QRect &surface, int position, const QPoint &pt, bool debug_speed_controls, int &delta) const;
 

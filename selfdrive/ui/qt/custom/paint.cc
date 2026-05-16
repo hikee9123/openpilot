@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <string>
 
 #include <QDebug>
 #include <QPaintEvent>
@@ -149,6 +150,8 @@ void OnPaint::updateState(const UIState &s)
       sm2.update(0);
   if ((sm1.frame % UI_FREQ) == 0) {
     osm_enabled = params.getBool("OSMEnable");
+    const std::string show_suspicious_param = params.get("OsmShowSuspiciousCameras");
+    osm_show_suspicious_cameras = show_suspicious_param.empty() || params.getBool("OsmShowSuspiciousCameras");
     osm_minimap_position = std::clamp(get_param("OsmMinimapPosition"), 0, 4);
     osm_debug_map_zoom = std::clamp(get_param("OsmDebugMapZoom"), 0, 4);
     osm_gps_sim_speed_kph = std::clamp(get_param("OsmGpsSimSpeedKph"), 0, 250);
@@ -404,7 +407,7 @@ void OnPaint::drawHud(QPainter &p)
 {
   osm_minimap.draw(p, QRect(0, 0, state->fb_w, state->fb_h), m_nda.osmRoadOverlay, osm_enabled,
                    osm_minimap_position, m_param.vEgo, osm_debug_map_zoom, osm_gps_sim_speed_kph,
-                   osm_debug_zoom_controls_enabled, osm_debug_speed_controls_enabled);
+                   osm_show_suspicious_cameras, osm_debug_zoom_controls_enabled, osm_debug_speed_controls_enabled);
 
   if( !is_debug && !m_param.ui.getKegman() ) return;
 

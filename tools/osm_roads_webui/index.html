@@ -1053,18 +1053,12 @@
       for (const camera of data.cameras || []) {
         const marker = L.circleMarker([Number(camera.lat), Number(camera.lon)], {
           radius: 5,
-          color: cameraColor(camera.speed_limit_kph),
-          fillColor: cameraColor(camera.speed_limit_kph),
+          color: cameraDisplayColor(camera),
+          fillColor: cameraDisplayColor(camera),
           fillOpacity: 0.88,
           weight: 1.5
         });
-        marker.bindPopup(`
-          <strong>camera ${escapeHtml(camera.id)}</strong><br>
-          제한속도 ${escapeHtml(formatSpeed(camera.speed_limit_kph))}<br>
-          ${escapeHtml(camera.address || camera.road_name || "-")}<br>
-          road ${escapeHtml(camera.road_id || "-")} ${escapeHtml(camera.matched_road_name || camera.matched_road_ref || "")}<br>
-          거리 ${escapeHtml(formatCell(camera.match_distance_m))}m / confidence ${escapeHtml(formatCell(camera.match_confidence))}
-        `);
+        marker.bindPopup(cameraPopup(camera));
         marker.addTo(cameraLayer);
       }
       const cameras = (data.cameras || []).length;
@@ -1099,6 +1093,30 @@
       if (Number.isFinite(value) && value >= 80) return "#f06c75";
       if (Number.isFinite(value) && value <= 30) return "#e9b44c";
       return "#65d17d";
+    }
+
+    function cameraDisplayColor(camera) {
+      if ((camera.display_class || "") === "suspicious") return "#f59e0b";
+      if ((camera.display_class || "") === "rejected") return "#94a3b8";
+      return cameraColor(camera.speed_limit_kph);
+    }
+
+    function cameraPopup(camera) {
+      const displayClass = camera.display_class || "unknown";
+      const verdict = camera.direction_verdict || "-";
+      const reason = camera.reject_reason || "-";
+      const opposite = Number(camera.opposite_road_id) > 0
+        ? `<br>opposite road ${escapeHtml(camera.opposite_road_id)} / ${escapeHtml(formatCell(camera.opposite_match_distance_m))}m / confidence ${escapeHtml(formatCell(camera.opposite_match_confidence))}`
+        : "";
+      return `
+        <strong>camera ${escapeHtml(camera.id)}</strong><br>
+        상태 ${escapeHtml(displayClass)} / ${escapeHtml(verdict)}<br>
+        사유 ${escapeHtml(reason)}<br>
+        제한속도 ${escapeHtml(formatSpeed(camera.speed_limit_kph))}<br>
+        ${escapeHtml(camera.address || camera.road_name || "-")}<br>
+        road ${escapeHtml(camera.road_id || "-")} ${escapeHtml(camera.matched_road_name || camera.matched_road_ref || "")}<br>
+        거리 ${escapeHtml(formatCell(camera.match_distance_m))}m / confidence ${escapeHtml(formatCell(camera.match_confidence))}${opposite}
+      `;
     }
 
     function formatSpeed(speed) {

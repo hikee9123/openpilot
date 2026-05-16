@@ -81,6 +81,7 @@ private:
   int osm_gps_sim_speed_kph = 60;
   bool osm_debug_zoom_pressed = false;
   bool osm_debug_speed_pressed = false;
+  bool osm_show_suspicious_cameras = true;
   bool osm_debug_zoom_controls_enabled = false;
   bool osm_debug_speed_controls_enabled = false;
 
