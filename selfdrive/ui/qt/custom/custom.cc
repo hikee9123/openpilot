@@ -45,6 +45,7 @@
 namespace {
 constexpr double kEPS = 1e-9;
 constexpr const char *kOsmRoadsInstallSession = "osm_db_install";
+constexpr const char *kOsmSpeedCamerasSession = "osm_speed_cameras_update";
 
 // 버튼 공통 스타일(중복 제거)
 static const char *kRoundBtnStyle = R"(
@@ -132,6 +133,14 @@ static QString osmRoadsNavdTmpRoot(bool ensure_dir = false) {
   return navdTmpRoot;
 }
 
+static QString osmRoadsNavdSourceRoot(bool ensure_dir = false) {
+  const QString navdSourceRoot = QDir(osmRoadsNavdRoot()).absoluteFilePath("source");
+  if (ensure_dir) {
+    QDir().mkpath(navdSourceRoot);
+  }
+  return navdSourceRoot;
+}
+
 static QString osmRoadsNavdLogRoot(bool ensure_dir = false) {
   const QString navdLogRoot = QDir(osmRoadsNavdRoot()).absoluteFilePath("logs");
   if (ensure_dir) {
@@ -148,6 +157,14 @@ static QString osmRoadsInstallLogPath(bool ensure_dir = false) {
   return QDir(osmRoadsNavdLogRoot(ensure_dir)).absoluteFilePath("osm_roads_install.log");
 }
 
+static QString osmSpeedCamerasLogPath(bool ensure_dir = false) {
+  return QDir(osmRoadsNavdLogRoot(ensure_dir)).absoluteFilePath("osm_speed_cameras_update.log");
+}
+
+static QString osmSpeedCamerasCsvPath(bool ensure_dir = false) {
+  return QDir(osmRoadsNavdSourceRoot(ensure_dir)).absoluteFilePath("speed_cameras.csv");
+}
+
 static QString osmRoadsTmpRepoPath() {
   return QDir(osmRoadsNavdTmpRoot()).absoluteFilePath("osm_roads_git_db/repo");
 }
@@ -162,6 +179,14 @@ static bool osmRoadsInstallSessionActive() {
 
 static void stopOsmRoadsInstallSession() {
   QProcess::execute("bash", {"-lc", QString("command -v tmux >/dev/null && tmux kill-session -t %1 2>/dev/null || true").arg(kOsmRoadsInstallSession)});
+}
+
+static bool osmSpeedCamerasSessionActive() {
+  return QProcess::execute("bash", {"-lc", QString("command -v tmux >/dev/null && tmux has-session -t %1 2>/dev/null").arg(kOsmSpeedCamerasSession)}) == 0;
+}
+
+static void stopOsmSpeedCamerasSession() {
+  QProcess::execute("bash", {"-lc", QString("command -v tmux >/dev/null && tmux kill-session -t %1 2>/dev/null || true").arg(kOsmSpeedCamerasSession)});
 }
 
 static QString formatOsmRoadsBytes(qint64 size_bytes) {
@@ -1365,6 +1390,115 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
       350, 3000, 100);
   osmCameraSection->addWidget(osmCameraDisplayDistance);
 
+  updateOsmSpeedCamerasButton = new ButtonControl(
+      tr("Update OSM speed cameras"),
+      tr("UPDATE"),
+      tr("Download the public speed camera CSV and rematch it into the installed OSM road DB. The road graph DB is not rebuilt."),
+      this);
+  connect(updateOsmSpeedCamerasButton, &ButtonControl::clicked, this, [=]() {
+    Params p;
+    if (osmSpeedCamerasUpdateRunning()) {
+      if (osmSpeedCamerasSessionActive()) {
+        stopOsmSpeedCamerasSession();
+        p.put("OsmSpeedCamerasUpdateStatus", "failed");
+        p.put("OsmSpeedCamerasUpdateError", "OSM speed camera update stopped by user.");
+        p.put("OsmSpeedCamerasUpdateProgress", "0");
+        refreshOsmSpeedCamerasStatus();
+        return;
+      }
+
+      p.put("OsmSpeedCamerasUpdateStatus", "failed");
+      p.put("OsmSpeedCamerasUpdateError", "Previous OSM speed camera update process is not running. Starting a new update.");
+    }
+
+    if (osmRoadsInstallRunning()) {
+      p.put("OsmSpeedCamerasUpdateStatus", "failed");
+      p.put("OsmSpeedCamerasUpdateError", "OSM road DB install is running. Retry after the DB install finishes.");
+      p.put("OsmSpeedCamerasUpdateProgress", "0");
+      refreshOsmSpeedCamerasStatus();
+      return;
+    }
+
+    const QString dbPath = osmRoadsInstalledDbPath();
+    if (!QFileInfo(dbPath).exists()) {
+      p.put("OsmSpeedCamerasUpdateStatus", "failed");
+      p.put("OsmSpeedCamerasUpdateError", QString("OSM road DB missing: %1").arg(dbPath).toStdString());
+      p.put("OsmSpeedCamerasUpdateProgress", "0");
+      refreshOsmSpeedCamerasStatus();
+      return;
+    }
+
+    const QString csvPath = osmSpeedCamerasCsvPath(true);
+    p.put("OsmSpeedCamerasUpdateStatus", "running");
+    p.put("OsmSpeedCamerasUpdateError", "");
+    p.put("OsmSpeedCamerasUpdateProgress", "0");
+    p.put("OsmSpeedCamerasCsvPath", csvPath.toStdString());
+    p.put("OsmSpeedCamerasDownloadRows", "0");
+    p.put("OsmSpeedCamerasDownloadTotalRows", "0");
+    p.put("OsmSpeedCamerasImportedCount", "0");
+    p.put("OsmSpeedCamerasMatchedCount", "0");
+    p.put("OsmSpeedCamerasLookupCount", "0");
+
+    QProcess *proc = new QProcess(this);
+    const QString repoRoot = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../..");
+    const QString canonicalRepoRoot = QDir(repoRoot).canonicalPath();
+    const bool navLogsEnabled = p.getBool("NavdLogging");
+    const QString tmpRoot = osmRoadsNavdTmpRoot(true);
+    const QString logPath = osmSpeedCamerasLogPath(navLogsEnabled);
+    if (navLogsEnabled) {
+      QFile::remove(logPath);
+      QFile logFile(logPath);
+      if (logFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        logFile.close();
+      }
+    }
+    const QString updateCommand = navLogsEnabled
+        ? QString("cd %1 && python3 tools/scripts/update_osm_speed_cameras.py --db %2 --csv %3 --tmp-dir %4 --match-radius-m 65 --require-road-graph 2>&1 | tee %5")
+              .arg(shellQuote(canonicalRepoRoot), shellQuote(dbPath), shellQuote(csvPath), shellQuote(tmpRoot), shellQuote(logPath))
+        : QString("cd %1 && python3 tools/scripts/update_osm_speed_cameras.py --db %2 --csv %3 --tmp-dir %4 --match-radius-m 65 --require-road-graph >/dev/null 2>&1")
+              .arg(shellQuote(canonicalRepoRoot), shellQuote(dbPath), shellQuote(csvPath), shellQuote(tmpRoot));
+    const QString tmuxCommand = QString("command -v tmux >/dev/null && "
+                                        "(tmux has-session -t %1 2>/dev/null || "
+                                        "tmux new-session -d -s %1 %2)")
+        .arg(QString::fromLatin1(kOsmSpeedCamerasSession), shellQuote(updateCommand));
+    proc->setWorkingDirectory(canonicalRepoRoot);
+    proc->setProgram("bash");
+    proc->setArguments({"-lc", tmuxCommand});
+    proc->setProcessChannelMode(QProcess::MergedChannels);
+    connect(proc, &QProcess::readyRead, proc, [proc]() { proc->readAll(); });
+
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int code, QProcess::ExitStatus status) {
+      Params finishedParams;
+      if (status != QProcess::NormalExit || code != 0) {
+        finishedParams.put("OsmSpeedCamerasUpdateStatus", "failed");
+        finishedParams.put("OsmSpeedCamerasUpdateError", QString("tmux start failed: exit code %1").arg(code).toStdString());
+      }
+      proc->deleteLater();
+      refreshOsmSpeedCamerasStatus();
+    });
+    proc->start();
+  });
+  osmCameraSection->addWidget(updateOsmSpeedCamerasButton);
+
+  auto *speedCameraStatusPanel = new QFrame(this);
+  speedCameraStatusPanel->setStyleSheet(R"(
+    QFrame {
+      border: none;
+      background-color: black;
+    }
+  )");
+  auto *speedCameraStatusLayout = new QVBoxLayout(speedCameraStatusPanel);
+  speedCameraStatusLayout->setContentsMargins(0, 18, 0, 24);
+  speedCameraStatusLayout->setSpacing(10);
+  osmSpeedCamerasStatusLabel = makeModelStatusLine(speedCameraStatusPanel, 32, "#f4f4f4");
+  osmSpeedCamerasDetailLabel = makeModelStatusLine(speedCameraStatusPanel, 26, "#a8a8a8");
+  osmSpeedCamerasProgressBar = makeModelProgressBar(speedCameraStatusPanel);
+  speedCameraStatusLayout->addWidget(osmSpeedCamerasStatusLabel);
+  speedCameraStatusLayout->addWidget(osmSpeedCamerasProgressBar);
+  speedCameraStatusLayout->addWidget(osmSpeedCamerasDetailLabel);
+  osmCameraSection->addWidget(speedCameraStatusPanel);
+
   auto *navdLogging = new ParamControl(
       "NavdLogging",
       tr("Navigation logging"),
@@ -1498,11 +1632,21 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
   osmRoadsStatusTimer->start(1000);
   skipOsmRoadsExistingLog();
   refreshOsmRoadsStatus();
+
+  osmSpeedCamerasStatusTimer = new QTimer(this);
+  connect(osmSpeedCamerasStatusTimer, &QTimer::timeout, this, &NavigationTab::refreshOsmSpeedCamerasStatus);
+  osmSpeedCamerasStatusTimer->start(1000);
+  refreshOsmSpeedCamerasStatus();
 }
 
 bool NavigationTab::osmRoadsInstallRunning()
 {
   return params.get("OsmRoadsUpdateStatus") == "running";
+}
+
+bool NavigationTab::osmSpeedCamerasUpdateRunning()
+{
+  return params.get("OsmSpeedCamerasUpdateStatus") == "running";
 }
 
 void NavigationTab::skipOsmRoadsExistingLog()
@@ -1563,6 +1707,119 @@ void NavigationTab::emitOsmRoadsInstallLog()
     fprintf(stderr, "[osm_db_install] %s\n", text.constData());
     fflush(stderr);
   }
+}
+
+void NavigationTab::refreshOsmSpeedCamerasStatus()
+{
+  if (!updateOsmSpeedCamerasButton || !osmSpeedCamerasStatusLabel || !osmSpeedCamerasDetailLabel || !osmSpeedCamerasProgressBar) return;
+
+  QString status = QString::fromStdString(params.get("OsmSpeedCamerasUpdateStatus"));
+  QString error = QString::fromStdString(params.get("OsmSpeedCamerasUpdateError"));
+  const QString updatedAt = QString::fromStdString(params.get("OsmSpeedCamerasUpdatedAt"));
+  QString csvPath = QString::fromStdString(params.get("OsmSpeedCamerasCsvPath"));
+  if (csvPath.isEmpty()) {
+    csvPath = osmSpeedCamerasCsvPath();
+  }
+
+  bool ok = false;
+  const int progress = std::clamp(QString::fromStdString(params.get("OsmSpeedCamerasUpdateProgress")).toInt(&ok), 0, 100);
+  bool rowsOk = false;
+  const qint64 downloadRows = QString::fromStdString(params.get("OsmSpeedCamerasDownloadRows")).toLongLong(&rowsOk);
+  bool totalOk = false;
+  const qint64 downloadTotalRows = QString::fromStdString(params.get("OsmSpeedCamerasDownloadTotalRows")).toLongLong(&totalOk);
+  bool importedOk = false;
+  const qint64 importedCount = QString::fromStdString(params.get("OsmSpeedCamerasImportedCount")).toLongLong(&importedOk);
+  bool matchedOk = false;
+  const qint64 matchedCount = QString::fromStdString(params.get("OsmSpeedCamerasMatchedCount")).toLongLong(&matchedOk);
+  bool lookupOk = false;
+  const qint64 lookupCount = QString::fromStdString(params.get("OsmSpeedCamerasLookupCount")).toLongLong(&lookupOk);
+  const QString installedDbDetail = osmRoadsFileDetail("local DB", osmRoadsInstalledDbPath());
+  const QString csvDetail = osmRoadsFileDetail("CSV", csvPath);
+  const bool navLogsEnabled = params.getBool("NavdLogging");
+  const QString logFileDetail = navLogsEnabled ? osmRoadsFileDetail("log", osmSpeedCamerasLogPath()) : tr("navd log disabled");
+
+  bool running = status == "running";
+  if (running && !osmSpeedCamerasSessionActive()) {
+    running = false;
+    status = "failed";
+    error = tr("Previous OSM speed camera update process is not running.");
+    Params staleParams;
+    staleParams.put("OsmSpeedCamerasUpdateStatus", "failed");
+    staleParams.put("OsmSpeedCamerasUpdateError", error.toStdString());
+  }
+
+  osmSpeedCamerasProgressBar->setValue(ok ? progress : 0);
+  osmSpeedCamerasProgressBar->setVisible(running || progress > 0);
+  updateOsmSpeedCamerasButton->setEnabled(true);
+
+  auto appendCounts = [&](QStringList &details) {
+    if (rowsOk && downloadRows > 0) {
+      if (totalOk && downloadTotalRows > 0) {
+        details.append(QString("%1 / %2 rows downloaded").arg(downloadRows).arg(downloadTotalRows));
+      } else {
+        details.append(QString("%1 rows downloaded").arg(downloadRows));
+      }
+    }
+    if (importedOk && importedCount > 0) details.append(QString("%1 cameras").arg(importedCount));
+    if (matchedOk && matchedCount > 0) details.append(QString("%1 matched").arg(matchedCount));
+    if (lookupOk && lookupCount > 0) details.append(QString("%1 lookup rows").arg(lookupCount));
+  };
+
+  if (running) {
+    updateOsmSpeedCamerasButton->setText(tr("STOP"));
+    osmSpeedCamerasStatusLabel->setText(tr("Updating OSM speed cameras"));
+    QStringList details;
+    details.append(QString("%1%").arg(ok ? progress : 0));
+    appendCounts(details);
+    if (!installedDbDetail.isEmpty()) details.append(installedDbDetail);
+    details.append(QString("tmux a -t %1").arg(kOsmSpeedCamerasSession));
+    if (navLogsEnabled) {
+      details.append(QString("tail -f %1").arg(osmSpeedCamerasLogPath()));
+    } else {
+      details.append(tr("navd log disabled"));
+    }
+    osmSpeedCamerasDetailLabel->setText(details.join(" | "));
+    return;
+  }
+
+  if (status == "success") {
+    updateOsmSpeedCamerasButton->setText(tr("UPDATE"));
+    osmSpeedCamerasStatusLabel->setText(tr("OSM speed cameras ready"));
+    QStringList details;
+    appendCounts(details);
+    if (!updatedAt.isEmpty()) details.append(tr("Updated ") + updatedAt);
+    if (!csvDetail.isEmpty()) details.append(csvDetail);
+    if (!installedDbDetail.isEmpty()) details.append(installedDbDetail);
+    osmSpeedCamerasDetailLabel->setText(details.isEmpty() ? tr("Update completed") : details.join(" | "));
+    return;
+  }
+
+  if (status == "failed") {
+    updateOsmSpeedCamerasButton->setText(tr("RETRY"));
+    osmSpeedCamerasStatusLabel->setText(tr("OSM speed camera update failed"));
+    QStringList details;
+    details.append(error.isEmpty() ? tr("Check network and OSM road DB state.") : error.right(220));
+    if (!csvDetail.isEmpty()) details.append(csvDetail);
+    if (!installedDbDetail.isEmpty()) details.append(installedDbDetail);
+    details.append(logFileDetail.isEmpty() ? QString("log %1").arg(osmSpeedCamerasLogPath()) : logFileDetail);
+    osmSpeedCamerasDetailLabel->setText(details.join(" | "));
+    return;
+  }
+
+  updateOsmSpeedCamerasButton->setText(tr("UPDATE"));
+  osmSpeedCamerasStatusLabel->setText(tr("OSM speed cameras"));
+  QStringList details;
+  if (!csvDetail.isEmpty()) {
+    details.append(csvDetail);
+  } else {
+    details.append(QString("CSV will be downloaded to %1").arg(csvPath));
+  }
+  if (!installedDbDetail.isEmpty()) {
+    details.append(installedDbDetail);
+  } else {
+    details.append(QString("local DB missing %1").arg(osmRoadsInstalledDbPath()));
+  }
+  osmSpeedCamerasDetailLabel->setText(details.join(" | "));
 }
 
 void NavigationTab::refreshOsmRoadsStatus()
