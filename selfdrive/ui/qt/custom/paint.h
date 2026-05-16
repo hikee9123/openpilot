@@ -46,6 +46,7 @@ public:
   bool    handleMousePress(const QPoint &pt, const QRect &surface);
   bool    handleMouseRelease(const QPoint &pt, const QRect &surface);
   void    drawSpeed(QPainter &p, int x, QString speedStr, QString speedUnit );
+  void    drawSpeedCameraAlert(QPainter &p, const QRect &set_speed_rect);
   void    drawLead(QPainter &p, const cereal::RadarState::LeadData::Reader &lead_data, const QPointF &vd, int w, int h );
 
 private:
@@ -55,6 +56,10 @@ private:
 
 private:
   void   ui_main_navi( QPainter &p );
+  bool   speedCameraAlert(int &cam_type, int &limit_speed, int &distance_m) const;
+  QString cameraTypeLabel(int cam_type) const;
+  void   drawSpeedLimitSign(QPainter &p, const QPointF &center, int radius, int cam_type, int limit_speed) const;
+  void   drawSignalBadge(QPainter &p, double center_x, double top_y) const;
 
 private:
   inline QColor redColor(int alpha = 255) { return QColor(201, 34, 49, alpha); }

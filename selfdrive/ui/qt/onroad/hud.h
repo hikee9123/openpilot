@@ -15,6 +15,7 @@ public:
   bool handleMouseRelease(const QPoint &pt, const QRect &surface_rect);
 
 private:
+  QRect setSpeedRect(const QRect &surface_rect) const;
   void drawSetSpeed(QPainter &p, const QRect &surface_rect);
   void drawCurrentSpeed(QPainter &p, const QRect &surface_rect);
   void drawText(QPainter &p, int x, int y, const QString &text, int alpha = 255);

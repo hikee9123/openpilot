@@ -70,6 +70,9 @@ void HudRenderer::draw(QPainter &p, const QRect &surface_rect) {
     QString speedStr = QString::number(std::nearbyint(speed));
     QString speedUnit = is_metric ? tr("km/h") : tr("mph");
     m_pPaint->drawHud(p);
+    if (is_cruise_available) {
+      m_pPaint->drawSpeedCameraAlert(p, setSpeedRect(surface_rect));
+    }
     m_pPaint->drawSpeed(p, surface_rect.center().x(), speedStr, speedUnit );
   }
 
@@ -84,11 +87,17 @@ bool HudRenderer::handleMouseRelease(const QPoint &pt, const QRect &surface_rect
   return m_pPaint && m_pPaint->handleMouseRelease(pt, surface_rect);
 }
 
-void HudRenderer::drawSetSpeed(QPainter &p, const QRect &surface_rect) {
-  // Draw outer box + border to contain set speed
+QRect HudRenderer::setSpeedRect(const QRect &surface_rect) const {
   const QSize default_size = {172, 204};
   QSize set_speed_size = is_metric ? QSize(200, 204) : default_size;
-  QRect set_speed_rect(QPoint(60 + (default_size.width() - set_speed_size.width()) / 2, 45), set_speed_size);
+  return QRect(QPoint(surface_rect.x() + 60 + (default_size.width() - set_speed_size.width()) / 2,
+                     surface_rect.y() + 45),
+               set_speed_size);
+}
+
+void HudRenderer::drawSetSpeed(QPainter &p, const QRect &surface_rect) {
+  // Draw outer box + border to contain set speed
+  const QRect set_speed_rect = setSpeedRect(surface_rect);
 
   // Draw set speed box
   p.setPen(QPen(QColor(255, 255, 255, 75), 6));
