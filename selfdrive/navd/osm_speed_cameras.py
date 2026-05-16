@@ -23,7 +23,11 @@ DEFAULT_CAMERA_MAX_MATCHES = 3
 OPPOSITE_PARALLEL_BEARING_DIFF_DEG = 150.0
 NORMAL_DISPLAY_MIN_CONFIDENCE = 0.75
 NORMAL_DISPLAY_MAX_DISTANCE_M = 35.0
+PARALLEL_CLEAR_PRIMARY_MAX_DISTANCE_M = 12.0
+PARALLEL_CLEAR_OPPOSITE_MIN_DISTANCE_M = 20.0
+PARALLEL_CLEAR_CONFIDENCE_MARGIN = 0.12
 SPEED_ICON_CAMERA_TYPES = ("1", "2", "1+02")
+INTERSECTION_CAMERA_KEYWORDS = ("교차로", "사거리", "삼거리", "오거리", "로터리")
 
 ID_COLUMNS = (
   "external_id", "camera_id", "cam_id", "id", "관리번호", "번호",
@@ -99,6 +103,25 @@ def _speed_icon_camera_type(camera_type: Any) -> bool:
   return _normalize_code(camera_type) in SPEED_ICON_CAMERA_TYPES
 
 
+def _signal_speed_camera_type(camera_type: Any) -> bool:
+  return _normalize_code(camera_type) in ("2", "1+02")
+
+
+def _intersection_camera_context(camera: sqlite3.Row) -> bool:
+  text = f"{camera['address'] or ''} {camera['road_name'] or ''}"
+  return any(keyword in text for keyword in INTERSECTION_CAMERA_KEYWORDS)
+
+
+def _primary_match_clearly_better_than_opposite(match: dict[str, Any],
+                                                opposite_distance_m: float,
+                                                opposite_confidence: float) -> bool:
+  return (
+    float(match["distance_m"]) <= PARALLEL_CLEAR_PRIMARY_MAX_DISTANCE_M
+    and opposite_distance_m >= PARALLEL_CLEAR_OPPOSITE_MIN_DISTANCE_M
+    and float(match["match_confidence"]) - opposite_confidence >= PARALLEL_CLEAR_CONFIDENCE_MARGIN
+  )
+
+
 def _opposite_parallel_match(match: dict[str, Any], matches: list[dict[str, Any]]) -> dict[str, Any] | None:
   opposite: list[dict[str, Any]] = []
   for other in matches:
@@ -129,7 +152,12 @@ def _classify_lookup_match(camera: sqlite3.Row, match: dict[str, Any],
     return "suspicious", "unknown", "low_confidence", opposite_road_id, opposite_distance_m, opposite_confidence
   if float(match["distance_m"]) > NORMAL_DISPLAY_MAX_DISTANCE_M:
     return "suspicious", "unknown", "far_match", opposite_road_id, opposite_distance_m, opposite_confidence
-  if opposite is not None:
+  if opposite is not None and not (
+    _signal_speed_camera_type(camera["camera_type"])
+    and
+    _intersection_camera_context(camera)
+    and _primary_match_clearly_better_than_opposite(match, opposite_distance_m, opposite_confidence)
+  ):
     return "suspicious", "ambiguous_parallel", "parallel_road_ambiguous", opposite_road_id, opposite_distance_m, opposite_confidence
   if _normalize_code(camera["direction"]) not in ("1", "2"):
     return "suspicious", "unknown", "unknown_direction", opposite_road_id, opposite_distance_m, opposite_confidence
