@@ -323,6 +323,10 @@ signals:
 private slots:
 
 private:
+  void markCurrentRouteForUpload();
+  void refreshLogStatus();
+  QString managerProcessStatus(const char *name) const;
+
   struct ValueDef {
     QString param;
     QString title;
@@ -339,6 +343,11 @@ private:
 private:
   CustomPanel *m_pCustom = nullptr;
   QJsonObject &m_jsonobj;
+  LabelControl *m_loggerStatus = nullptr;
+  LabelControl *m_uploaderStatus = nullptr;
+  LabelControl *m_deleterStatus = nullptr;
+  LabelControl *m_routeStatus = nullptr;
+  LabelControl *m_logPathStatus = nullptr;
 
 };
 

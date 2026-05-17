@@ -34,6 +34,7 @@
 #include <QToolButton>
 #include <QPropertyAnimation>
 #include <QFrame>
+#include <QStringList>
 
 #include "common/params.h"
 #include "common/util.h"
@@ -879,7 +880,60 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
 
   auto *logSec = new CollapsibleSection(tr("Logging"), this);
   addItem(logSec);
-  logSec->addWidget(new ParamControl("EnableLogging", tr("Enable logging"), tr("Record runtime logs"), kIcon, this));
+  logSec->addWidget(new ParamControl(
+      "LogCaptureEnabled",
+      tr("Runtime logging"),
+      tr("Record driving logs under the log root, including rlog, qlog, and camera files."),
+      kIcon,
+      this));
+  logSec->addWidget(new ParamControl(
+      "LogUploadEnabled",
+      tr("Upload logs"),
+      tr("Run the uploader for completed logs when the device is registered and network policy allows uploads."),
+      kIcon,
+      this));
+  logSec->addWidget(new ParamControl(
+      "LogAutoCleanupEnabled",
+      tr("Auto cleanup old logs"),
+      tr("Run the log cleanup process to protect storage when old route logs accumulate."),
+      kIcon,
+      this));
+  logSec->addWidget(new ParamControl(
+      "RecordFront",
+      tr("Record and Upload Driver Camera"),
+      tr("Record driver camera data for upload according to the uploader and network settings."),
+      kIcon,
+      this));
+  logSec->addWidget(new ParamControl(
+      "RecordAudio",
+      tr("Record Microphone Audio"),
+      tr("Record microphone audio while driving and include it in route media when available."),
+      kIcon,
+      this));
+
+  auto *uploadCurrentRoute = new ButtonControl(
+      tr("Upload current route"),
+      tr("MARK"),
+      tr("Add the current route to the upload request list. The uploader still respects registration and network policy."),
+      this);
+  QObject::connect(uploadCurrentRoute, &ButtonControl::clicked, this, &CommunityTab::markCurrentRouteForUpload);
+  logSec->addWidget(uploadCurrentRoute);
+
+  m_loggerStatus = new LabelControl(tr("Logger status"), "", tr("Current loggerd process state."), this);
+  m_uploaderStatus = new LabelControl(tr("Uploader status"), "", tr("Current uploader process state."), this);
+  m_deleterStatus = new LabelControl(tr("Cleanup status"), "", tr("Current log cleanup process state."), this);
+  m_routeStatus = new LabelControl(tr("Current route"), "", tr("Route that can be marked for upload while logging is active."), this);
+  m_logPathStatus = new LabelControl(tr("Log path"), "", tr("Root directory used for route logs."), this);
+  logSec->addWidget(m_loggerStatus);
+  logSec->addWidget(m_uploaderStatus);
+  logSec->addWidget(m_deleterStatus);
+  logSec->addWidget(m_routeStatus);
+  logSec->addWidget(m_logPathStatus);
+
+  QObject::connect(uiState(), &UIState::uiUpdate, this, [this](const UIState &) {
+    if (isVisible()) refreshLogStatus();
+  });
+  refreshLogStatus();
 
   // CruiseMode ↔ CruiseGap 의존성
   auto syncCruiseGapEnabled = [this]() {
@@ -922,7 +976,60 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
   applyListWidgetBaseStyle(this);
 }
 
-void CommunityTab::showEvent(QShowEvent *event) { QWidget::showEvent(event); }
+QString CommunityTab::managerProcessStatus(const char *name) const {
+  UIState *s = uiState();
+  if (!s || !s->sm || !s->sm->alive("managerState")) {
+    return tr("Unknown");
+  }
+
+  for (auto proc : (*s->sm)["managerState"].getManagerState().getProcesses()) {
+    if (proc.getName() == name) {
+      return proc.getRunning() ? tr("Running") : tr("Stopped");
+    }
+  }
+  return tr("Unavailable");
+}
+
+void CommunityTab::markCurrentRouteForUpload() {
+  Params params;
+  const QString currentRoute = QString::fromStdString(params.get("CurrentRoute")).trimmed();
+  if (currentRoute.isEmpty()) {
+    ConfirmationDialog::alert(tr("No current route is available yet."), this);
+    refreshLogStatus();
+    return;
+  }
+
+  QStringList routes = QString::fromStdString(params.get("AthenadRecentlyViewedRoutes")).split(",", QString::SkipEmptyParts);
+  routes.removeAll(currentRoute);
+  routes.append(currentRoute);
+  while (routes.size() > 10) {
+    routes.removeFirst();
+  }
+  params.put("AthenadRecentlyViewedRoutes", routes.join(",").toStdString());
+
+  ConfirmationDialog::alert(tr("Current route marked for upload."), this);
+  refreshLogStatus();
+}
+
+void CommunityTab::refreshLogStatus() {
+  if (!m_loggerStatus || !m_uploaderStatus || !m_deleterStatus || !m_routeStatus || !m_logPathStatus) {
+    return;
+  }
+
+  Params params;
+  m_loggerStatus->setText(params.getBool("LogCaptureEnabled") ? managerProcessStatus("loggerd") : tr("Disabled"));
+  m_uploaderStatus->setText(params.getBool("LogUploadEnabled") ? managerProcessStatus("uploader") : tr("Disabled"));
+  m_deleterStatus->setText(params.getBool("LogAutoCleanupEnabled") ? managerProcessStatus("deleter") : tr("Disabled"));
+
+  const QString currentRoute = QString::fromStdString(params.get("CurrentRoute")).trimmed();
+  m_routeStatus->setText(currentRoute.isEmpty() ? tr("No active route") : currentRoute);
+  m_logPathStatus->setText(QString::fromStdString(Path::log_root()));
+}
+
+void CommunityTab::showEvent(QShowEvent *event) {
+  QWidget::showEvent(event);
+  refreshLogStatus();
+}
 void CommunityTab::hideEvent(QHideEvent *event) { QWidget::hideEvent(event); }
 
 // ======================================================================================
