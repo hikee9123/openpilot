@@ -237,6 +237,161 @@
       align-items: start;
     }
 
+    .cabana-workspace {
+      display: grid;
+      grid-template-columns: minmax(220px, 0.55fr) minmax(440px, 1.25fr) minmax(320px, 0.8fr);
+      grid-template-areas:
+        "navigator bus detail"
+        "navigator chart detail"
+        "timeline messages logs"
+        "segments segments logs";
+      gap: 14px;
+      align-items: start;
+    }
+
+    .navigator-panel {
+      grid-area: navigator;
+    }
+
+    .bus-panel {
+      grid-area: bus;
+    }
+
+    .detail-panel {
+      grid-area: detail;
+    }
+
+    .chart-panel {
+      grid-area: chart;
+    }
+
+    .timeline-panel {
+      grid-area: timeline;
+    }
+
+    .messages-panel {
+      grid-area: messages;
+    }
+
+    .logs-panel {
+      grid-area: logs;
+    }
+
+    .segments-panel {
+      grid-area: segments;
+    }
+
+    .can-table tr,
+    .message-table tr,
+    .signal-table tr {
+      cursor: pointer;
+    }
+
+    .can-table tr:hover,
+    .can-table tr.active,
+    .signal-table tr:hover,
+    .signal-table tr.active,
+    .message-table tr:hover {
+      background: var(--surface-2);
+    }
+
+    .chart-tools {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .bus-filters {
+      display: grid;
+      grid-template-columns: minmax(170px, 1fr) auto;
+      gap: 8px;
+      margin-bottom: 10px;
+      align-items: center;
+    }
+
+    .inspector {
+      display: grid;
+      gap: 12px;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .detail-cell {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #10141b;
+      padding: 8px;
+      min-width: 0;
+    }
+
+    .detail-cell .label {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 850;
+      text-transform: uppercase;
+    }
+
+    .detail-cell .value {
+      margin-top: 3px;
+      font-size: 14px;
+      font-weight: 850;
+      overflow-wrap: anywhere;
+    }
+
+    .hex-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      min-height: 34px;
+      align-items: center;
+    }
+
+    .hex-byte {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 34px;
+      height: 28px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--surface-2);
+      color: var(--text);
+      font-weight: 850;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .bit-grid {
+      display: grid;
+      grid-template-columns: repeat(8, minmax(28px, 1fr));
+      gap: 5px;
+    }
+
+    .bit {
+      min-height: 26px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: #10141b;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 850;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .bit.on {
+      background: #163d34;
+      color: #d9fff5;
+      border-color: #2e8b75;
+    }
+
     .panel {
       min-width: 0;
       overflow: hidden;
@@ -411,8 +566,21 @@
       }
 
       .grid,
+      .cabana-workspace,
       .stats {
         grid-template-columns: 1fr;
+      }
+
+      .cabana-workspace {
+        grid-template-areas:
+          "navigator"
+          "bus"
+          "detail"
+          "chart"
+          "timeline"
+          "messages"
+          "logs"
+          "segments";
       }
 
       header {
@@ -489,18 +657,113 @@
         </div>
       </section>
 
-      <div class="grid">
-        <section class="panel">
+      <div class="cabana-workspace">
+        <section class="panel navigator-panel">
           <div class="section-head">
-            <h2>Signal Chart</h2>
-            <div id="seriesLegend" class="legend"></div>
+            <h2>Navigator</h2>
+            <span id="segmentCount" class="badge">0</span>
+          </div>
+          <div class="panel-body">
+            <div class="scroll">
+              <table>
+                <thead><tr><th style="width: 80px;">Segment</th><th>Files</th><th style="width: 90px;">State</th></tr></thead>
+                <tbody id="segmentsTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel bus-panel">
+          <div class="section-head">
+            <h2>CAN Bus</h2>
+            <div class="controls">
+              <select id="canType">
+                <option value="can">can</option>
+                <option value="sendcan">sendcan</option>
+              </select>
+              <select id="dbcSelect" title="DBC">
+                <option value="">raw</option>
+              </select>
+              <button id="loadCan" class="primary">Load CAN</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="bus-filters">
+              <input id="canFilter" placeholder="Filter addr, name, data, signal">
+              <span id="canFilterCount" class="badge">0 / 0</span>
+            </div>
+            <div class="scroll">
+              <table class="can-table">
+                <thead><tr><th style="width: 90px;">Addr</th><th style="width: 145px;">Name</th><th style="width: 56px;">Src</th><th style="width: 60px;">DLC</th><th style="width: 72px;">Signals</th><th style="width: 82px;">Count</th><th style="width: 70px;">Hz</th><th>Last Data</th></tr></thead>
+                <tbody id="canSummary"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel detail-panel">
+          <div class="section-head">
+            <h2 id="canDetailTitle">Frame Detail</h2>
+            <span id="canDetailBadge" class="badge">none</span>
+          </div>
+          <div class="panel-body inspector">
+            <div class="detail-grid">
+              <div class="detail-cell"><div class="label">Address</div><div id="detailAddress" class="value">-</div></div>
+              <div class="detail-cell"><div class="label">Source</div><div id="detailSrc" class="value">-</div></div>
+              <div class="detail-cell"><div class="label">Frames</div><div id="detailCount" class="value">-</div></div>
+              <div class="detail-cell"><div class="label">Frequency</div><div id="detailHz" class="value">-</div></div>
+            </div>
+            <div>
+              <h3>Hex</h3>
+              <div id="hexBytes" class="hex-line muted">Select a CAN row.</div>
+            </div>
+            <div>
+              <h3>Replay</h3>
+              <div class="controls">
+                <button id="playCanFrame">Play</button>
+                <input id="frameSlider" type="range" min="0" max="0" value="0">
+                <span id="framePosition" class="badge">0 / 0</span>
+              </div>
+            </div>
+            <div>
+              <h3>Bits</h3>
+              <div id="bitGrid" class="bit-grid"></div>
+            </div>
+            <div>
+              <h3>Decoded Signals</h3>
+              <div class="scroll">
+                <table class="signal-table">
+                  <thead><tr><th>Signal</th><th style="width: 90px;">Value</th><th style="width: 72px;">Raw</th></tr></thead>
+                  <tbody id="decodedSignals"></tbody>
+                </table>
+              </div>
+            </div>
+            <div>
+              <h3>Samples</h3>
+              <div class="scroll">
+                <table>
+                  <thead><tr><th style="width: 82px;">Time</th><th style="width: 56px;">Src</th><th>Data</th></tr></thead>
+                  <tbody id="canSamples"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel chart-panel">
+          <div class="section-head">
+            <h2 id="chartTitle">Signal Chart</h2>
+            <div class="chart-tools">
+              <div id="seriesLegend" class="legend"></div>
+              <button id="showRouteChart">Route</button>
+            </div>
           </div>
           <div class="panel-body">
             <canvas id="seriesChart" width="960" height="330"></canvas>
           </div>
         </section>
 
-        <section class="panel">
+        <section class="panel timeline-panel">
           <div class="section-head">
             <h2>Timeline</h2>
             <span id="timelineCount" class="badge">0 events</span>
@@ -510,74 +773,34 @@
           </div>
         </section>
 
-        <section class="panel">
+        <section class="panel messages-panel">
           <div class="section-head">
-            <h2>Message Counts</h2>
-            <select id="messageType"></select>
+            <h2>Messages</h2>
+            <div class="controls">
+              <select id="messageType"></select>
+              <button id="loadMessages">Load</button>
+            </div>
           </div>
           <div class="panel-body">
             <div class="scroll">
-              <table>
+              <table class="message-table">
                 <thead><tr><th>Type</th><th style="width: 100px;">Count</th></tr></thead>
                 <tbody id="messageCounts"></tbody>
               </table>
             </div>
-          </div>
-        </section>
-
-        <section class="panel">
-          <div class="section-head">
-            <h2>Message Samples</h2>
-            <button id="loadMessages">Load</button>
-          </div>
-          <div id="messageSamples" class="panel-body log-lines">
-            <div class="empty">Select a message type.</div>
-          </div>
-        </section>
-
-        <section class="panel">
-          <div class="section-head">
-            <h2>CAN Summary</h2>
-            <div class="controls">
-              <select id="canType">
-                <option value="can">can</option>
-                <option value="sendcan">sendcan</option>
-              </select>
-              <button id="loadCan">Load CAN</button>
-            </div>
-          </div>
-          <div class="panel-body">
-            <div class="scroll">
-              <table>
-                <thead><tr><th style="width: 90px;">Address</th><th style="width: 70px;">Src</th><th style="width: 90px;">Count</th><th>Last Data</th></tr></thead>
-                <tbody id="canSummary"></tbody>
-              </table>
+            <div id="messageSamples" class="log-lines">
+              <div class="empty">Select a message type.</div>
             </div>
           </div>
         </section>
 
-        <section class="panel">
+        <section class="panel logs-panel">
           <div class="section-head">
             <h2>Text Logs</h2>
             <button id="loadTextLogs">Load</button>
           </div>
           <div id="textLogs" class="panel-body log-lines">
             <div class="empty">Load logMessage/errorLogMessage/androidLog.</div>
-          </div>
-        </section>
-
-        <section class="panel">
-          <div class="section-head">
-            <h2>Segments</h2>
-            <span id="segmentCount" class="badge">0</span>
-          </div>
-          <div class="panel-body">
-            <div class="scroll">
-              <table>
-                <thead><tr><th style="width: 80px;">Segment</th><th>Files</th><th style="width: 110px;">Locked</th></tr></thead>
-                <tbody id="segmentsTable"></tbody>
-              </table>
-            </div>
           </div>
         </section>
       </div>
@@ -590,6 +813,14 @@
       route: null,
       summary: null,
       series: null,
+      canData: null,
+      selectedCan: null,
+      canSamples: [],
+      selectedCanSignal: "",
+      canFilter: "",
+      replayIndex: 0,
+      replayTimer: null,
+      dbcs: [],
       colors: ["#43c7a9", "#6aa7ff", "#e5b454", "#ee6a72", "#b58cff", "#6ed17e", "#f58ac4"],
     };
 
@@ -667,6 +898,19 @@
       renderRoutes();
     }
 
+    async function loadDbcs() {
+      try {
+        const data = await api("/api/dbc/list");
+        state.dbcs = data.dbcs || [];
+        $("dbcSelect").innerHTML = `<option value="">raw</option>` + state.dbcs.map((name) => (
+          `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`
+        )).join("");
+        if (data.default) $("dbcSelect").value = data.default;
+      } catch (e) {
+        $("dbcSelect").innerHTML = `<option value="">raw</option>`;
+      }
+    }
+
     function renderRoutes() {
       const search = $("routeSearch").value.trim().toLowerCase();
       const routes = state.routes.filter((route) => route.name.toLowerCase().includes(search));
@@ -701,15 +945,32 @@
       state.route = state.routes.find((route) => route.name === name);
       state.summary = null;
       state.series = null;
+      state.canData = null;
+      state.selectedCan = null;
+      state.canSamples = [];
+      state.selectedCanSignal = "";
+      state.canFilter = "";
+      state.replayIndex = 0;
       renderRoutes();
       $("selectedRouteName").textContent = state.route.name;
       $("selectedRouteMeta").textContent = `${state.route.segments} segments | ${fmtBytes(state.route.size_bytes)}`;
+      resetCanDetail();
       await analyzeRoute();
     }
 
     async function analyzeRoute() {
       if (!state.route) return;
       $("statStatus").textContent = "Loading";
+      state.canData = null;
+      state.selectedCan = null;
+      state.canSamples = [];
+      state.selectedCanSignal = "";
+      state.canFilter = "";
+      state.replayIndex = 0;
+      $("canFilter").value = "";
+      $("canSummary").innerHTML = `<tr><td colspan="8">Load CAN to inspect frames.</td></tr>`;
+      $("canFilterCount").textContent = "0 / 0";
+      resetCanDetail();
       try {
         state.summary = await api(`/api/summary?${routeQuery()}`);
         renderSummary();
@@ -771,9 +1032,15 @@
 
     function renderCounts(counts) {
       $("messageCounts").innerHTML = counts.slice(0, 80).map((row) => `
-        <tr><td>${escapeHtml(row.type)}</td><td>${Number(row.count).toLocaleString()}</td></tr>
+        <tr data-message="${escapeHtml(row.type)}"><td>${escapeHtml(row.type)}</td><td>${Number(row.count).toLocaleString()}</td></tr>
       `).join("");
       $("messageType").innerHTML = counts.map((row) => `<option value="${escapeHtml(row.type)}">${escapeHtml(row.type)}</option>`).join("");
+      document.querySelectorAll("#messageCounts tr").forEach((row) => {
+        row.addEventListener("click", () => {
+          $("messageType").value = row.dataset.message;
+          loadMessages();
+        });
+      });
     }
 
     function renderSegments(segments) {
@@ -783,7 +1050,7 @@
       }).join("");
     }
 
-    function renderSeries() {
+    function drawChart(signals, points, emptyText) {
       const canvas = $("seriesChart");
       const ctx = canvas.getContext("2d");
       const width = canvas.width;
@@ -791,10 +1058,6 @@
       ctx.clearRect(0, 0, width, height);
       ctx.fillStyle = "#10141b";
       ctx.fillRect(0, 0, width, height);
-
-      const data = state.series || {signals: [], points: []};
-      const points = data.points || [];
-      const signals = data.signals || [];
       $("seriesLegend").innerHTML = signals.map((signal, index) => `<span><i class="dot" style="background:${state.colors[index % state.colors.length]}"></i>${escapeHtml(signal)}</span>`).join("");
 
       ctx.strokeStyle = "#263040";
@@ -809,7 +1072,7 @@
 
       if (!points.length || !signals.length) {
         ctx.fillStyle = "#98a4b5";
-        ctx.fillText("No series data", 48, 44);
+        ctx.fillText(emptyText || "No series data", 48, 44);
         return;
       }
 
@@ -855,6 +1118,13 @@
       ctx.fillText(fmtTime(maxTime), width - 64, height - 8);
     }
 
+    function renderSeries() {
+      const data = state.series || {signals: [], points: []};
+      $("chartTitle").textContent = "Signal Chart";
+      state.selectedCanSignal = "";
+      drawChart(data.signals || [], data.points || [], "No series data");
+    }
+
     async function loadMessages() {
       if (!state.route) return;
       $("messageSamples").innerHTML = `<div class="empty">Loading...</div>`;
@@ -893,24 +1163,267 @@
       `).join("");
     }
 
-    async function loadCan() {
-      if (!state.route) return;
-      $("canSummary").innerHTML = `<tr><td colspan="4">Loading...</td></tr>`;
+    function hexPairs(data) {
+      const clean = String(data || "").replace(/[^0-9a-f]/gi, "").toLowerCase();
+      const pairs = [];
+      for (let i = 0; i < clean.length; i += 2) {
+        pairs.push(clean.slice(i, i + 2).padEnd(2, "0"));
+      }
+      return pairs;
+    }
+
+    function resetCanDetail() {
+      stopCanReplay();
+      state.canSamples = [];
+      state.selectedCanSignal = "";
+      state.replayIndex = 0;
+      $("canDetailTitle").textContent = "Frame Detail";
+      $("canDetailBadge").textContent = "none";
+      $("detailAddress").textContent = "-";
+      $("detailSrc").textContent = "-";
+      $("detailCount").textContent = "-";
+      $("detailHz").textContent = "-";
+      $("hexBytes").innerHTML = "Select a CAN row.";
+      $("bitGrid").innerHTML = "";
+      $("decodedSignals").innerHTML = `<tr><td colspan="3">No decoded signals.</td></tr>`;
+      $("canSamples").innerHTML = `<tr><td colspan="3">No samples.</td></tr>`;
+      $("frameSlider").min = 0;
+      $("frameSlider").max = 0;
+      $("frameSlider").value = 0;
+      $("frameSlider").disabled = true;
+      $("framePosition").textContent = "0 / 0";
+    }
+
+    function canRowMatches(row, filter) {
+      const tokens = filter.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      if (!tokens.length) return true;
+      const haystack = [
+        row.address_hex,
+        row.address,
+        row.message_name,
+        row.src,
+        row.dlc,
+        row.signal_count,
+        row.last_data,
+        ...(row.signal_names || []),
+      ].join(" ").toLowerCase();
+      return tokens.every((token) => haystack.includes(token));
+    }
+
+    function renderCanSummary(autoSelect = false) {
+      const rows = state.canData?.summary || [];
+      const filter = state.canFilter || "";
+      const filtered = rows
+        .map((row, index) => ({row, index}))
+        .filter(({row}) => canRowMatches(row, filter));
+      $("canFilterCount").textContent = `${filtered.length} / ${rows.length}`;
+      $("canSummary").innerHTML = filtered.map(({row, index}) => `
+        <tr data-index="${index}" class="${state.selectedCan === row ? "active" : ""}">
+          <td>${escapeHtml(row.address_hex)}</td>
+          <td>${escapeHtml(row.message_name || "-")}</td>
+          <td>${row.src}</td>
+          <td>${row.dlc || 0}</td>
+          <td>${row.signal_count || 0}</td>
+          <td>${Number(row.count).toLocaleString()}</td>
+          <td>${Number(row.frequency_hz || 0).toFixed(1)}</td>
+          <td>${escapeHtml(row.last_data)}</td>
+        </tr>
+      `).join("") || `<tr><td colspan="8">No matching CAN frames.</td></tr>`;
+      document.querySelectorAll("#canSummary tr[data-index]").forEach((row) => {
+        row.addEventListener("click", () => selectCanRow(Number(row.dataset.index)));
+      });
+      if (autoSelect && filtered.length) {
+        selectCanRow(filtered[0].index);
+      }
+    }
+
+    function renderHexBytes(data) {
+      const pairs = hexPairs(data);
+      if (!pairs.length) {
+        $("hexBytes").textContent = "-";
+        return;
+      }
+      $("hexBytes").innerHTML = pairs.map((pair) => `<span class="hex-byte">${escapeHtml(pair)}</span>`).join("");
+    }
+
+    function renderBitGrid(data) {
+      const pairs = hexPairs(data);
+      if (!pairs.length) {
+        $("bitGrid").innerHTML = `<div class="empty">No bits.</div>`;
+        return;
+      }
+      const bits = [];
+      pairs.forEach((pair, byteIndex) => {
+        const value = Number.parseInt(pair, 16);
+        for (let bit = 7; bit >= 0; bit -= 1) {
+          const on = ((value >> bit) & 1) === 1;
+          bits.push(`<div class="bit${on ? " on" : ""}" title="byte ${byteIndex}, bit ${bit}">${byteIndex}.${bit}</div>`);
+        }
+      });
+      $("bitGrid").innerHTML = bits.join("");
+    }
+
+    function updateCanFrameView(sample, row) {
+      if (!sample) {
+        renderHexBytes(row?.last_data || "");
+        renderBitGrid(row?.last_data || "");
+        renderDecodedSignals([]);
+        $("canDetailBadge").textContent = row ? `${row.dlc || 0} bytes` : "none";
+        return;
+      }
+      renderHexBytes(sample.data);
+      renderBitGrid(sample.data);
+      renderDecodedSignals(sample.signals || []);
+      $("canDetailBadge").textContent = `${fmtTime(sample.time_ms)} | ${sample.dlc || hexPairs(sample.data).length} bytes`;
+    }
+
+    function renderDecodedSignals(signals) {
+      if (!signals.length) {
+        $("decodedSignals").innerHTML = `<tr><td colspan="3">No decoded signals.</td></tr>`;
+        return;
+      }
+      $("decodedSignals").innerHTML = signals.map((signal) => `
+        <tr data-signal="${escapeHtml(signal.name)}" class="${state.selectedCanSignal === signal.name ? "active" : ""}">
+          <td>${escapeHtml(signal.name)}</td>
+          <td>${Number(signal.value).toFixed(Math.abs(signal.value) >= 100 ? 1 : 3)}</td>
+          <td>${escapeHtml(signal.raw)}</td>
+        </tr>
+      `).join("");
+      document.querySelectorAll("#decodedSignals tr[data-signal]").forEach((row) => {
+        row.addEventListener("click", () => plotCanSignal(row.dataset.signal));
+      });
+    }
+
+    function plotCanSignal(signalName) {
+      if (!signalName || !state.canSamples.length) return;
+      state.selectedCanSignal = signalName;
+      const key = signalName;
+      const points = [];
+      for (const sample of state.canSamples) {
+        const signal = (sample.signals || []).find((candidate) => candidate.name === signalName);
+        if (!signal || !Number.isFinite(Number(signal.value))) continue;
+        points.push({
+          time_ms: sample.time_ms,
+          values: {[key]: Number(signal.value)},
+        });
+      }
+      const titleParts = [state.selectedCan?.address_hex, state.selectedCan?.message_name, signalName].filter(Boolean);
+      $("chartTitle").textContent = titleParts.join(" ");
+      drawChart([key], points, `No CAN signal data for ${signalName}`);
+      renderDecodedSignals(state.canSamples[state.replayIndex]?.signals || []);
+    }
+
+    function setReplayIndex(index) {
+      if (!state.canSamples.length) return;
+      state.replayIndex = Math.max(0, Math.min(state.canSamples.length - 1, index));
+      $("frameSlider").value = String(state.replayIndex);
+      $("framePosition").textContent = `${state.replayIndex + 1} / ${state.canSamples.length}`;
+      updateCanFrameView(state.canSamples[state.replayIndex], state.selectedCan);
+      document.querySelectorAll("#canSamples tr").forEach((tr) => tr.classList.remove("active"));
+      const row = document.querySelector(`#canSamples tr[data-index="${state.replayIndex}"]`);
+      if (row) row.classList.add("active");
+    }
+
+    function stopCanReplay() {
+      if (state.replayTimer) {
+        clearInterval(state.replayTimer);
+        state.replayTimer = null;
+      }
+      if ($("playCanFrame")) $("playCanFrame").textContent = "Play";
+    }
+
+    function toggleCanReplay() {
+      if (!state.canSamples.length) return;
+      if (state.replayTimer) {
+        stopCanReplay();
+        return;
+      }
+      $("playCanFrame").textContent = "Pause";
+      state.replayTimer = setInterval(() => {
+        const next = state.replayIndex + 1;
+        if (next >= state.canSamples.length) {
+          stopCanReplay();
+          return;
+        }
+        setReplayIndex(next);
+      }, 160);
+    }
+
+    function renderCanDetail(row, samples = []) {
+      if (!row) {
+        resetCanDetail();
+        return;
+      }
+      stopCanReplay();
+      state.selectedCan = row;
+      state.canSamples = samples;
+      state.selectedCanSignal = "";
+      state.replayIndex = 0;
+      if (state.series) renderSeries();
+      $("canDetailTitle").textContent = `${$("canType").value} ${row.address_hex}${row.message_name ? ` ${row.message_name}` : ""}`;
+      $("detailAddress").textContent = row.address_hex || "-";
+      $("detailSrc").textContent = row.src ?? "-";
+      $("detailCount").textContent = Number(row.count || 0).toLocaleString();
+      $("detailHz").textContent = `${Number(row.frequency_hz || 0).toFixed(2)} Hz`;
+      $("frameSlider").disabled = !samples.length;
+      $("frameSlider").min = 0;
+      $("frameSlider").max = Math.max(0, samples.length - 1);
+      $("frameSlider").value = 0;
+      $("framePosition").textContent = samples.length ? `1 / ${samples.length}` : "0 / 0";
+      $("canSamples").innerHTML = samples.length ? samples.map((sample, index) => `
+        <tr data-index="${index}"><td>${fmtTime(sample.time_ms)}</td><td>${sample.src}</td><td>${escapeHtml(sample.data)}</td></tr>
+      `).join("") : `<tr><td colspan="3">No samples.</td></tr>`;
+      document.querySelectorAll("#canSamples tr[data-index]").forEach((tr) => {
+        tr.addEventListener("click", () => {
+          stopCanReplay();
+          setReplayIndex(Number(tr.dataset.index));
+        });
+      });
+      updateCanFrameView(samples[0], row);
+      if (samples.length) setReplayIndex(0);
+    }
+
+    async function loadCanDetail(row) {
+      if (!state.route || !row) return;
+      renderCanDetail(row, []);
       try {
         const params = new URLSearchParams(routeQuery());
         params.set("frame_type", $("canType").value);
-        params.set("limit", "200");
+        params.set("addr", row.address_hex);
+        params.set("limit", "400");
+        if ($("dbcSelect").value) params.set("dbc", $("dbcSelect").value);
         const data = await api(`/api/can?${params.toString()}`);
-        $("canSummary").innerHTML = (data.summary || []).map((row) => `
-          <tr>
-            <td>${escapeHtml(row.address_hex)}</td>
-            <td>${row.src}</td>
-            <td>${Number(row.count).toLocaleString()}</td>
-            <td>${escapeHtml(row.last_data)}</td>
-          </tr>
-        `).join("") || `<tr><td colspan="4">No CAN frames.</td></tr>`;
+        renderCanDetail(row, data.samples || []);
       } catch (e) {
-        $("canSummary").innerHTML = `<tr><td colspan="4">${escapeHtml(e.message)}</td></tr>`;
+        $("canSamples").innerHTML = `<tr><td colspan="3">${escapeHtml(e.message)}</td></tr>`;
+      }
+    }
+
+    async function selectCanRow(index) {
+      const rows = state.canData?.summary || [];
+      const row = rows[index];
+      state.selectedCan = row || null;
+      document.querySelectorAll("#canSummary tr").forEach((tr) => tr.classList.remove("active"));
+      const selected = document.querySelector(`#canSummary tr[data-index="${index}"]`);
+      if (selected) selected.classList.add("active");
+      await loadCanDetail(row);
+    }
+
+    async function loadCan() {
+      if (!state.route) return;
+      $("canSummary").innerHTML = `<tr><td colspan="8">Loading...</td></tr>`;
+      $("canFilterCount").textContent = "0 / 0";
+      resetCanDetail();
+      try {
+        const params = new URLSearchParams(routeQuery());
+        params.set("frame_type", $("canType").value);
+        params.set("limit", "500");
+        if ($("dbcSelect").value) params.set("dbc", $("dbcSelect").value);
+        const data = await api(`/api/can?${params.toString()}`);
+        state.canData = data;
+        renderCanSummary(true);
+      } catch (e) {
+        $("canSummary").innerHTML = `<tr><td colspan="8">${escapeHtml(e.message)}</td></tr>`;
       }
     }
 
@@ -921,8 +1434,25 @@
     $("loadMessages").addEventListener("click", loadMessages);
     $("loadTextLogs").addEventListener("click", loadTextLogs);
     $("loadCan").addEventListener("click", loadCan);
+    $("canFilter").addEventListener("input", () => {
+      state.canFilter = $("canFilter").value;
+      renderCanSummary(false);
+    });
+    $("showRouteChart").addEventListener("click", renderSeries);
+    $("canType").addEventListener("change", () => {
+      if (state.canData) loadCan();
+    });
+    $("dbcSelect").addEventListener("change", () => {
+      if (state.canData) loadCan();
+    });
+    $("playCanFrame").addEventListener("click", toggleCanReplay);
+    $("frameSlider").addEventListener("input", () => {
+      stopCanReplay();
+      setReplayIndex(Number($("frameSlider").value));
+    });
 
     loadHealth();
+    loadDbcs();
     loadRoutes().catch((e) => {
       $("routeList").innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
     });

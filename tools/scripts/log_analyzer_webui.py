@@ -24,6 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 HTML_PATH = REPO_ROOT / "tools" / "log_analyzer_webui" / "index.html"
 WINDOWS_START_SCRIPT_PATH = REPO_ROOT / "tools" / "log_analyzer_webui" / "start_server.cmd"
 UBUNTU_START_SCRIPT_PATH = REPO_ROOT / "tools" / "log_analyzer_webui" / "start_server.sh"
+DBC_ROOT = REPO_ROOT / "opendbc_repo" / "opendbc" / "dbc"
 
 LOG_FILENAMES = {
   "rlog": ("rlog.zst", "rlog.bz2", "rlog"),
@@ -48,6 +49,9 @@ SERIES_SIGNALS = {
 TEXT_MESSAGE_TYPES = {"logMessage", "errorLogMessage", "androidLog"}
 TIMELINE_TYPES = {"controlsState", "selfdriveState", "carState", "deviceState"}
 CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
+BO_RE = re.compile(r"^BO_ (\w+) (\w+) *: (\w+) (\w+)")
+SG_RE = re.compile(r"^SG_ (\w+) : (\d+)\|(\d+)@(\d)([+-]) \(([0-9.+\-eE]+),([0-9.+\-eE]+)\) \[[0-9.+\-eE]+\|[0-9.+\-eE]+\] \".*\" .*")
+SGM_RE = re.compile(r"^SG_ (\w+) (\w+) *: (\d+)\|(\d+)@(\d)([+-]) \(([0-9.+\-eE]+),([0-9.+\-eE]+)\) \[[0-9.+\-eE]+\|[0-9.+\-eE]+\] \".*\" .*")
 
 
 @dataclass
@@ -87,9 +91,31 @@ class RouteInfo:
     self.mtime = max(self.mtime, segment.mtime)
 
 
+@dataclass
+class DbcSignal:
+  name: str
+  start_bit: int
+  msb: int
+  lsb: int
+  size: int
+  is_signed: bool
+  factor: float
+  offset: float
+  is_little_endian: bool
+
+
+@dataclass
+class DbcMessage:
+  name: str
+  address: int
+  size: int
+  signals: list[DbcSignal] = field(default_factory=list)
+
+
 ROUTE_CACHE: dict[tuple[str, float], dict[str, object]] = {}
 ROUTE_SCAN_CACHE: tuple[float, Path, dict[str, RouteInfo]] | None = None
 CAPNP_EVENT_SCHEMA = None
+DBC_CACHE: dict[str, dict[int, DbcMessage]] = {}
 
 
 def prepare_openpilot_imports() -> None:
@@ -332,6 +358,136 @@ def route_fingerprint(route: RouteInfo) -> str:
       except OSError:
         values.append(f"{seg.segment}:{key}:missing")
   return "|".join(values)
+
+
+def available_dbc_names() -> list[str]:
+  if not DBC_ROOT.exists():
+    return []
+  return sorted(path.stem for path in DBC_ROOT.glob("*.dbc"))
+
+
+def default_dbc_name() -> str:
+  names = available_dbc_names()
+  for preferred in ("hyundai_2015_mcan", "hyundai_kia_generic", "hyundai_canfd_generated", "toyota_new_mc_pt_generated"):
+    if preferred in names:
+      return preferred
+  return names[0] if names else ""
+
+
+def safe_dbc_name(name: str) -> str:
+  clean = Path(name).stem
+  if clean in available_dbc_names():
+    return clean
+  return ""
+
+
+def load_dbc_messages(name: str) -> dict[int, DbcMessage]:
+  name = safe_dbc_name(name)
+  if not name:
+    return {}
+  cached = DBC_CACHE.get(name)
+  if cached is not None:
+    return cached
+
+  path = DBC_ROOT / f"{name}.dbc"
+  be_bits = [j + i * 8 for i in range(64) for j in range(7, -1, -1)]
+  messages: dict[int, DbcMessage] = {}
+  current_addr: int | None = None
+  with path.open(encoding="utf-8", errors="replace") as f:
+    for line in f:
+      line = line.strip()
+      if line.startswith("BO_ "):
+        match = BO_RE.match(line)
+        if not match:
+          current_addr = None
+          continue
+        current_addr = int(match.group(1), 0)
+        messages[current_addr] = DbcMessage(
+          name=match.group(2),
+          address=current_addr,
+          size=int(match.group(3), 0),
+        )
+      elif line.startswith("SG_ ") and current_addr is not None and current_addr in messages:
+        match = SG_RE.search(line)
+        offset = 0
+        if not match:
+          match = SGM_RE.search(line)
+          offset = 1
+        if not match:
+          continue
+        start_bit = int(match.group(2 + offset))
+        size = int(match.group(3 + offset))
+        is_little_endian = match.group(4 + offset) == "1"
+        if is_little_endian:
+          lsb = start_bit
+          msb = start_bit + size - 1
+        else:
+          try:
+            idx = be_bits.index(start_bit)
+          except ValueError:
+            continue
+          lsb = be_bits[idx + size - 1]
+          msb = start_bit
+        messages[current_addr].signals.append(DbcSignal(
+          name=match.group(1),
+          start_bit=start_bit,
+          msb=msb,
+          lsb=lsb,
+          size=size,
+          is_signed=match.group(5 + offset) == "-",
+          factor=float(match.group(6 + offset)),
+          offset=float(match.group(7 + offset)),
+          is_little_endian=is_little_endian,
+        ))
+
+  DBC_CACHE[name] = messages
+  return messages
+
+
+def get_raw_signal_value(dat: bytes, sig: DbcSignal) -> int:
+  ret = 0
+  i = sig.msb // 8
+  bits = sig.size
+  while 0 <= i < len(dat) and bits > 0:
+    lsb = sig.lsb if (sig.lsb // 8) == i else i * 8
+    msb = sig.msb if (sig.msb // 8) == i else (i + 1) * 8 - 1
+    size = msb - lsb + 1
+    d = (dat[i] >> (lsb - (i * 8))) & ((1 << size) - 1)
+    ret |= d << (bits - size)
+    bits -= size
+    i = i - 1 if sig.is_little_endian else i + 1
+  return ret
+
+
+def decode_dbc_message(dbc_name: str, address: int, data_hex: str) -> dict[str, object]:
+  messages = load_dbc_messages(dbc_name)
+  msg = messages.get(address)
+  if msg is None:
+    return {}
+  data = bytes.fromhex(data_hex)
+  signals = []
+  for sig in msg.signals:
+    raw = get_raw_signal_value(data, sig)
+    if sig.is_signed and sig.size > 0:
+      raw -= ((raw >> (sig.size - 1)) & 1) * (1 << sig.size)
+    value = raw * sig.factor + sig.offset
+    signals.append({
+      "name": sig.name,
+      "raw": raw,
+      "value": value,
+      "start_bit": sig.start_bit,
+      "size": sig.size,
+      "factor": sig.factor,
+      "offset": sig.offset,
+    })
+  return {
+    "dbc": dbc_name,
+    "message_name": msg.name,
+    "address": address,
+    "address_hex": hex(address),
+    "size": msg.size,
+    "signals": signals,
+  }
 
 
 class CachedEventReader:
@@ -694,13 +850,15 @@ def analyze_messages(route: RouteInfo, mode: str, segment_query: str, msg_type: 
   return {"rows": rows, "errors": errors}
 
 
-def analyze_can(route: RouteInfo, mode: str, segment_query: str, frame_type: str, limit: int) -> dict[str, object]:
+def analyze_can(route: RouteInfo, mode: str, segment_query: str, frame_type: str, limit: int,
+                address_filter: int | None = None, dbc_name: str = "") -> dict[str, object]:
   paths = log_paths_for(route, mode, segment_query)
   counts: dict[tuple[int, int], dict[str, object]] = {}
   samples = []
   first_time: int | None = None
   errors: list[str] = []
   msg_type = "sendcan" if frame_type == "sendcan" else "can"
+  dbc_messages = load_dbc_messages(dbc_name) if dbc_name else {}
 
   try:
     for msg in iter_log_messages(paths):
@@ -712,34 +870,65 @@ def analyze_can(route: RouteInfo, mode: str, segment_query: str, frame_type: str
       frames = safe_attr(msg, msg_type) or []
       for frame in frames:
         address = int(safe_attr(frame, "address") or 0)
+        if address_filter is not None and address != address_filter:
+          continue
         src = int(safe_attr(frame, "src") or 0)
         key = (address, src)
+        dbc_msg = dbc_messages.get(address)
         row = counts.setdefault(key, {
           "address": address,
           "address_hex": hex(address),
+          "message_name": dbc_msg.name if dbc_msg is not None else "",
+          "signal_count": len(dbc_msg.signals) if dbc_msg is not None else 0,
+          "signal_names": [sig.name for sig in dbc_msg.signals] if dbc_msg is not None else [],
           "src": src,
           "count": 0,
           "last_data": "",
+          "first_time_ms": None,
+          "last_time_ms": None,
+          "dlc": 0,
         })
         row["count"] = int(row["count"]) + 1
+        t_ms = event_time_ms(msg_time, first_time)
+        if row["first_time_ms"] is None:
+          row["first_time_ms"] = t_ms
+        row["last_time_ms"] = t_ms
         try:
-          row["last_data"] = bytes(safe_attr(frame, "dat") or b"").hex()
+          frame_data = bytes(safe_attr(frame, "dat") or b"")
+          row["last_data"] = frame_data.hex()
+          row["dlc"] = len(frame_data)
         except Exception:
           row["last_data"] = str(safe_attr(frame, "dat"))[:80]
+          row["dlc"] = 0
         if len(samples) < limit:
+          decoded = decode_dbc_message(dbc_name, address, row["last_data"]) if dbc_name else {}
           samples.append({
-            "time_ms": event_time_ms(msg_time, first_time),
+            "time_ms": t_ms,
             "address": address,
             "address_hex": hex(address),
+            "message_name": dbc_msg.name if dbc_msg is not None else "",
             "src": src,
             "data": row["last_data"],
+            "dlc": row["dlc"],
+            "signals": decoded.get("signals", []),
           })
   except Exception as e:
     errors.append(repr(e))
 
+  summary = sorted(counts.values(), key=lambda x: int(x["count"]), reverse=True)
+  for row in summary:
+    first_ms = row.get("first_time_ms")
+    last_ms = row.get("last_time_ms")
+    duration_s = 0.0
+    if isinstance(first_ms, (int, float)) and isinstance(last_ms, (int, float)):
+      duration_s = max(0.001, (float(last_ms) - float(first_ms)) / 1000.0)
+    row["frequency_hz"] = round(int(row["count"]) / duration_s, 2) if duration_s > 0 else 0.0
+
   return {
-    "summary": sorted(counts.values(), key=lambda x: int(x["count"]), reverse=True)[:limit],
+    "summary": summary[:limit],
     "samples": samples,
+    "address_filter": hex(address_filter) if address_filter is not None else "",
+    "dbc": dbc_name,
     "errors": errors,
   }
 
@@ -844,6 +1033,9 @@ class LogAnalyzerHandler(BaseHTTPRequestHandler):
       elif parsed.path == "/api/routes":
         routes = sorted((route_to_json(route) for route in self.get_routes().values()), key=lambda x: float(x["mtime"]), reverse=True)
         self.send_json({"log_root": str(Path(self.args.log_root).expanduser()), "routes": routes})
+      elif parsed.path == "/api/dbc/list":
+        dbcs = available_dbc_names()
+        self.send_json({"dbcs": dbcs, "default": default_dbc_name()})
       elif parsed.path == "/api/summary":
         route = self.require_route(query)
         mode = query_first(query, "mode", "qlog")
@@ -875,7 +1067,10 @@ class LogAnalyzerHandler(BaseHTTPRequestHandler):
         segment_query = query_first(query, "segments", "all")
         frame_type = query_first(query, "frame_type", "can")
         limit = clamp_int(query_first(query, "limit", "200"), 200, 1, 2000)
-        self.send_json(analyze_can(route, mode, segment_query, frame_type, limit))
+        addr = query_first(query, "addr", "").strip()
+        address_filter = int(addr, 0) if addr else None
+        dbc_name = safe_dbc_name(query_first(query, "dbc", ""))
+        self.send_json(analyze_can(route, mode, segment_query, frame_type, limit, address_filter, dbc_name))
       else:
         self.send_text("Not found", HTTPStatus.NOT_FOUND)
     except ValueError as e:
