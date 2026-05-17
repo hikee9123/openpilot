@@ -308,10 +308,26 @@
 
     .bus-filters {
       display: grid;
-      grid-template-columns: minmax(170px, 1fr) auto;
+      grid-template-columns: minmax(170px, 1fr) auto auto;
       gap: 8px;
       margin-bottom: 10px;
       align-items: center;
+    }
+
+    .check-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .check-control input {
+      width: auto;
+      height: auto;
+      margin: 0;
     }
 
     .inspector {
@@ -702,6 +718,7 @@
           <div class="panel-body">
             <div class="bus-filters">
               <input id="canFilter" placeholder="Filter addr, name, data, signal">
+              <label class="check-control"><input id="canDecodedOnly" type="checkbox"> decoded only</label>
               <span id="canFilterCount" class="badge">0 / 0</span>
             </div>
             <div class="scroll">
@@ -853,6 +870,7 @@
       chartMode: "route",
       chartMaxTime: 0,
       canFilter: "",
+      canDecodedOnly: false,
       replayIndex: 0,
       replayTimer: null,
       dbcs: [],
@@ -1250,6 +1268,7 @@
     }
 
     function canRowMatches(row, filter) {
+      if (state.canDecodedOnly && Number(row.signal_count || 0) <= 0) return false;
       const tokens = filter.trim().toLowerCase().split(/\s+/).filter(Boolean);
       if (!tokens.length) return true;
       const haystack = [
@@ -1737,6 +1756,10 @@
     });
     $("canFilter").addEventListener("input", () => {
       state.canFilter = $("canFilter").value;
+      renderCanSummary(false);
+    });
+    $("canDecodedOnly").addEventListener("change", () => {
+      state.canDecodedOnly = $("canDecodedOnly").checked;
       renderCanSummary(false);
     });
     $("showRouteChart").addEventListener("click", renderSeries);
