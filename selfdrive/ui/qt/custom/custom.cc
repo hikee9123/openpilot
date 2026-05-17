@@ -19,6 +19,7 @@
 #include <QJsonObject>
 #include <QProcess>
 #include <QDir>
+#include <QDirIterator>
 #include <QDateTime>
 #include <QDebug>
 #include <QFile>
@@ -35,6 +36,7 @@
 #include <QPropertyAnimation>
 #include <QFrame>
 #include <QStringList>
+#include <QStorageInfo>
 
 #include "common/params.h"
 #include "common/util.h"
@@ -50,6 +52,94 @@ namespace {
 constexpr double kEPS = 1e-9;
 constexpr const char *kOsmRoadsInstallSession = "osm_db_install";
 constexpr const char *kOsmSpeedCamerasSession = "osm_speed_cameras_update";
+constexpr qint64 kLogStorageRefreshIntervalMs = 30000;
+
+struct LogStorageStats {
+  qint64 saved_bytes = 0;
+  qint64 available_bytes = -1;
+  qint64 total_bytes = -1;
+  int saved_segments = 0;
+};
+
+static QString formatBytes(qint64 bytes) {
+  if (bytes < 0) return QObject::tr("Unknown");
+  double value = static_cast<double>(bytes);
+  const QStringList units = {"B", "KB", "MB", "GB", "TB"};
+  int unit = 0;
+  while (value >= 1024.0 && unit < units.size() - 1) {
+    value /= 1024.0;
+    unit++;
+  }
+  return unit == 0 ? QString("%1 %2").arg(bytes).arg(units[unit])
+                   : QString("%1 %2").arg(value, 0, 'f', 1).arg(units[unit]);
+}
+
+static bool hasLockFile(const QString &path) {
+  return !QDir(path).entryList(QStringList() << "*.lock", QDir::Files).isEmpty();
+}
+
+static bool isRouteLogSegment(const QFileInfo &entry) {
+  const QString name = entry.fileName();
+  return entry.isDir() && name.contains("--") && name != "boot" && name != "crash";
+}
+
+static bool isCurrentRouteSegment(const QString &name, const QString &current_route) {
+  return !current_route.isEmpty() && name.startsWith(current_route + "--");
+}
+
+static qint64 directorySizeBytes(const QString &path) {
+  qint64 total = 0;
+  QDirIterator it(path, QDir::Files | QDir::NoSymLinks, QDirIterator::Subdirectories);
+  while (it.hasNext()) {
+    it.next();
+    total += it.fileInfo().size();
+  }
+  return total;
+}
+
+static QStringList collectDeletableRouteLogDirs(const QString &log_root, const QString &current_route,
+                                                qint64 *bytes = nullptr, int *segments = nullptr) {
+  QStringList paths;
+  if (bytes) *bytes = 0;
+  if (segments) *segments = 0;
+
+  const QFileInfo root_info(log_root);
+  if (!root_info.exists() || !root_info.isDir()) return paths;
+
+  const QFileInfoList entries = QDir(log_root).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+  for (const QFileInfo &entry : entries) {
+    const QString name = entry.fileName();
+    if (!isRouteLogSegment(entry) || isCurrentRouteSegment(name, current_route) || hasLockFile(entry.absoluteFilePath())) {
+      continue;
+    }
+
+    paths.append(entry.absoluteFilePath());
+    if (segments) (*segments)++;
+    if (bytes) (*bytes) += directorySizeBytes(entry.absoluteFilePath());
+  }
+  return paths;
+}
+
+static LogStorageStats collectLogStorageStats(const QString &log_root) {
+  LogStorageStats stats;
+  QStorageInfo storage(log_root);
+  storage.refresh();
+  if (storage.isValid() && storage.bytesTotal() > 0) {
+    stats.available_bytes = storage.bytesAvailable();
+    stats.total_bytes = storage.bytesTotal();
+  }
+
+  const QFileInfo root_info(log_root);
+  if (!root_info.exists() || !root_info.isDir()) return stats;
+
+  const QFileInfoList entries = QDir(log_root).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+  for (const QFileInfo &entry : entries) {
+    if (!isRouteLogSegment(entry)) continue;
+    stats.saved_segments++;
+    stats.saved_bytes += directorySizeBytes(entry.absoluteFilePath());
+  }
+  return stats;
+}
 
 // 버튼 공통 스타일(중복 제거)
 static const char *kRoundBtnStyle = R"(
@@ -919,16 +1009,28 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
   QObject::connect(uploadCurrentRoute, &ButtonControl::clicked, this, &CommunityTab::markCurrentRouteForUpload);
   logSec->addWidget(uploadCurrentRoute);
 
+  m_deleteLogsButton = new ButtonControl(
+      tr("Delete local route logs"),
+      tr("DELETE"),
+      tr("Delete completed local route logs when upload is disabled. Boot, crash, active recording, and current route logs are kept."),
+      this);
+  QObject::connect(m_deleteLogsButton, &ButtonControl::clicked, this, &CommunityTab::deleteLocalRouteLogs);
+  logSec->addWidget(m_deleteLogsButton);
+
   m_loggerStatus = new LabelControl(tr("Logger status"), "", tr("Current loggerd process state."), this);
   m_uploaderStatus = new LabelControl(tr("Uploader status"), "", tr("Current uploader process state."), this);
   m_deleterStatus = new LabelControl(tr("Cleanup status"), "", tr("Current log cleanup process state."), this);
   m_routeStatus = new LabelControl(tr("Current route"), "", tr("Route that can be marked for upload while logging is active."), this);
   m_logPathStatus = new LabelControl(tr("Log path"), "", tr("Root directory used for route logs."), this);
+  m_savedLogsStatus = new LabelControl(tr("Saved logs"), "", tr("Total size and count of locally stored route log segments."), this);
+  m_recordingSpaceStatus = new LabelControl(tr("Recording space"), "", tr("Available filesystem space for future route logs."), this);
   logSec->addWidget(m_loggerStatus);
   logSec->addWidget(m_uploaderStatus);
   logSec->addWidget(m_deleterStatus);
   logSec->addWidget(m_routeStatus);
   logSec->addWidget(m_logPathStatus);
+  logSec->addWidget(m_savedLogsStatus);
+  logSec->addWidget(m_recordingSpaceStatus);
 
   QObject::connect(uiState(), &UIState::uiUpdate, this, [this](const UIState &) {
     if (isVisible()) refreshLogStatus();
@@ -990,6 +1092,66 @@ QString CommunityTab::managerProcessStatus(const char *name) const {
   return tr("Unavailable");
 }
 
+void CommunityTab::deleteLocalRouteLogs() {
+  Params params;
+  if (params.getBool("LogUploadEnabled")) {
+    ConfirmationDialog::alert(tr("Disable Upload logs before deleting local route logs."), this);
+    return;
+  }
+
+  UIState *s = uiState();
+  if (s && s->scene.started) {
+    ConfirmationDialog::alert(tr("Stop driving before deleting local route logs."), this);
+    return;
+  }
+
+  const QString logRoot = QString::fromStdString(Path::log_root());
+  const QString currentRoute = QString::fromStdString(params.get("CurrentRoute")).trimmed();
+  qint64 deleteBytes = 0;
+  int deleteSegments = 0;
+  const QStringList deletePaths = collectDeletableRouteLogDirs(logRoot, currentRoute, &deleteBytes, &deleteSegments);
+  if (deletePaths.isEmpty()) {
+    ConfirmationDialog::alert(tr("No completed local route logs are available to delete."), this);
+    refreshLogStorageStats(true);
+    return;
+  }
+
+  const QString prompt = tr(
+      "Delete local route logs?\n\n"
+      "Upload is disabled.\n"
+      "This will delete %1 from %2 completed route segments under:\n%3\n\n"
+      "Deleted logs cannot be uploaded later.\n"
+      "Boot, crash, active recording, and current route logs will be kept.")
+      .arg(formatBytes(deleteBytes))
+      .arg(deleteSegments)
+      .arg(logRoot);
+  if (!ConfirmationDialog::confirm(prompt, tr("Delete"), this)) {
+    return;
+  }
+
+  int deleted = 0;
+  int failed = 0;
+  qint64 deletedBytes = 0;
+  for (const QString &path : deletePaths) {
+    const qint64 pathBytes = directorySizeBytes(path);
+    if (QDir(path).removeRecursively()) {
+      deleted++;
+      deletedBytes += pathBytes;
+    } else {
+      failed++;
+    }
+  }
+
+  ConfirmationDialog::alert(
+      tr("Deleted %1 route segments (%2). Failed: %3.")
+      .arg(deleted)
+      .arg(formatBytes(deletedBytes))
+      .arg(failed),
+      this);
+  refreshLogStorageStats(true);
+  refreshLogStatus();
+}
+
 void CommunityTab::markCurrentRouteForUpload() {
   Params params;
   const QString currentRoute = QString::fromStdString(params.get("CurrentRoute")).trimmed();
@@ -1011,19 +1173,50 @@ void CommunityTab::markCurrentRouteForUpload() {
   refreshLogStatus();
 }
 
+void CommunityTab::refreshLogStorageStats(bool force) {
+  if (!m_savedLogsStatus || !m_recordingSpaceStatus) {
+    return;
+  }
+
+  const qint64 now = QDateTime::currentMSecsSinceEpoch();
+  if (!force && m_lastLogStorageRefreshMs > 0 && now - m_lastLogStorageRefreshMs < kLogStorageRefreshIntervalMs) {
+    return;
+  }
+  m_lastLogStorageRefreshMs = now;
+
+  const LogStorageStats stats = collectLogStorageStats(QString::fromStdString(Path::log_root()));
+  m_savedLogsStatus->setText(tr("%1 / %2 segments").arg(formatBytes(stats.saved_bytes)).arg(stats.saved_segments));
+
+  if (stats.available_bytes >= 0 && stats.total_bytes > 0) {
+    const double availablePercent = 100.0 * static_cast<double>(stats.available_bytes) / static_cast<double>(stats.total_bytes);
+    m_recordingSpaceStatus->setText(tr("%1 free / %2%")
+        .arg(formatBytes(stats.available_bytes))
+        .arg(availablePercent, 0, 'f', 0));
+  } else {
+    m_recordingSpaceStatus->setText(tr("Unknown"));
+  }
+}
+
 void CommunityTab::refreshLogStatus() {
-  if (!m_loggerStatus || !m_uploaderStatus || !m_deleterStatus || !m_routeStatus || !m_logPathStatus) {
+  if (!m_loggerStatus || !m_uploaderStatus || !m_deleterStatus || !m_routeStatus || !m_logPathStatus ||
+      !m_savedLogsStatus || !m_recordingSpaceStatus) {
     return;
   }
 
   Params params;
+  const bool uploadEnabled = params.getBool("LogUploadEnabled");
   m_loggerStatus->setText(params.getBool("LogCaptureEnabled") ? managerProcessStatus("loggerd") : tr("Disabled"));
-  m_uploaderStatus->setText(params.getBool("LogUploadEnabled") ? managerProcessStatus("uploader") : tr("Disabled"));
+  m_uploaderStatus->setText(uploadEnabled ? managerProcessStatus("uploader") : tr("Disabled"));
   m_deleterStatus->setText(params.getBool("LogAutoCleanupEnabled") ? managerProcessStatus("deleter") : tr("Disabled"));
 
   const QString currentRoute = QString::fromStdString(params.get("CurrentRoute")).trimmed();
   m_routeStatus->setText(currentRoute.isEmpty() ? tr("No active route") : currentRoute);
   m_logPathStatus->setText(QString::fromStdString(Path::log_root()));
+  if (m_deleteLogsButton) {
+    UIState *s = uiState();
+    m_deleteLogsButton->setEnabled(!uploadEnabled && !(s && s->scene.started));
+  }
+  refreshLogStorageStats(false);
 }
 
 void CommunityTab::showEvent(QShowEvent *event) {

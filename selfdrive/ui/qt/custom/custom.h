@@ -323,8 +323,10 @@ signals:
 private slots:
 
 private:
+  void deleteLocalRouteLogs();
   void markCurrentRouteForUpload();
   void refreshLogStatus();
+  void refreshLogStorageStats(bool force = false);
   QString managerProcessStatus(const char *name) const;
 
   struct ValueDef {
@@ -343,11 +345,15 @@ private:
 private:
   CustomPanel *m_pCustom = nullptr;
   QJsonObject &m_jsonobj;
+  ButtonControl *m_deleteLogsButton = nullptr;
   LabelControl *m_loggerStatus = nullptr;
   LabelControl *m_uploaderStatus = nullptr;
   LabelControl *m_deleterStatus = nullptr;
   LabelControl *m_routeStatus = nullptr;
   LabelControl *m_logPathStatus = nullptr;
+  LabelControl *m_savedLogsStatus = nullptr;
+  LabelControl *m_recordingSpaceStatus = nullptr;
+  qint64 m_lastLogStorageRefreshMs = 0;
 
 };
 
