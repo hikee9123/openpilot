@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import bz2
 import json
 import os
 import platform
 import re
+import shutil
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from http import HTTPStatus
@@ -86,6 +89,23 @@ class RouteInfo:
 
 ROUTE_CACHE: dict[tuple[str, float], dict[str, object]] = {}
 ROUTE_SCAN_CACHE: tuple[float, Path, dict[str, RouteInfo]] | None = None
+CAPNP_EVENT_SCHEMA = None
+
+
+def prepare_openpilot_imports() -> None:
+  # Some Windows checkouts have openpilot/common, openpilot/tools, ... as
+  # text symlink placeholders. Extending the package path emulates the POSIX
+  # symlink layout for Python imports without changing the checkout.
+  try:
+    import openpilot
+    package_paths = getattr(openpilot, "__path__", None)
+    if package_paths is not None and str(REPO_ROOT) not in package_paths:
+      package_paths.append(str(REPO_ROOT))
+  except ModuleNotFoundError:
+    pass
+
+
+prepare_openpilot_imports()
 
 
 def default_log_root() -> Path:
@@ -314,14 +334,108 @@ def route_fingerprint(route: RouteInfo) -> str:
   return "|".join(values)
 
 
-def import_logreader():
-  from openpilot.tools.lib.logreader import LogReader
-  return LogReader
+class CachedEventReader:
+  __slots__ = ("_evt", "_enum")
+
+  def __init__(self, evt, enum: str | None = None) -> None:
+    self._evt = evt
+    self._enum = enum
+
+  def which(self) -> str:
+    if self._enum is None:
+      self._enum = self._evt.which()
+    return self._enum
+
+  def __getattr__(self, name: str):
+    return getattr(self._evt, name)
+
+  def __str__(self) -> str:
+    return str(self._evt)
+
+
+def resolve_text_symlink(path: Path) -> Path:
+  try:
+    text = path.read_text(encoding="utf-8").strip()
+  except UnicodeDecodeError:
+    return path
+  except OSError:
+    return path
+  if "\n" in text or len(text) > 260:
+    return path
+  candidate = (path.parent / text).resolve()
+  if candidate.exists() and candidate.suffix == path.suffix:
+    return candidate
+  return path
+
+
+def materialized_capnp_dir() -> Path:
+  target = Path(tempfile.gettempdir()) / "openpilot_log_analyzer_capnp"
+  include_target = target / "include"
+  include_target.mkdir(parents=True, exist_ok=True)
+
+  for name in ("log.capnp", "legacy.capnp", "custom.capnp", "car.capnp"):
+    source = resolve_text_symlink(REPO_ROOT / "cereal" / name)
+    shutil.copyfile(source, target / name)
+  shutil.copyfile(resolve_text_symlink(REPO_ROOT / "cereal" / "include" / "c++.capnp"), include_target / "c++.capnp")
+  return target
+
+
+def capnp_event_schema():
+  global CAPNP_EVENT_SCHEMA
+  if CAPNP_EVENT_SCHEMA is not None:
+    return CAPNP_EVENT_SCHEMA
+  try:
+    import capnp
+  except ModuleNotFoundError as e:
+    if e.name == "capnp":
+      raise RuntimeError("Missing Python package pycapnp. Install it with: python -m pip install pycapnp zstandard") from e
+    raise
+  schema_dir = materialized_capnp_dir()
+  capnp.remove_import_hook()
+  CAPNP_EVENT_SCHEMA = capnp.load(str(schema_dir / "log.capnp")).Event
+  return CAPNP_EVENT_SCHEMA
+
+
+def decompress_log_data(path: str, data: bytes) -> bytes:
+  ext = Path(path).suffix
+  if ext == ".bz2" or data.startswith(b"BZh9"):
+    return bz2.decompress(data)
+  if ext == ".zst" or data.startswith(b"\x28\xB5\x2F\xFD"):
+    try:
+      import zstandard as zstd
+    except ModuleNotFoundError as e:
+      if e.name == "zstandard":
+        raise RuntimeError("Missing Python package zstandard. Install it with: python -m pip install zstandard") from e
+      raise
+    dctx = zstd.ZstdDecompressor()
+    with dctx.stream_reader(data) as reader:
+      return reader.read()
+  return data
 
 
 def iter_log_messages(paths: list[str], sort_by_time: bool = False):
-  LogReader = import_logreader()
-  return LogReader(paths, sort_by_time=sort_by_time)
+  schema = capnp_event_schema()
+  for path in paths:
+    data = Path(path).read_bytes()
+    data = decompress_log_data(path, data)
+    try:
+      ents = schema.read_multiple_bytes(data)
+      msgs = [CachedEventReader(e) for e in ents]
+    except Exception as e:
+      raise RuntimeError(f"failed to read {path}: {e}") from e
+    if sort_by_time:
+      msgs.sort(key=lambda x: safe_attr(x, "logMonoTime") or 0)
+    yield from msgs
+
+
+def import_logreader():
+  try:
+    capnp_event_schema()
+  except ModuleNotFoundError as e:
+    if e.name == "zstandard":
+      raise RuntimeError("Missing Python package zstandard. Install it with: python -m pip install zstandard") from e
+    raise
+  return iter_log_messages
 
 
 def safe_which(msg) -> str:

@@ -730,9 +730,26 @@
       $("statSize").textContent = fmtBytes(summary.route?.size_bytes || 0);
       $("segmentCount").textContent = `${summary.segments?.length || 0}`;
 
-      renderTimeline(summary.timeline || []);
+      if (summary.errors?.length) {
+        renderErrors(summary.errors);
+      } else {
+        renderTimeline(summary.timeline || []);
+      }
       renderCounts(summary.counts || []);
       renderSegments(summary.segments || []);
+    }
+
+    function renderErrors(errors) {
+      $("timelineCount").textContent = `${errors.length} errors`;
+      $("timeline").innerHTML = errors.map((error) => `
+        <div class="event">
+          <div class="time">error</div>
+          <div>
+            <div class="title">Analysis failed</div>
+            <div class="detail">${escapeHtml(error)}</div>
+          </div>
+        </div>
+      `).join("");
     }
 
     function renderTimeline(events) {
