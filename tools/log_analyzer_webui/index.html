@@ -1,0 +1,914 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Drive Log Analyzer</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111318;
+      --surface: #181c23;
+      --surface-2: #202632;
+      --surface-3: #252d3a;
+      --text: #eef2f8;
+      --muted: #98a4b5;
+      --line: #303948;
+      --accent: #43c7a9;
+      --blue: #6aa7ff;
+      --warn: #e5b454;
+      --bad: #ee6a72;
+      --good: #6ed17e;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font: 13px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button,
+    select,
+    input {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface-2);
+      color: var(--text);
+      height: 34px;
+      padding: 0 10px;
+    }
+
+    button {
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    button.primary {
+      border-color: #2e8b75;
+      background: #193a34;
+      color: #d9fff5;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #151922;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      font-size: 18px;
+    }
+
+    h2 {
+      font-size: 14px;
+    }
+
+    .health {
+      color: var(--muted);
+      overflow-wrap: anywhere;
+      text-align: right;
+      max-width: 58vw;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(280px, 360px) 1fr;
+      min-height: calc(100vh - 63px);
+    }
+
+    aside {
+      border-right: 1px solid var(--line);
+      background: var(--surface);
+      min-width: 0;
+    }
+
+    .sidebar-head {
+      display: grid;
+      gap: 8px;
+      padding: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .route-list {
+      height: calc(100vh - 176px);
+      overflow: auto;
+    }
+
+    .route-item {
+      display: grid;
+      gap: 5px;
+      width: 100%;
+      min-height: 78px;
+      padding: 10px 14px;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      border-radius: 0;
+      background: transparent;
+      text-align: left;
+    }
+
+    .route-item:hover,
+    .route-item.active {
+      background: var(--surface-2);
+    }
+
+    .route-name {
+      font-weight: 800;
+      word-break: break-all;
+    }
+
+    .route-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    main {
+      min-width: 0;
+      padding: 16px;
+    }
+
+    .toolbar,
+    .section-head,
+    .tabs {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .toolbar {
+      margin-bottom: 14px;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .route-title {
+      min-width: 0;
+    }
+
+    .route-title .name {
+      font-size: 18px;
+      font-weight: 800;
+      word-break: break-all;
+    }
+
+    .route-title .sub {
+      color: var(--muted);
+      margin-top: 3px;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(120px, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .stat,
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+    }
+
+    .stat {
+      padding: 10px;
+      min-width: 0;
+    }
+
+    .stat .label {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .stat .value {
+      margin-top: 4px;
+      font-size: 18px;
+      font-weight: 850;
+      overflow-wrap: anywhere;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.85fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    .panel {
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .panel .section-head {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      background: #171c24;
+    }
+
+    .panel-body {
+      padding: 12px;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 280px;
+      background: #10141b;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid var(--line);
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 850;
+      text-transform: uppercase;
+      background: #171c24;
+    }
+
+    .scroll {
+      max-height: 320px;
+      overflow: auto;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 7px;
+      max-height: 330px;
+      overflow: auto;
+    }
+
+    .event {
+      display: grid;
+      grid-template-columns: 78px minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+      padding: 7px 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface-2);
+    }
+
+    .event .time {
+      color: var(--accent);
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .event .title {
+      font-weight: 800;
+    }
+
+    .event .detail {
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+
+    .log-lines {
+      display: grid;
+      gap: 8px;
+      max-height: 360px;
+      overflow: auto;
+    }
+
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      color: #d7deea;
+      background: #10141b;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px;
+      max-height: 260px;
+      overflow: auto;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .badge.good {
+      color: var(--good);
+      border-color: #2d7043;
+    }
+
+    .badge.warn {
+      color: var(--warn);
+      border-color: #745e2b;
+    }
+
+    .empty {
+      color: var(--muted);
+      padding: 16px;
+      text-align: center;
+    }
+
+    .legend {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    @media (max-width: 980px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      aside {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .route-list {
+        height: 240px;
+      }
+
+      .grid,
+      .stats {
+        grid-template-columns: 1fr;
+      }
+
+      header {
+        align-items: start;
+        flex-direction: column;
+      }
+
+      .health {
+        max-width: 100%;
+        text-align: left;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Drive Log Analyzer</h1>
+      <div class="muted">Local rlog/qlog route inspection</div>
+    </div>
+    <div id="health" class="health">Connecting...</div>
+  </header>
+
+  <div class="layout">
+    <aside>
+      <div class="sidebar-head">
+        <div class="toolbar">
+          <h2>Routes</h2>
+          <button id="refreshRoutes">Refresh</button>
+        </div>
+        <input id="routeSearch" placeholder="Filter routes">
+        <div id="routeCount" class="muted">No routes loaded</div>
+      </div>
+      <div id="routeList" class="route-list"></div>
+    </aside>
+
+    <main>
+      <div class="toolbar">
+        <div class="route-title">
+          <div id="selectedRouteName" class="name">Select a route</div>
+          <div id="selectedRouteMeta" class="sub">Choose a route from the left list.</div>
+        </div>
+        <div class="controls">
+          <select id="modeSelect" title="Log type">
+            <option value="qlog">qlog</option>
+            <option value="rlog">rlog</option>
+            <option value="auto">auto</option>
+          </select>
+          <input id="segmentInput" placeholder="segments: all, 0, 0:3" value="all">
+          <button id="reloadRoute" class="primary">Analyze</button>
+        </div>
+      </div>
+
+      <section class="stats">
+        <div class="stat">
+          <div class="label">Duration</div>
+          <div id="statDuration" class="value">-</div>
+        </div>
+        <div class="stat">
+          <div class="label">Messages</div>
+          <div id="statMessages" class="value">-</div>
+        </div>
+        <div class="stat">
+          <div class="label">Segments</div>
+          <div id="statSegments" class="value">-</div>
+        </div>
+        <div class="stat">
+          <div class="label">Route Size</div>
+          <div id="statSize" class="value">-</div>
+        </div>
+        <div class="stat">
+          <div class="label">Status</div>
+          <div id="statStatus" class="value">Idle</div>
+        </div>
+      </section>
+
+      <div class="grid">
+        <section class="panel">
+          <div class="section-head">
+            <h2>Signal Chart</h2>
+            <div id="seriesLegend" class="legend"></div>
+          </div>
+          <div class="panel-body">
+            <canvas id="seriesChart" width="960" height="330"></canvas>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <h2>Timeline</h2>
+            <span id="timelineCount" class="badge">0 events</span>
+          </div>
+          <div id="timeline" class="panel-body timeline">
+            <div class="empty">No route selected.</div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <h2>Message Counts</h2>
+            <select id="messageType"></select>
+          </div>
+          <div class="panel-body">
+            <div class="scroll">
+              <table>
+                <thead><tr><th>Type</th><th style="width: 100px;">Count</th></tr></thead>
+                <tbody id="messageCounts"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <h2>Message Samples</h2>
+            <button id="loadMessages">Load</button>
+          </div>
+          <div id="messageSamples" class="panel-body log-lines">
+            <div class="empty">Select a message type.</div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <h2>CAN Summary</h2>
+            <div class="controls">
+              <select id="canType">
+                <option value="can">can</option>
+                <option value="sendcan">sendcan</option>
+              </select>
+              <button id="loadCan">Load CAN</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="scroll">
+              <table>
+                <thead><tr><th style="width: 90px;">Address</th><th style="width: 70px;">Src</th><th style="width: 90px;">Count</th><th>Last Data</th></tr></thead>
+                <tbody id="canSummary"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <h2>Text Logs</h2>
+            <button id="loadTextLogs">Load</button>
+          </div>
+          <div id="textLogs" class="panel-body log-lines">
+            <div class="empty">Load logMessage/errorLogMessage/androidLog.</div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <h2>Segments</h2>
+            <span id="segmentCount" class="badge">0</span>
+          </div>
+          <div class="panel-body">
+            <div class="scroll">
+              <table>
+                <thead><tr><th style="width: 80px;">Segment</th><th>Files</th><th style="width: 110px;">Locked</th></tr></thead>
+                <tbody id="segmentsTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const state = {
+      routes: [],
+      route: null,
+      summary: null,
+      series: null,
+      colors: ["#43c7a9", "#6aa7ff", "#e5b454", "#ee6a72", "#b58cff", "#6ed17e", "#f58ac4"],
+    };
+
+    const $ = (id) => document.getElementById(id);
+
+    function fmtBytes(bytes) {
+      if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      let value = bytes;
+      let unit = 0;
+      while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+      }
+      return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+    }
+
+    function fmtTime(ms) {
+      if (!Number.isFinite(ms)) return "0:00";
+      const total = Math.max(0, Math.floor(ms / 1000));
+      const min = Math.floor(total / 60);
+      const sec = total % 60;
+      return `${min}:${String(sec).padStart(2, "0")}`;
+    }
+
+    function fmtDuration(sec) {
+      if (!Number.isFinite(sec) || sec <= 0) return "-";
+      const min = Math.floor(sec / 60);
+      const rem = Math.floor(sec % 60);
+      return `${min}:${String(rem).padStart(2, "0")}`;
+    }
+
+    function escapeHtml(text) {
+      return String(text ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      }[ch]));
+    }
+
+    async function api(path) {
+      const res = await fetch(path, {cache: "no-store"});
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || res.statusText);
+      }
+      return data;
+    }
+
+    function routeQuery() {
+      if (!state.route) return "";
+      const params = new URLSearchParams({
+        route: state.route.name,
+        mode: $("modeSelect").value,
+        segments: $("segmentInput").value || "all",
+      });
+      return params.toString();
+    }
+
+    async function loadHealth() {
+      try {
+        const data = await api("/api/health");
+        $("health").textContent = `${data.status} | ${data.log_root}`;
+      } catch (e) {
+        $("health").textContent = `server error: ${e.message}`;
+      }
+    }
+
+    async function loadRoutes() {
+      $("routeList").innerHTML = `<div class="empty">Loading routes...</div>`;
+      const data = await api("/api/routes");
+      state.routes = data.routes || [];
+      renderRoutes();
+    }
+
+    function renderRoutes() {
+      const search = $("routeSearch").value.trim().toLowerCase();
+      const routes = state.routes.filter((route) => route.name.toLowerCase().includes(search));
+      $("routeCount").textContent = `${routes.length} routes`;
+      if (!routes.length) {
+        $("routeList").innerHTML = `<div class="empty">No routes found.</div>`;
+        return;
+      }
+      $("routeList").innerHTML = routes.map((route) => {
+        const active = state.route && state.route.name === route.name ? " active" : "";
+        const qlogs = route.file_counts?.qlog || 0;
+        const rlogs = route.file_counts?.rlog || 0;
+        return `
+          <button class="route-item${active}" data-route="${escapeHtml(route.name)}">
+            <div class="route-name">${escapeHtml(route.name)}</div>
+            <div class="route-meta">
+              <span>${route.segments} seg</span>
+              <span>${fmtBytes(route.size_bytes)}</span>
+              <span>qlog ${qlogs}</span>
+              <span>rlog ${rlogs}</span>
+            </div>
+            <div class="route-meta">${escapeHtml(route.updated_at || route.time || "")}</div>
+          </button>
+        `;
+      }).join("");
+      document.querySelectorAll(".route-item").forEach((button) => {
+        button.addEventListener("click", () => selectRoute(button.dataset.route));
+      });
+    }
+
+    async function selectRoute(name) {
+      state.route = state.routes.find((route) => route.name === name);
+      state.summary = null;
+      state.series = null;
+      renderRoutes();
+      $("selectedRouteName").textContent = state.route.name;
+      $("selectedRouteMeta").textContent = `${state.route.segments} segments | ${fmtBytes(state.route.size_bytes)}`;
+      await analyzeRoute();
+    }
+
+    async function analyzeRoute() {
+      if (!state.route) return;
+      $("statStatus").textContent = "Loading";
+      try {
+        state.summary = await api(`/api/summary?${routeQuery()}`);
+        renderSummary();
+        state.series = await api(`/api/series?${routeQuery()}&max_points=1000`);
+        renderSeries();
+        $("statStatus").textContent = state.summary.errors?.length ? "Partial" : "OK";
+      } catch (e) {
+        $("statStatus").textContent = "Error";
+        $("timeline").innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    function renderSummary() {
+      const summary = state.summary;
+      $("statDuration").textContent = fmtDuration(summary.duration_s);
+      $("statMessages").textContent = Number(summary.message_count || 0).toLocaleString();
+      $("statSegments").textContent = summary.route?.segments ?? "-";
+      $("statSize").textContent = fmtBytes(summary.route?.size_bytes || 0);
+      $("segmentCount").textContent = `${summary.segments?.length || 0}`;
+
+      renderTimeline(summary.timeline || []);
+      renderCounts(summary.counts || []);
+      renderSegments(summary.segments || []);
+    }
+
+    function renderTimeline(events) {
+      $("timelineCount").textContent = `${events.length} events`;
+      if (!events.length) {
+        $("timeline").innerHTML = `<div class="empty">No timeline events in selected logs.</div>`;
+        return;
+      }
+      $("timeline").innerHTML = events.map((event) => `
+        <div class="event">
+          <div class="time">${fmtTime(event.time_ms)}</div>
+          <div>
+            <div class="title">${escapeHtml(event.title || event.type)}</div>
+            <div class="detail">${escapeHtml(event.detail || "")}</div>
+          </div>
+        </div>
+      `).join("");
+    }
+
+    function renderCounts(counts) {
+      $("messageCounts").innerHTML = counts.slice(0, 80).map((row) => `
+        <tr><td>${escapeHtml(row.type)}</td><td>${Number(row.count).toLocaleString()}</td></tr>
+      `).join("");
+      $("messageType").innerHTML = counts.map((row) => `<option value="${escapeHtml(row.type)}">${escapeHtml(row.type)}</option>`).join("");
+    }
+
+    function renderSegments(segments) {
+      $("segmentsTable").innerHTML = segments.map((seg) => {
+        const files = Object.entries(seg.files || {}).map(([key, value]) => `${key} ${fmtBytes(value.size_bytes)}`).join(", ");
+        return `<tr><td>${seg.segment}</td><td>${escapeHtml(files || "-")}</td><td>${seg.locked ? '<span class="badge warn">locked</span>' : '<span class="badge good">closed</span>'}</td></tr>`;
+      }).join("");
+    }
+
+    function renderSeries() {
+      const canvas = $("seriesChart");
+      const ctx = canvas.getContext("2d");
+      const width = canvas.width;
+      const height = canvas.height;
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = "#10141b";
+      ctx.fillRect(0, 0, width, height);
+
+      const data = state.series || {signals: [], points: []};
+      const points = data.points || [];
+      const signals = data.signals || [];
+      $("seriesLegend").innerHTML = signals.map((signal, index) => `<span><i class="dot" style="background:${state.colors[index % state.colors.length]}"></i>${escapeHtml(signal)}</span>`).join("");
+
+      ctx.strokeStyle = "#263040";
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 5; i += 1) {
+        const y = 20 + i * ((height - 40) / 5);
+        ctx.beginPath();
+        ctx.moveTo(44, y);
+        ctx.lineTo(width - 12, y);
+        ctx.stroke();
+      }
+
+      if (!points.length || !signals.length) {
+        ctx.fillStyle = "#98a4b5";
+        ctx.fillText("No series data", 48, 44);
+        return;
+      }
+
+      const maxTime = Math.max(...points.map((p) => p.time_ms || 0), 1);
+      const ranges = {};
+      for (const signal of signals) {
+        const values = points.map((p) => p.values?.[signal]).filter((v) => Number.isFinite(v));
+        if (!values.length) continue;
+        let min = Math.min(...values);
+        let max = Math.max(...values);
+        if (min === max) {
+          min -= 1;
+          max += 1;
+        }
+        ranges[signal] = {min, max};
+      }
+
+      for (const [index, signal] of signals.entries()) {
+        const range = ranges[signal];
+        if (!range) continue;
+        ctx.strokeStyle = state.colors[index % state.colors.length];
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        let started = false;
+        for (const p of points) {
+          const value = p.values?.[signal];
+          if (!Number.isFinite(value)) continue;
+          const x = 44 + ((p.time_ms || 0) / maxTime) * (width - 64);
+          const normalized = (value - range.min) / (range.max - range.min);
+          const y = height - 24 - normalized * (height - 52);
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else {
+            ctx.lineTo(x, y);
+          }
+        }
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = "#98a4b5";
+      ctx.fillText("0:00", 44, height - 8);
+      ctx.fillText(fmtTime(maxTime), width - 64, height - 8);
+    }
+
+    async function loadMessages() {
+      if (!state.route) return;
+      $("messageSamples").innerHTML = `<div class="empty">Loading...</div>`;
+      try {
+        const params = new URLSearchParams(routeQuery());
+        params.set("type", $("messageType").value || "controlsState");
+        params.set("limit", "80");
+        const data = await api(`/api/messages?${params.toString()}`);
+        renderLogRows("messageSamples", data.rows || []);
+      } catch (e) {
+        $("messageSamples").innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    async function loadTextLogs() {
+      if (!state.route) return;
+      $("textLogs").innerHTML = `<div class="empty">Loading...</div>`;
+      try {
+        const data = await api(`/api/text?${routeQuery()}&limit=200`);
+        renderLogRows("textLogs", data.rows || []);
+      } catch (e) {
+        $("textLogs").innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    function renderLogRows(id, rows) {
+      if (!rows.length) {
+        $(id).innerHTML = `<div class="empty">No rows.</div>`;
+        return;
+      }
+      $(id).innerHTML = rows.map((row) => `
+        <div>
+          <div class="muted">${fmtTime(row.time_ms)} | ${escapeHtml(row.type)}</div>
+          <pre>${escapeHtml(row.text)}</pre>
+        </div>
+      `).join("");
+    }
+
+    async function loadCan() {
+      if (!state.route) return;
+      $("canSummary").innerHTML = `<tr><td colspan="4">Loading...</td></tr>`;
+      try {
+        const params = new URLSearchParams(routeQuery());
+        params.set("frame_type", $("canType").value);
+        params.set("limit", "200");
+        const data = await api(`/api/can?${params.toString()}`);
+        $("canSummary").innerHTML = (data.summary || []).map((row) => `
+          <tr>
+            <td>${escapeHtml(row.address_hex)}</td>
+            <td>${row.src}</td>
+            <td>${Number(row.count).toLocaleString()}</td>
+            <td>${escapeHtml(row.last_data)}</td>
+          </tr>
+        `).join("") || `<tr><td colspan="4">No CAN frames.</td></tr>`;
+      } catch (e) {
+        $("canSummary").innerHTML = `<tr><td colspan="4">${escapeHtml(e.message)}</td></tr>`;
+      }
+    }
+
+    $("refreshRoutes").addEventListener("click", loadRoutes);
+    $("routeSearch").addEventListener("input", renderRoutes);
+    $("reloadRoute").addEventListener("click", analyzeRoute);
+    $("modeSelect").addEventListener("change", analyzeRoute);
+    $("loadMessages").addEventListener("click", loadMessages);
+    $("loadTextLogs").addEventListener("click", loadTextLogs);
+    $("loadCan").addEventListener("click", loadCan);
+
+    loadHealth();
+    loadRoutes().catch((e) => {
+      $("routeList").innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
+    });
+  </script>
+</body>
+</html>
