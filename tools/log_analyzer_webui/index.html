@@ -283,12 +283,15 @@
 
     .can-table tr,
     .message-table tr,
+    .change-table tr,
     .signal-table tr {
       cursor: pointer;
     }
 
     .can-table tr:hover,
     .can-table tr.active,
+    .change-table tr:hover,
+    .change-table tr.active,
     .signal-table tr:hover,
     .signal-table tr.active,
     .message-table tr:hover {
@@ -314,6 +317,14 @@
     .inspector {
       display: grid;
       gap: 12px;
+    }
+
+    .mini-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 7px;
     }
 
     .detail-grid {
@@ -414,6 +425,7 @@
       background: #10141b;
       border: 1px solid var(--line);
       border-radius: 6px;
+      cursor: crosshair;
     }
 
     table {
@@ -704,7 +716,15 @@
         <section class="panel detail-panel">
           <div class="section-head">
             <h2 id="canDetailTitle">Frame Detail</h2>
-            <span id="canDetailBadge" class="badge">none</span>
+            <div class="controls">
+              <select id="canSampleLimit" title="CAN samples">
+                <option value="400">400 samples</option>
+                <option value="1000">1000 samples</option>
+                <option value="2000">2000 samples</option>
+              </select>
+              <button id="exportCanCsv" disabled>Export CSV</button>
+              <span id="canDetailBadge" class="badge">none</span>
+            </div>
           </div>
           <div class="panel-body inspector">
             <div class="detail-grid">
@@ -733,8 +753,20 @@
               <h3>Decoded Signals</h3>
               <div class="scroll">
                 <table class="signal-table">
-                  <thead><tr><th>Signal</th><th style="width: 90px;">Value</th><th style="width: 72px;">Raw</th></tr></thead>
+                  <thead><tr><th>Signal</th><th style="width: 78px;">Now</th><th style="width: 78px;">Min</th><th style="width: 78px;">Max</th><th style="width: 78px;">Delta</th><th style="width: 72px;">Raw</th></tr></thead>
                   <tbody id="decodedSignals"></tbody>
+                </table>
+              </div>
+            </div>
+            <div>
+              <div class="mini-head">
+                <h3>Signal Changes</h3>
+                <span id="signalChangeCount" class="badge">0</span>
+              </div>
+              <div class="scroll">
+                <table class="change-table">
+                  <thead><tr><th>Signal</th><th style="width: 82px;">Time</th><th style="width: 82px;">From</th><th style="width: 82px;">To</th></tr></thead>
+                  <tbody id="signalChanges"></tbody>
                 </table>
               </div>
             </div>
@@ -816,7 +848,10 @@
       canData: null,
       selectedCan: null,
       canSamples: [],
-      selectedCanSignal: "",
+      selectedCanSignals: [],
+      signalChanges: [],
+      chartMode: "route",
+      chartMaxTime: 0,
       canFilter: "",
       replayIndex: 0,
       replayTimer: null,
@@ -948,7 +983,8 @@
       state.canData = null;
       state.selectedCan = null;
       state.canSamples = [];
-      state.selectedCanSignal = "";
+      state.selectedCanSignals = [];
+      state.signalChanges = [];
       state.canFilter = "";
       state.replayIndex = 0;
       renderRoutes();
@@ -964,7 +1000,8 @@
       state.canData = null;
       state.selectedCan = null;
       state.canSamples = [];
-      state.selectedCanSignal = "";
+      state.selectedCanSignals = [];
+      state.signalChanges = [];
       state.canFilter = "";
       state.replayIndex = 0;
       $("canFilter").value = "";
@@ -1055,6 +1092,8 @@
       const ctx = canvas.getContext("2d");
       const width = canvas.width;
       const height = canvas.height;
+      const maxTime = Math.max(...points.map((p) => p.time_ms || 0), 1);
+      state.chartMaxTime = points.length ? maxTime : 0;
       ctx.clearRect(0, 0, width, height);
       ctx.fillStyle = "#10141b";
       ctx.fillRect(0, 0, width, height);
@@ -1076,7 +1115,6 @@
         return;
       }
 
-      const maxTime = Math.max(...points.map((p) => p.time_ms || 0), 1);
       const ranges = {};
       for (const signal of signals) {
         const values = points.map((p) => p.values?.[signal]).filter((v) => Number.isFinite(v));
@@ -1116,13 +1154,26 @@
       ctx.fillStyle = "#98a4b5";
       ctx.fillText("0:00", 44, height - 8);
       ctx.fillText(fmtTime(maxTime), width - 64, height - 8);
+      if (state.chartMode === "can" && state.canSamples.length) {
+        const sample = state.canSamples[state.replayIndex];
+        const x = 44 + ((sample?.time_ms || 0) / maxTime) * (width - 64);
+        ctx.strokeStyle = "#f4f7fb";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, 18);
+        ctx.lineTo(x, height - 24);
+        ctx.stroke();
+      }
     }
 
     function renderSeries() {
       const data = state.series || {signals: [], points: []};
       $("chartTitle").textContent = "Signal Chart";
-      state.selectedCanSignal = "";
+      state.chartMode = "route";
+      state.selectedCanSignals = [];
+      state.signalChanges = [];
       drawChart(data.signals || [], data.points || [], "No series data");
+      renderSignalChanges();
     }
 
     async function loadMessages() {
@@ -1175,7 +1226,8 @@
     function resetCanDetail() {
       stopCanReplay();
       state.canSamples = [];
-      state.selectedCanSignal = "";
+      state.selectedCanSignals = [];
+      state.signalChanges = [];
       state.replayIndex = 0;
       $("canDetailTitle").textContent = "Frame Detail";
       $("canDetailBadge").textContent = "none";
@@ -1185,13 +1237,16 @@
       $("detailHz").textContent = "-";
       $("hexBytes").innerHTML = "Select a CAN row.";
       $("bitGrid").innerHTML = "";
-      $("decodedSignals").innerHTML = `<tr><td colspan="3">No decoded signals.</td></tr>`;
+      $("decodedSignals").innerHTML = `<tr><td colspan="6">No decoded signals.</td></tr>`;
+      $("signalChanges").innerHTML = `<tr><td colspan="4">Select decoded signals.</td></tr>`;
+      $("signalChangeCount").textContent = "0";
       $("canSamples").innerHTML = `<tr><td colspan="3">No samples.</td></tr>`;
       $("frameSlider").min = 0;
       $("frameSlider").max = 0;
       $("frameSlider").value = 0;
       $("frameSlider").disabled = true;
       $("framePosition").textContent = "0 / 0";
+      $("exportCanCsv").disabled = true;
     }
 
     function canRowMatches(row, filter) {
@@ -1279,38 +1334,273 @@
 
     function renderDecodedSignals(signals) {
       if (!signals.length) {
-        $("decodedSignals").innerHTML = `<tr><td colspan="3">No decoded signals.</td></tr>`;
+        $("decodedSignals").innerHTML = `<tr><td colspan="6">No decoded signals.</td></tr>`;
         return;
       }
+      const stats = signalStatsByName();
       $("decodedSignals").innerHTML = signals.map((signal) => `
-        <tr data-signal="${escapeHtml(signal.name)}" class="${state.selectedCanSignal === signal.name ? "active" : ""}">
+        <tr data-signal="${escapeHtml(signal.name)}" class="${state.selectedCanSignals.includes(signal.name) ? "active" : ""}">
           <td>${escapeHtml(signal.name)}</td>
-          <td>${Number(signal.value).toFixed(Math.abs(signal.value) >= 100 ? 1 : 3)}</td>
+          <td>${formatSignalNumber(signal.value)}</td>
+          <td>${formatSignalNumber(stats[signal.name]?.min)}</td>
+          <td>${formatSignalNumber(stats[signal.name]?.max)}</td>
+          <td>${formatSignalNumber(stats[signal.name]?.delta)}</td>
           <td>${escapeHtml(signal.raw)}</td>
         </tr>
       `).join("");
       document.querySelectorAll("#decodedSignals tr[data-signal]").forEach((row) => {
-        row.addEventListener("click", () => plotCanSignal(row.dataset.signal));
+        row.addEventListener("click", () => toggleCanSignalChart(row.dataset.signal));
       });
     }
 
-    function plotCanSignal(signalName) {
+    function formatSignalNumber(value) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return "-";
+      return number.toFixed(Math.abs(number) >= 100 ? 1 : 3);
+    }
+
+    function signalStatsByName() {
+      const stats = {};
+      for (const sample of state.canSamples) {
+        for (const signal of sample.signals || []) {
+          const value = Number(signal.value);
+          if (!Number.isFinite(value)) continue;
+          const row = stats[signal.name] || {
+            min: value,
+            max: value,
+            first: value,
+            last: value,
+            count: 0,
+          };
+          row.min = Math.min(row.min, value);
+          row.max = Math.max(row.max, value);
+          row.last = value;
+          row.count += 1;
+          row.delta = row.last - row.first;
+          stats[signal.name] = row;
+        }
+      }
+      return stats;
+    }
+
+    function toggleCanSignalChart(signalName) {
       if (!signalName || !state.canSamples.length) return;
-      state.selectedCanSignal = signalName;
-      const key = signalName;
+      const selected = new Set(state.selectedCanSignals);
+      if (selected.has(signalName)) {
+        selected.delete(signalName);
+      } else {
+        selected.add(signalName);
+      }
+      plotCanSignals([...selected]);
+    }
+
+    function plotCanSignals(signalNames) {
+      const names = [...new Set(signalNames)].filter(Boolean);
+      state.selectedCanSignals = names;
+      if (!names.length) {
+        state.signalChanges = [];
+        renderSeries();
+        renderDecodedSignals(state.canSamples[state.replayIndex]?.signals || []);
+        return;
+      }
+      drawSelectedCanSignals(true);
+      renderDecodedSignals(state.canSamples[state.replayIndex]?.signals || []);
+    }
+
+    function canSignalChartPoints(signalNames) {
       const points = [];
       for (const sample of state.canSamples) {
-        const signal = (sample.signals || []).find((candidate) => candidate.name === signalName);
-        if (!signal || !Number.isFinite(Number(signal.value))) continue;
+        const values = {};
+        for (const signal of sample.signals || []) {
+          if (!signalNames.includes(signal.name)) continue;
+          const value = Number(signal.value);
+          if (Number.isFinite(value)) values[signal.name] = value;
+        }
+        if (!Object.keys(values).length) continue;
         points.push({
           time_ms: sample.time_ms,
-          values: {[key]: Number(signal.value)},
+          values,
         });
       }
-      const titleParts = [state.selectedCan?.address_hex, state.selectedCan?.message_name, signalName].filter(Boolean);
+      return points;
+    }
+
+    function drawSelectedCanSignals(updateChanges) {
+      const names = state.selectedCanSignals;
+      if (updateChanges) state.signalChanges = buildSignalChanges(names);
+      const points = canSignalChartPoints(names);
+      const titleParts = [
+        state.selectedCan?.address_hex,
+        state.selectedCan?.message_name,
+        `${names.length} signals`,
+      ].filter(Boolean);
       $("chartTitle").textContent = titleParts.join(" ");
-      drawChart([key], points, `No CAN signal data for ${signalName}`);
-      renderDecodedSignals(state.canSamples[state.replayIndex]?.signals || []);
+      state.chartMode = "can";
+      drawChart(names, points, "No CAN signal data for selected signals");
+      if (updateChanges) renderSignalChanges();
+    }
+
+    function sampleSignalValue(sample, signalName) {
+      const signal = (sample.signals || []).find((candidate) => candidate.name === signalName);
+      const value = Number(signal?.value);
+      return Number.isFinite(value) ? value : null;
+    }
+
+    function buildSignalChanges(signalNames) {
+      const changes = [];
+      for (const signalName of signalNames) {
+        let previous = null;
+        let seen = false;
+        state.canSamples.forEach((sample, index) => {
+          const value = sampleSignalValue(sample, signalName);
+          if (value === null) return;
+          if (!seen) {
+            previous = value;
+            seen = true;
+            return;
+          }
+          if (value !== previous) {
+            changes.push({
+              index,
+              signal: signalName,
+              previous,
+              value,
+              time_ms: sample.time_ms,
+            });
+            previous = value;
+          }
+        });
+      }
+      return changes.sort((a, b) => (a.time_ms - b.time_ms) || a.signal.localeCompare(b.signal));
+    }
+
+    function renderSignalChanges() {
+      const changes = state.signalChanges || [];
+      $("signalChangeCount").textContent = `${changes.length}`;
+      if (!state.canSamples.length) {
+        $("signalChanges").innerHTML = `<tr><td colspan="4">No samples.</td></tr>`;
+        return;
+      }
+      if (!state.selectedCanSignals.length) {
+        $("signalChanges").innerHTML = `<tr><td colspan="4">Select decoded signals.</td></tr>`;
+        return;
+      }
+      if (!changes.length) {
+        $("signalChanges").innerHTML = `<tr><td colspan="4">No changes in loaded samples.</td></tr>`;
+        return;
+      }
+      $("signalChanges").innerHTML = changes.slice(0, 600).map((change) => `
+        <tr data-sample-index="${change.index}">
+          <td>${escapeHtml(change.signal)}</td>
+          <td>${fmtTime(change.time_ms)}</td>
+          <td>${formatSignalNumber(change.previous)}</td>
+          <td>${formatSignalNumber(change.value)}</td>
+        </tr>
+      `).join("");
+      document.querySelectorAll("#signalChanges tr[data-sample-index]").forEach((row) => {
+        row.addEventListener("click", () => {
+          stopCanReplay();
+          setReplayIndex(Number(row.dataset.sampleIndex));
+        });
+      });
+      highlightSignalChangeRows();
+    }
+
+    function highlightSignalChangeRows() {
+      document.querySelectorAll("#signalChanges tr").forEach((row) => row.classList.remove("active"));
+      document.querySelectorAll(`#signalChanges tr[data-sample-index="${state.replayIndex}"]`).forEach((row) => {
+        row.classList.add("active");
+      });
+    }
+
+    function jumpCanChart(event) {
+      if (state.chartMode !== "can" || !state.canSamples.length || !state.chartMaxTime) return;
+      const canvas = $("seriesChart");
+      const rect = canvas.getBoundingClientRect();
+      const width = canvas.width;
+      const x = ((event.clientX - rect.left) / rect.width) * width;
+      const left = 44;
+      const right = width - 20;
+      const clamped = Math.max(left, Math.min(right, x));
+      const targetTime = ((clamped - left) / (right - left)) * state.chartMaxTime;
+      let bestIndex = 0;
+      let bestDistance = Infinity;
+      state.canSamples.forEach((sample, index) => {
+        const distance = Math.abs((sample.time_ms || 0) - targetTime);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = index;
+        }
+      });
+      stopCanReplay();
+      setReplayIndex(bestIndex);
+    }
+
+    function csvCell(value) {
+      const text = String(value ?? "");
+      return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    }
+
+    function safeFilePart(value) {
+      return String(value || "unknown")
+        .replace(/[^a-z0-9_.-]+/gi, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 80) || "unknown";
+    }
+
+    function exportCanCsv() {
+      if (!state.selectedCan || !state.canSamples.length) return;
+      const signalNames = [];
+      for (const sample of state.canSamples) {
+        for (const signal of sample.signals || []) {
+          if (!signalNames.includes(signal.name)) signalNames.push(signal.name);
+        }
+      }
+      const headers = [
+        "route",
+        "mode",
+        "segments",
+        "frame_type",
+        "dbc",
+        "address",
+        "message_name",
+        "src",
+        "time_ms",
+        "data",
+        "dlc",
+        ...signalNames.map((name) => `${name}_value`),
+        ...signalNames.map((name) => `${name}_raw`),
+      ];
+      const rows = state.canSamples.map((sample) => {
+        const signalsByName = {};
+        for (const signal of sample.signals || []) signalsByName[signal.name] = signal;
+        return [
+          state.route?.name || "",
+          $("modeSelect").value,
+          $("segmentInput").value || "all",
+          $("canType").value,
+          $("dbcSelect").value,
+          sample.address_hex,
+          sample.message_name || state.selectedCan.message_name || "",
+          sample.src,
+          sample.time_ms,
+          sample.data,
+          sample.dlc,
+          ...signalNames.map((name) => signalsByName[name]?.value ?? ""),
+          ...signalNames.map((name) => signalsByName[name]?.raw ?? ""),
+        ];
+      });
+      const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
+      const blob = new Blob([csv], {type: "text/csv;charset=utf-8"});
+      const link = document.createElement("a");
+      const address = safeFilePart(state.selectedCan.address_hex);
+      const messageName = safeFilePart(state.selectedCan.message_name || $("canType").value);
+      link.href = URL.createObjectURL(blob);
+      link.download = `${safeFilePart(state.route?.name)}_${address}_${messageName}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
     }
 
     function setReplayIndex(index) {
@@ -1322,6 +1612,10 @@
       document.querySelectorAll("#canSamples tr").forEach((tr) => tr.classList.remove("active"));
       const row = document.querySelector(`#canSamples tr[data-index="${state.replayIndex}"]`);
       if (row) row.classList.add("active");
+      highlightSignalChangeRows();
+      if (state.chartMode === "can" && state.selectedCanSignals.length) {
+        drawSelectedCanSignals(false);
+      }
     }
 
     function stopCanReplay() {
@@ -1357,7 +1651,8 @@
       stopCanReplay();
       state.selectedCan = row;
       state.canSamples = samples;
-      state.selectedCanSignal = "";
+      state.selectedCanSignals = [];
+      state.signalChanges = [];
       state.replayIndex = 0;
       if (state.series) renderSeries();
       $("canDetailTitle").textContent = `${$("canType").value} ${row.address_hex}${row.message_name ? ` ${row.message_name}` : ""}`;
@@ -1370,6 +1665,7 @@
       $("frameSlider").max = Math.max(0, samples.length - 1);
       $("frameSlider").value = 0;
       $("framePosition").textContent = samples.length ? `1 / ${samples.length}` : "0 / 0";
+      $("exportCanCsv").disabled = !samples.length;
       $("canSamples").innerHTML = samples.length ? samples.map((sample, index) => `
         <tr data-index="${index}"><td>${fmtTime(sample.time_ms)}</td><td>${sample.src}</td><td>${escapeHtml(sample.data)}</td></tr>
       `).join("") : `<tr><td colspan="3">No samples.</td></tr>`;
@@ -1390,7 +1686,7 @@
         const params = new URLSearchParams(routeQuery());
         params.set("frame_type", $("canType").value);
         params.set("addr", row.address_hex);
-        params.set("limit", "400");
+        params.set("limit", $("canSampleLimit").value || "400");
         if ($("dbcSelect").value) params.set("dbc", $("dbcSelect").value);
         const data = await api(`/api/can?${params.toString()}`);
         renderCanDetail(row, data.samples || []);
@@ -1434,6 +1730,11 @@
     $("loadMessages").addEventListener("click", loadMessages);
     $("loadTextLogs").addEventListener("click", loadTextLogs);
     $("loadCan").addEventListener("click", loadCan);
+    $("exportCanCsv").addEventListener("click", exportCanCsv);
+    $("seriesChart").addEventListener("click", jumpCanChart);
+    $("canSampleLimit").addEventListener("change", () => {
+      if (state.selectedCan) loadCanDetail(state.selectedCan);
+    });
     $("canFilter").addEventListener("input", () => {
       state.canFilter = $("canFilter").value;
       renderCanSummary(false);

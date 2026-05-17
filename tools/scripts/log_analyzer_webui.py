@@ -368,7 +368,7 @@ def available_dbc_names() -> list[str]:
 
 def default_dbc_name() -> str:
   names = available_dbc_names()
-  for preferred in ("hyundai_2015_mcan", "hyundai_kia_generic", "hyundai_canfd_generated", "toyota_new_mc_pt_generated"):
+  for preferred in ("hyundai_kia_generic", "hyundai_2015_mcan", "hyundai_canfd_generated", "toyota_new_mc_pt_generated"):
     if preferred in names:
       return preferred
   return names[0] if names else ""
