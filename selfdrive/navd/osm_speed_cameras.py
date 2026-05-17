@@ -33,8 +33,13 @@ PARALLEL_CLEAR_OPPOSITE_DISTANCE_MARGIN_M = 6.0
 PARALLEL_CLEAR_OPPOSITE_STRONG_DISTANCE_MARGIN_M = 10.0
 PARALLEL_CLEAR_PRIMARY_MIN_CONFIDENCE = 0.95
 PARALLEL_CLEAR_CONFIDENCE_MARGIN = 0.12
+PARALLEL_CLEAR_SAME_LOCATION_PAIR_RADIUS_M = 30.0
+PARALLEL_CLEAR_SAME_LOCATION_OPPOSITE_MARGIN_M = 2.0
 SPEED_ICON_CAMERA_TYPES = ("1", "2", "1+02")
 INTERSECTION_CAMERA_KEYWORDS = ("교차로", "사거리", "삼거리", "오거리", "로터리")
+ADDRESS_DIRECTION_HINT_RE = re.compile(r"[\(\[\{（](.*?)[\)\]\}）]")
+ADDRESS_ARROW_RE = re.compile(r"(.+?)(?:->|→|⇒|➝|➜|>|→)(.+)")
+ADDRESS_DIRECTION_WORDS = ("방면", "방향", "행", "쪽")
 
 ID_COLUMNS = (
   "external_id", "camera_id", "cam_id", "id", "관리번호", "번호",
@@ -119,6 +124,99 @@ def _intersection_camera_context(camera: sqlite3.Row) -> bool:
   return any(keyword in text for keyword in INTERSECTION_CAMERA_KEYWORDS)
 
 
+def _normalize_installation_address(value: Any) -> str:
+  return re.sub(r"\s+", "", str(value or "").strip())
+
+
+def _installation_place_key(value: Any) -> str:
+  text = str(value or "").strip()
+  text = ADDRESS_DIRECTION_HINT_RE.sub("", text)
+  text = re.sub(r"\s+", "", text)
+  return text
+
+
+def _normalize_address_hint(value: str) -> str:
+  hint = re.sub(r"\s+", "", value or "")
+  hint = re.sub(r"[()\[\]{}（）]", "", hint)
+  for word in ADDRESS_DIRECTION_WORDS:
+    hint = hint.replace(word, "")
+  return hint
+
+
+def _address_direction_hints(value: Any) -> set[str]:
+  text = str(value or "")
+  hints: set[str] = set()
+  for match in ADDRESS_DIRECTION_HINT_RE.finditer(text):
+    hint = _normalize_address_hint(match.group(1))
+    if hint:
+      hints.add(hint)
+      arrow = ADDRESS_ARROW_RE.match(hint)
+      if arrow:
+        left = _normalize_address_hint(arrow.group(1))
+        right = _normalize_address_hint(arrow.group(2))
+        if left and right:
+          hints.add(f"{left}->{right}")
+  for word in ADDRESS_DIRECTION_WORDS:
+    for match in re.finditer(rf"([가-힣A-Za-z0-9]+){word}", text):
+      hint = _normalize_address_hint(match.group(1))
+      if hint:
+        hints.add(hint)
+  return hints
+
+
+def _camera_distance_m(a: sqlite3.Row, b: sqlite3.Row) -> float:
+  lat = float(a["lat"])
+  dx = (float(b["lon"]) - float(a["lon"])) * _lon_scale(lat)
+  dy = (float(b["lat"]) - lat) * METERS_PER_DEG_LAT
+  return math.hypot(dx, dy)
+
+
+def _opposite_address_hint(a: sqlite3.Row, b: sqlite3.Row) -> bool:
+  a_hints = _address_direction_hints(a["address"])
+  b_hints = _address_direction_hints(b["address"])
+  for a_hint in a_hints:
+    if "->" not in a_hint:
+      continue
+    left, right = a_hint.split("->", 1)
+    if f"{right}->{left}" in b_hints:
+      return True
+  return bool(a_hints and b_hints and a_hints.isdisjoint(b_hints))
+
+
+def _different_direction_context(a: sqlite3.Row, b: sqlite3.Row) -> bool:
+  a_direction = _normalize_code(a["direction"])
+  b_direction = _normalize_code(b["direction"])
+  if a_direction and b_direction:
+    return a_direction != b_direction
+  if _opposite_address_hint(a, b):
+    return True
+  return not (a_direction and b_direction)
+
+
+def _same_location_signal_speed_camera_ids(cameras: list[sqlite3.Row]) -> set[int]:
+  groups: dict[str, list[sqlite3.Row]] = {}
+  for camera in cameras:
+    if not _signal_speed_camera_type(camera["camera_type"]):
+      continue
+    address = _installation_place_key(camera["address"]) or _normalize_installation_address(camera["address"])
+    if not address:
+      continue
+    groups.setdefault(address, []).append(camera)
+
+  paired_ids: set[int] = set()
+  for group in groups.values():
+    if len(group) < 2:
+      continue
+    for index, camera in enumerate(group):
+      for other in group[index + 1:]:
+        if not _different_direction_context(camera, other):
+          continue
+        if _camera_distance_m(camera, other) <= PARALLEL_CLEAR_SAME_LOCATION_PAIR_RADIUS_M:
+          paired_ids.add(int(camera["id"]))
+          paired_ids.add(int(other["id"]))
+  return paired_ids
+
+
 def _primary_match_clearly_better_than_opposite(match: dict[str, Any],
                                                 opposite_distance_m: float,
                                                 opposite_confidence: float) -> bool:
@@ -152,12 +250,53 @@ def _clear_unknown_direction_match(camera: sqlite3.Row, match: dict[str, Any]) -
   )
 
 
-def _clear_parallel_match(camera: sqlite3.Row, match: dict[str, Any],
-                          opposite_distance_m: float, opposite_confidence: float) -> bool:
+def _same_location_pair_clearly_better_than_opposite(match: dict[str, Any],
+                                                     opposite_distance_m: float) -> bool:
+  primary_distance_m = float(match["distance_m"])
   return (
+    primary_distance_m <= PARALLEL_CLEAR_PRIMARY_MAX_DISTANCE_M
+    and float(match["match_confidence"]) >= PARALLEL_CLEAR_PRIMARY_MIN_CONFIDENCE
+    and opposite_distance_m - primary_distance_m >= PARALLEL_CLEAR_SAME_LOCATION_OPPOSITE_MARGIN_M
+  )
+
+
+def _parallel_reject_reason(camera: sqlite3.Row, match: dict[str, Any],
+                            same_location_signal_speed_pair: bool,
+                            opposite_distance_m: float, opposite_confidence: float) -> str:
+  primary_distance_m = float(match["distance_m"])
+  primary_confidence = float(match["match_confidence"])
+  distance_margin_m = opposite_distance_m - primary_distance_m
+  if not _signal_speed_camera_type(camera["camera_type"]):
+    return "parallel_not_signal_speed_camera"
+  if not (int(match["same_name"]) > 0 or _intersection_camera_context(camera)):
+    return "parallel_no_road_name_or_intersection_context"
+  if primary_distance_m > PARALLEL_CLEAR_PRIMARY_MAX_DISTANCE_M:
+    return "parallel_primary_too_far"
+  if primary_confidence < PARALLEL_CLEAR_PRIMARY_MIN_CONFIDENCE:
+    return "parallel_primary_low_confidence"
+  if distance_margin_m < 0.0:
+    return "parallel_opposite_closer"
+  if same_location_signal_speed_pair:
+    return "parallel_same_location_margin_small"
+  if opposite_distance_m < PARALLEL_CLEAR_OPPOSITE_MIN_DISTANCE_M:
+    return "parallel_opposite_too_close"
+  if primary_confidence - opposite_confidence < PARALLEL_CLEAR_CONFIDENCE_MARGIN:
+    return "parallel_confidence_margin_small"
+  return "parallel_road_ambiguous"
+
+
+def _clear_parallel_match(camera: sqlite3.Row, match: dict[str, Any],
+                          same_location_signal_speed_pair: bool,
+                          opposite_distance_m: float, opposite_confidence: float) -> bool:
+  if not (
     _signal_speed_camera_type(camera["camera_type"])
     and (int(match["same_name"]) > 0 or _intersection_camera_context(camera))
-    and _primary_match_clearly_better_than_opposite(match, opposite_distance_m, opposite_confidence)
+  ):
+    return False
+  if same_location_signal_speed_pair and _same_location_pair_clearly_better_than_opposite(match, opposite_distance_m):
+    return True
+  return (
+    _primary_match_clearly_better_than_opposite(match, opposite_distance_m, opposite_confidence)
   )
 
 
@@ -175,7 +314,8 @@ def _opposite_parallel_match(match: dict[str, Any], matches: list[dict[str, Any]
 
 
 def _classify_lookup_match(camera: sqlite3.Row, match: dict[str, Any],
-                           matches: list[dict[str, Any]]) -> tuple[str, str, str, int, float, float]:
+                           matches: list[dict[str, Any]],
+                           same_location_signal_speed_pair: bool = False) -> tuple[str, str, str, int, float, float]:
   opposite = _opposite_parallel_match(match, matches)
   opposite_road_id = int(opposite["road_id"]) if opposite is not None else 0
   opposite_distance_m = float(opposite["distance_m"]) if opposite is not None else 0.0
@@ -191,8 +331,17 @@ def _classify_lookup_match(camera: sqlite3.Row, match: dict[str, Any],
     return "suspicious", "unknown", "low_confidence", opposite_road_id, opposite_distance_m, opposite_confidence
   if float(match["distance_m"]) > NORMAL_DISPLAY_MAX_DISTANCE_M:
     return "suspicious", "unknown", "far_match", opposite_road_id, opposite_distance_m, opposite_confidence
-  if opposite is not None and not _clear_parallel_match(camera, match, opposite_distance_m, opposite_confidence):
-    return "suspicious", "ambiguous_parallel", "parallel_road_ambiguous", opposite_road_id, opposite_distance_m, opposite_confidence
+  if opposite is not None and not _clear_parallel_match(
+    camera, match, same_location_signal_speed_pair, opposite_distance_m, opposite_confidence
+  ):
+    return (
+      "suspicious",
+      "ambiguous_parallel",
+      _parallel_reject_reason(camera, match, same_location_signal_speed_pair, opposite_distance_m, opposite_confidence),
+      opposite_road_id,
+      opposite_distance_m,
+      opposite_confidence,
+    )
   if _normalize_code(camera["direction"]) not in ("1", "2"):
     if _clear_unknown_direction_match(camera, match):
       return "normal", "inferred_direction", "", opposite_road_id, opposite_distance_m, opposite_confidence
@@ -349,6 +498,7 @@ def _match_speed_cameras_to_roads(conn: sqlite3.Connection, radius_m: float, max
   match_count = 0
   lookup_count = 0
   cameras = conn.execute("SELECT * FROM speed_cameras ORDER BY id").fetchall()
+  same_location_signal_speed_pair_ids = _same_location_signal_speed_camera_ids(cameras)
   for camera in cameras:
     candidates: list[tuple[float, float, float, int, int, sqlite3.Row]] = []
     camera_bearing = float(camera["bearing_deg"])
@@ -401,7 +551,10 @@ def _match_speed_cameras_to_roads(conn: sqlite3.Connection, radius_m: float, max
       confidence = float(match["match_confidence"])
       primary_match = int(match["primary_match"])
       display_class, direction_verdict, reject_reason, opposite_road_id, opposite_distance_m, opposite_confidence = _classify_lookup_match(
-        camera, match, selected_matches
+        camera,
+        match,
+        selected_matches,
+        int(camera["id"]) in same_location_signal_speed_pair_ids,
       )
       cursor = conn.execute(
         """
