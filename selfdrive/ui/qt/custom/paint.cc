@@ -224,6 +224,9 @@ void OnPaint::updateState(const UIState &s)
   m_nda.camLimitSpeedLeftDist = naviData.getCamLimitSpeedLeftDist();
   m_nda.cntIdx = naviData.getCntIdx();
   m_nda.osmRoadOverlay.clear();
+  if (osm_enabled) {
+    m_nda.osmRoadOverlay.status = QString::fromUtf8(naviData.getOsmRoadOverlayText().cStr());
+  }
   if (osm_enabled && naviData.getActive()) {
     auto overlay = naviData.getOsmRoadOverlay();
     auto roads = overlay.getRoads();

@@ -93,11 +93,12 @@ def _select_gps(sm: messaging.SubMaster) -> GPSFix | None:
 
 def _send_overlay(pm: messaging.PubMaster, available: bool, road_name: str = "", bearing: float = 0.0,
                   prediction_distance_m: float = 0.0, roads: list[dict] | None = None,
-                  cameras: list[dict] | None = None) -> None:
+                  cameras: list[dict] | None = None, status: str = "") -> None:
   msg = messaging.new_message("naviCustom")
   nav = msg.naviCustom.naviData
   nav.active = 1 if available else 0
   nav.currentRoadName = road_name
+  nav.osmRoadOverlayText = status
   overlay = nav.init("osmRoadOverlay")
   overlay.road = road_name
   overlay.bearing = bearing
@@ -133,6 +134,14 @@ def _send_overlay(pm: messaging.PubMaster, available: bool, road_name: str = "",
     camera_items[i].rejectReason = camera.get("rejectReason", "")
     camera_items[i].signalCamera = bool(camera.get("signalCamera", False))
   pm.send("naviCustom", msg)
+
+
+def _unavailable_status(gps: GPSFix | None, predictor: OSMRoadPredictor) -> str:
+  if gps is None:
+    return "Waiting for GPS"
+  if not predictor.db_path.exists():
+    return "OSM road DB missing"
+  return "OSM road DB not ready"
 
 
 def _current_segment(prediction) -> OSMRoadSegment | None:
@@ -452,11 +461,11 @@ def main() -> None:
 
       gps = _select_gps(sm)
       if gps is None or not predictor.ready():
+        _send_overlay(pm, False, status=_unavailable_status(gps, predictor))
         if last_available:
-          _send_overlay(pm, False)
           last_available = False
-          last_overlay = None
-          history_segments.clear()
+        last_overlay = None
+        history_segments.clear()
         now = time.monotonic()
         if nav_logging_enabled and now - last_log_t > 30.0:
           cloudlog.info("navid waiting for valid GPS and OSM roads DB")

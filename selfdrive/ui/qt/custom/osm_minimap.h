@@ -42,6 +42,7 @@ struct OsmMinimapCamera {
 
 struct OsmMinimapData {
   bool available = false;
+  QString status;
   QString road;
   float bearing = 0.0f;
   float prediction_distance_m = 0.0f;
@@ -50,6 +51,7 @@ struct OsmMinimapData {
 
   void clear() {
     available = false;
+    status.clear();
     road.clear();
     bearing = 0.0f;
     prediction_distance_m = 0.0f;

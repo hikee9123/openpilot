@@ -349,7 +349,7 @@ void OsmMinimapRenderer::draw(QPainter &p, const QRect &surface, const OsmMinima
                               bool show_suspicious_cameras, bool debug_zoom_controls, bool debug_speed_controls) {
   if (!enabled) return;
   if (!data.available) {
-    drawStatus(p, surface, QStringLiteral("Waiting for GPS"), position);
+    drawStatus(p, surface, data.status.isEmpty() ? QStringLiteral("Waiting for GPS") : data.status, position);
     return;
   }
 
