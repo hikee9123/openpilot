@@ -546,7 +546,6 @@ void OnPaint::drawSpeed(QPainter &p, int x, QString speedStr, QString speedUnit 
        val_color = interp_color(QColor(255, 255, 255), QColor(200, 100, 50), QColor(255, 0, 0));
     }
   }
-  else if( brakeLights ) val_color = QColor(201, 34, 49, 100);
   else if( brakePress  ) val_color = QColor(255, 0, 0, 255);
   else if (gasVal > 0) {
     auto interp_color = [=](QColor c1, QColor c2) {
@@ -562,6 +561,30 @@ void OnPaint::drawSpeed(QPainter &p, int x, QString speedStr, QString speedUnit 
   p.setPen( val_color );
   drawText3(p, x, 210, speedStr, val_color );
   p.setFont(InterFont(66));
+  if (brakeLights || brakePress) {
+    const QColor lamp_color = brakePress ? QColor(255, 55, 65, 235) : QColor(201, 34, 49, 190);
+    const QFontMetrics fm(p.font());
+    QRect unit_rect = fm.boundingRect(speedUnit);
+    unit_rect.moveCenter({x, 290 - unit_rect.height() / 2});
+
+    const int lamp_w = 42;
+    const int lamp_h = 18;
+    const int lamp_gap = 18;
+    const int lamp_y = unit_rect.center().y() - lamp_h / 2;
+    const QRect left_lamp(unit_rect.left() - lamp_gap - lamp_w, lamp_y, lamp_w, lamp_h);
+    const QRect right_lamp(unit_rect.right() + lamp_gap, lamp_y, lamp_w, lamp_h);
+
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(Qt::NoPen);
+    p.setBrush(lamp_color);
+    p.drawRoundedRect(left_lamp, 7, 7);
+    p.drawRoundedRect(right_lamp, 7, 7);
+    p.setBrush(QColor(255, 255, 255, brakePress ? 80 : 45));
+    p.drawRoundedRect(left_lamp.adjusted(5, 4, -5, -10), 4, 4);
+    p.drawRoundedRect(right_lamp.adjusted(5, 4, -5, -10), 4, 4);
+    p.restore();
+  }
   drawText3(p, x, 290, speedUnit, QColor(255,255,255,200) );
 
 
