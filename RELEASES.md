@@ -1,3 +1,15 @@
+Version drive_test1 (2026-05-23)
+========================
+* Backported driving stability updates from comma master
+  * Filter low-confidence radar lead probability
+  * Use safer acceleration selection for longitudinal planning
+  * Improve livePose timestamp handling in paramsd and torqued
+  * Add camera odometry delay compensation in locationd
+  * Tune lagd minimum lag, candidate selection, and lateral acceleration smoothing
+  * Refine longitudinal policy behavior
+  * Update HKG angle control saturation handling
+  * Reserve PandaState controlsAllowed fields for fork alternate experiences
+
 Version 0.10.1 (2025-09-08)
 ========================
 * New driving model #36087
