@@ -12,6 +12,8 @@ Version drive_test1 (2026-05-23)
 * Backported messaging queue memory improvements
   * Add service-specific msgq queue sizes for high-bandwidth streams
   * Use smaller default msgq ringbuffers while preserving large queues for CAN, model, and camera data
+* Backported modeld timing improvement
+  * Account for frame capture and action timing delay when computing model actions
 
 Version 0.10.1 (2025-09-08)
 ========================
