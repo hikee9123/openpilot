@@ -25,6 +25,7 @@ Version drive_test1 (2026-05-23)
   * Add Lexus LS stop-and-go and dedicated torque data
 * Backported DriverMonitoringState v2 schema and policy plumbing on drive_test2
 * Backported driver monitoring uncertain-camera reset tuning, excluding comma four-specific changes
+* Backported non-UI test and process replay migration stability fixes
 
 Version 0.10.1 (2025-09-08)
 ========================
