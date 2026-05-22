@@ -17,6 +17,9 @@ Version drive_test1 (2026-05-23)
 * Backported selected driver monitoring policy improvements
   * Recover audible driver monitoring alerts when coming to a stop
   * Reduce pose false positives during steering maneuvers
+* Backported selected opendbc vehicle support
+  * Add Kia K7 2017 platform metadata, firmware fingerprints, route, and torque data
+  * Add Lexus LS 2018 platform metadata, firmware fingerprints, route, and torque substitute data
 
 Version 0.10.1 (2025-09-08)
 ========================
