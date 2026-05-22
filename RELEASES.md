@@ -9,6 +9,9 @@ Version drive_test1 (2026-05-23)
   * Refine longitudinal policy behavior
   * Update HKG angle control saturation handling
   * Reserve PandaState controlsAllowed fields for fork alternate experiences
+* Backported messaging queue memory improvements
+  * Add service-specific msgq queue sizes for high-bandwidth streams
+  * Use smaller default msgq ringbuffers while preserving large queues for CAN, model, and camera data
 
 Version 0.10.1 (2025-09-08)
 ========================
