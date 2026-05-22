@@ -20,6 +20,9 @@ Version drive_test1 (2026-05-23)
 * Backported selected opendbc vehicle support
   * Add Kia K7 2017 platform metadata, firmware fingerprints, route, and torque data
   * Add Lexus LS 2018 platform metadata, firmware fingerprints, route, and torque substitute data
+  * Add Rivian R1 2025 Gen2 support with harness split and route migration
+  * Add Acura MDX 2022-24 platform support and firmware fingerprints
+  * Add Lexus LS stop-and-go and dedicated torque data
 
 Version 0.10.1 (2025-09-08)
 ========================
