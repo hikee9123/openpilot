@@ -108,6 +108,9 @@ def fill_driver_state(msg, ds_result: DriverStateResult):
   msg.rightBlinkProb = float(sigmoid(ds_result.right_blink_prob))
   msg.sunglassesProb = float(sigmoid(ds_result.sunglasses_prob))
   msg.occludedProb = float(sigmoid(ds_result.occluded_prob))
+  msg.eyesVisibleProb = min(msg.leftEyeProb, msg.rightEyeProb)
+  msg.eyesClosedProb = max(msg.leftBlinkProb, msg.rightBlinkProb)
+  msg.phoneProb = 0.
   msg.readyProb = [float(sigmoid(x)) for x in ds_result.ready_prob]
   msg.notReadyProb = [float(sigmoid(x)) for x in ds_result.not_ready_prob]
 

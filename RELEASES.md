@@ -23,6 +23,7 @@ Version drive_test1 (2026-05-23)
   * Add Rivian R1 2025 Gen2 support with harness split and route migration
   * Add Acura MDX 2022-24 platform support and firmware fingerprints
   * Add Lexus LS stop-and-go and dedicated torque data
+* Backported DriverMonitoringState v2 schema and policy plumbing on drive_test2
 
 Version 0.10.1 (2025-09-08)
 ========================
