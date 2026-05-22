@@ -14,6 +14,9 @@ Version drive_test1 (2026-05-23)
   * Use smaller default msgq ringbuffers while preserving large queues for CAN, model, and camera data
 * Backported modeld timing improvement
   * Account for frame capture and action timing delay when computing model actions
+* Backported selected driver monitoring policy improvements
+  * Recover audible driver monitoring alerts when coming to a stop
+  * Reduce pose false positives during steering maneuvers
 
 Version 0.10.1 (2025-09-08)
 ========================
