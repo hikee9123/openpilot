@@ -16,3 +16,4 @@ a.out
 .cache/
 .vs/
 *_tinygrad.pkl
+compile_info.json

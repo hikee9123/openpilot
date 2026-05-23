@@ -1276,17 +1276,31 @@ void GitTab::hideEvent(QHideEvent *event) { QWidget::hideEvent(event); }
 // ======================================================================================
 static inline QString detectOpenpilotRoot()
 {
-    // 1) 기기(AGNOS/Android) 경로가 실제로 있는지 먼저 확인
-    if (QFileInfo::exists("/data/openpilot"))
-        return "/data";
+    auto isRepoRoot = [](const QString &path) {
+      const QDir dir(path);
+      return QFileInfo::exists(dir.filePath("selfdrive/modeld/model_make.py")) &&
+             QFileInfo::exists(dir.filePath("selfdrive/ui/qt/custom/script/model_make.sh"));
+    };
 
-    // 2) 개발 PC 기본 경로
-    QString pc = QDir::homePath();// + "/openpilot";
-    if (QFileInfo::exists(pc))
-        return pc;
+    const QString envRoot = qEnvironmentVariable("OPENPILOT_ROOT");
+    if (!envRoot.isEmpty() && isRepoRoot(envRoot)) return QDir(envRoot).absolutePath();
 
-    // 3) 마지막 fallback: 홈 디렉터리
-    return QDir::homePath();
+    const QStringList candidates = {
+      "/data/openpilot",
+      QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../.."),
+      QDir::currentPath(),
+      QDir::home().filePath("openpilot"),
+    };
+
+    for (const QString &candidate : candidates) {
+      QDir dir(candidate);
+      for (int i = 0; i < 6; ++i) {
+        if (isRepoRoot(dir.absolutePath())) return dir.absolutePath();
+        if (!dir.cdUp()) break;
+      }
+    }
+
+    return "/data/openpilot";
 }
 
 struct ModelCompileStatus {
@@ -1296,22 +1310,6 @@ struct ModelCompileStatus {
   QString policy;
   QString backend;
 };
-
-static const QMap<QString, QString> &knownModelDescriptions()
-{
-  static const QMap<QString, QString> descriptions = {
-    {"10.CD210_Model", "Comfort-oriented profile tuned for smoother everyday driving"},
-    {"9.WMI_Model", "Balanced experimental profile for natural lane keeping"},
-    {"8.SC_Driving", "Smooth steering profile with calm corrections"},
-    {"7.MacroStiff_Model", "Stable high-speed profile with firm path tracking"},
-    {"6.Dark_Souls_2", "Fast response profile with controlled stability"},
-    {"5.North_Nevada", "Natural and stable profile for relaxed driving"},
-    {"4.The_Cool_Peoples", "Responsive profile with sharper lateral behavior"},
-    {"3.Firehose", "Smooth profile with quick reaction timing"},
-    {"2.Steam_Powered", "Custom driving model profile"},
-  };
-  return descriptions;
-}
 
 static int modelNumberPrefix(const QString &modelName)
 {
@@ -1324,7 +1322,6 @@ static QStringList modelOptions()
 {
   QStringList options;
   QDir root(detectOpenpilotRoot());
-  root.cd("openpilot");
   QDir supercombos(root.filePath("selfdrive/modeld/models/supercombos"));
   const QFileInfoList bundles = supercombos.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
   for (const QFileInfo &bundle : bundles) {
@@ -1351,7 +1348,6 @@ static QStringList modelOptions()
 static QString modeldRootPath()
 {
   QDir root(detectOpenpilotRoot());
-  root.cd("openpilot");
   return root.filePath("selfdrive/modeld");
 }
 
@@ -1359,6 +1355,27 @@ static QString modelBundlePath(const QString &modelName)
 {
   QDir modeld(modeldRootPath());
   return modeld.filePath("models/supercombos/" + modelName);
+}
+
+static QString modelMetadataValue(const QString &modelName, const QString &key)
+{
+  const QDir bundle(modelBundlePath(modelName));
+  QFile file(bundle.filePath("model.json"));
+  if (!file.open(QIODevice::ReadOnly)) return QString();
+
+  const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+  if (!doc.isObject()) return QString();
+  return doc.object().value(key).toString().trimmed();
+}
+
+static QString modelDescriptionFromFolder(const QString &modelName)
+{
+  const QString jsonDescription = modelMetadataValue(modelName, "description");
+  if (!jsonDescription.isEmpty()) return jsonDescription;
+
+  QFile file(QDir(modelBundlePath(modelName)).filePath("description.txt"));
+  if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return QString();
+  return QString::fromUtf8(file.readAll()).trimmed();
 }
 
 static QString formatModelTime(const QDateTime &dt)
@@ -1482,7 +1499,8 @@ static QString modelSelectionLabel(const QString &modelName)
 static QString modelDescription(const QString &modelName)
 {
   if (modelName == "1.default") return "Built-in comma model";
-  return knownModelDescriptions().value(modelName, "Custom driving model profile");
+  const QString description = modelDescriptionFromFolder(modelName);
+  return description.isEmpty() ? "Custom driving model profile" : description;
 }
 
 static QLabel *makeModelStatusLine(QWidget *parent, int fontSize, const QString &color)
@@ -1557,10 +1575,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
       return;
     }
 
-    //QDir root(QDir::homePath());
-    //QDir root("/data");
-    QDir  root(detectOpenpilotRoot());
-    root.cd("openpilot"); // ~/openpilot
+    QDir root(detectOpenpilotRoot());
     const QString modeldPath = root.filePath("selfdrive/modeld");
     const QString scriptPath = root.filePath("selfdrive/ui/qt/custom/script/model_make.sh");
 
@@ -1589,7 +1604,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
 
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert("WORKDIR", modeldPath);
-    const QString venvBin = root.filePath("openpilot/.venv/bin");
+    const QString venvBin = root.filePath(".venv/bin");
     if (QFileInfo::exists(venvBin)) {
       env.insert("PATH", venvBin + ":" + env.value("PATH"));
     }
