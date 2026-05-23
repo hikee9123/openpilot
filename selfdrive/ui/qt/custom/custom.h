@@ -340,7 +340,7 @@ private:
     double def;
   };
   // 기본 아이콘 경로
-  const QString kIcon = "../assets/offroad/icon_shell.png";
+  const QString kIcon = "../assets/icons/shell.png";
 
 private:
   CustomPanel *m_pCustom = nullptr;

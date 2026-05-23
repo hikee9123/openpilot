@@ -1897,7 +1897,7 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
   : ListWidget(parent), m_jsonobj(jsonobj), m_pCustom(parent) {
   std::vector<std::tuple<QString, QString, QString, QString>> toggle_defs{
     { "UseExternalNaviRoutes", tr("Use external navi routes"), "",
-      "../assets/offroad/icon_openpilot.png" },
+      "../assets/icons/road.png" },
   };
 
   for (auto &[param, title, desc, icon] : toggle_defs) {
@@ -1922,7 +1922,7 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
       "OSMEnable",
       tr("Use OSM road prediction"),
       tr("Use the local OSM road DB for current-road matching, forward-road prediction, and the mini map."),
-      "../assets/offroad/icon_openpilot.png",
+      "../assets/icons/road.png",
       this);
   const bool osmLocked = params.getBool("OSMEnableLock");
   osmEnable->setEnabled(!osmLocked);
@@ -1939,7 +1939,7 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
       "OsmShowSuspiciousCameras",
       tr("Show suspicious OSM cameras"),
       tr("Show suspicious OSM speed camera candidates on the mini map for validation. When disabled, only verified normal speed camera icons are shown."),
-      "../assets/offroad/icon_openpilot.png",
+      "../assets/icons/road.png",
       this);
   osmCameraSection->addWidget(osmShowSuspiciousCameras);
   toggles["OsmShowSuspiciousCameras"] = osmShowSuspiciousCameras;
@@ -1951,7 +1951,7 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
       "OsmCameraDisplayDistanceM",
       tr("OSM camera icon distance"),
       tr("Set how far ahead OSM speed camera icons are shown on the mini map and HUD camera alert."),
-      "../assets/offroad/icon_openpilot.png",
+      "../assets/icons/road.png",
       350, 3000, 100);
   osmCameraSection->addWidget(osmCameraDisplayDistance);
 
@@ -2068,7 +2068,7 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
       "NavdLogging",
       tr("Navigation logging"),
       tr("Record navd and OSM diagnostic logs under the navd logs directory."),
-      "../assets/offroad/icon_openpilot.png",
+      "../assets/icons/road.png",
       this);
   osmSection->addWidget(navdLogging);
   toggles["NavdLogging"] = navdLogging;
@@ -2077,7 +2077,7 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
       "OsmGpsSimulation",
       tr("OSM GPS simulation"),
       tr("Publish simulated GPS only in webcam mode for OSM road prediction testing."),
-      "../assets/offroad/icon_openpilot.png",
+      "../assets/icons/road.png",
       this);
   if (!Hardware::PC()) {
     params.putBool("OsmGpsSimulation", false);
@@ -2091,7 +2091,7 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
       "OsmPredictionLogging",
       tr("OSM prediction logging"),
       tr("Create OSM route prediction trace and failure logs for validation. Requires Navigation logging and writes under the navd logs directory."),
-      "../assets/offroad/icon_openpilot.png",
+      "../assets/icons/road.png",
       this);
   osmSection->addWidget(osmPredictionLogging);
   toggles["OsmPredictionLogging"] = osmPredictionLogging;
@@ -2100,7 +2100,7 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
       "OsmMinimapPosition",
       tr("OSM minimap position"),
       tr("Select where the OSM mini map is shown on the driving screen. Center shows a larger debug map fitted to the full OSM road overlay."),
-      "../assets/offroad/icon_openpilot.png",
+      "../assets/icons/road.png",
       {tr("LT"), tr("RT"), tr("LB"), tr("RB"), tr("C")},
       120);
   osmSection->addWidget(osmMinimapPosition);
@@ -2514,15 +2514,15 @@ UITab::UITab(CustomPanel *parent, QJsonObject &jsonobj)
   : ListWidget(parent), m_jsonobj(jsonobj), m_pCustom(parent) {
   std::vector<std::tuple<QString, QString, QString, QString>> toggle_defs{
     { "ShowDebugMessage", "Show Debug Message",
-      "Display debug popups/log overlays for troubleshooting.", "../assets/offroad/icon_shell.png" },
+      "Display debug popups/log overlays for troubleshooting.", "../assets/icons/shell.png" },
     { "DisableUpdates", "Disable OTA Updates",
-      "Prevents downloading and installing software updates.", "../assets/offroad/icon_shell.png" },
+      "Prevents downloading and installing software updates.", "../assets/icons/shell.png" },
     { "ShowCarTracking", "how Vehicle Tracking",
-      "Display detected vehicles and paths on the HUD.", "../assets/offroad/icon_shell.png" },
+      "Display detected vehicles and paths on the HUD.", "../assets/icons/shell.png" },
     { "tpms", "Show tpms",
-      "Show tire pressure monitoring values on the HUD.", "../assets/offroad/icon_shell.png" },
+      "Show tire pressure monitoring values on the HUD.", "../assets/icons/shell.png" },
     { "ParamDebug", "Show debug trace message",
-      "Enable verbose internal trace messages for diagnostics.", "../assets/offroad/icon_shell.png" },
+      "Enable verbose internal trace messages for diagnostics.", "../assets/icons/shell.png" },
   };
   // 섹션 만들기
   auto *normal = new CollapsibleSection(tr("Toggle def"), this);
@@ -2536,15 +2536,15 @@ UITab::UITab(CustomPanel *parent, QJsonObject &jsonobj)
 
   std::vector<std::tuple<QString, QString, QString, QString>> kegman_defs{
     { "kegman", "HUD Overlay (Kegman)",
-      "Select up to 4 items below to show on the HUD.", "../assets/offroad/icon_shell.png" },
-    { "kegmanCPU", "CPU temperature", "1. Shows max CPU temperature and max CPU usage. Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
-    { "kegmanLag", "UI Lag", "2. Shows UI frame latency (ms). Counts toward the 4-item HUD limit", "../assets/offroad/icon_shell.png" },
-    { "kegmanBattery", "Battery Voltage", "3. Shows system/battery voltage (V). Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
-    { "kegmanGPU", "GPU load", "4. Shows GPU temperature and GPU usage. Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
-    { "kegmanAngle", "Steering Angle", "5. Shows steering angle (°). Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
-    { "kegmanEngine", "Engine Status", "6. Shows engine state (e.g., RPM/ON-OFF). Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
-    { "kegmanDistance", "Relative Distance", "7. Shows radar relative distance (m). Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
-    { "kegmanSpeed", "Relative Speed", "8. Shows radar relative speed (m/s). Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
+      "Select up to 4 items below to show on the HUD.", "../assets/icons/shell.png" },
+    { "kegmanCPU", "CPU temperature", "1. Shows max CPU temperature and max CPU usage. Counts toward the 4-item HUD limit.", "../assets/icons/shell.png" },
+    { "kegmanLag", "UI Lag", "2. Shows UI frame latency (ms). Counts toward the 4-item HUD limit", "../assets/icons/shell.png" },
+    { "kegmanBattery", "Battery Voltage", "3. Shows system/battery voltage (V). Counts toward the 4-item HUD limit.", "../assets/icons/shell.png" },
+    { "kegmanGPU", "GPU load", "4. Shows GPU temperature and GPU usage. Counts toward the 4-item HUD limit.", "../assets/icons/shell.png" },
+    { "kegmanAngle", "Steering Angle", "5. Shows steering angle (°). Counts toward the 4-item HUD limit.", "../assets/icons/shell.png" },
+    { "kegmanEngine", "Engine Status", "6. Shows engine state (e.g., RPM/ON-OFF). Counts toward the 4-item HUD limit.", "../assets/icons/shell.png" },
+    { "kegmanDistance", "Relative Distance", "7. Shows radar relative distance (m). Counts toward the 4-item HUD limit.", "../assets/icons/shell.png" },
+    { "kegmanSpeed", "Relative Speed", "8. Shows radar relative speed (m/s). Counts toward the 4-item HUD limit.", "../assets/icons/shell.png" },
   };
  // 섹션 만들기
   auto *kegman = new CollapsibleSection(tr("Kegman Show"), this);
@@ -2616,11 +2616,11 @@ void UITab::updateToggles(int bSave) {
 Debug::Debug(CustomPanel *parent, QJsonObject &jsonobj)
   : ListWidget(parent), m_jsonobj(jsonobj), m_pCustom(parent) {
   std::vector<std::tuple<QString, QString, QString, QString>> toggle_defs{
-    {"debug1", tr("debug1"), "", "../assets/offroad/icon_shell.png"},
-    {"debug2", tr("debug2"), "", "../assets/offroad/icon_shell.png"},
-    {"debug3", tr("debug3"), "", "../assets/offroad/icon_shell.png"},
-    {"debug4", tr("debug4"), "", "../assets/offroad/icon_shell.png"},
-    {"debug5", tr("debug5"), "", "../assets/offroad/icon_shell.png"},
+    {"debug1", tr("debug1"), "", "../assets/icons/shell.png"},
+    {"debug2", tr("debug2"), "", "../assets/icons/shell.png"},
+    {"debug3", tr("debug3"), "", "../assets/icons/shell.png"},
+    {"debug4", tr("debug4"), "", "../assets/icons/shell.png"},
+    {"debug5", tr("debug5"), "", "../assets/icons/shell.png"},
   };
 
   for (auto &[param, title, desc, icon] : toggle_defs) {

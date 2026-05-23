@@ -53,7 +53,6 @@ def simulate_straight_road_msgs(est):
     livePose.orientationNED = {'x': float(np.deg2rad(ROLL_BIAS_DEG)), 'valid': True}
     livePose.angularVelocityDevice = {'z': float(lat_accel / V_EGO), 'valid': True}
     livePose.inputsOK, livePose.sensorsOK, livePose.posenetOK = True, True, True
-    livePose.timestamp = int(t * 1e9)
     for which, msg in (('carControl', carControl), ('carOutput', carOutput), ('carState', carState), ('livePose', livePose)):
       est.handle_log(t, which, msg)
 

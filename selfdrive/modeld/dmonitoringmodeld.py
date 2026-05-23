@@ -102,17 +102,13 @@ def fill_driver_state(msg, ds_result: DriverStateResult):
   msg.facePosition = list(ds_result.face_position[:2])
   msg.facePositionStd = [math.exp(x) for x in ds_result.face_position_std[:2]]
   msg.faceProb = float(sigmoid(ds_result.face_prob))
-  msg.leftEyeProb = float(sigmoid(ds_result.left_eye_prob))
-  msg.rightEyeProb = float(sigmoid(ds_result.right_eye_prob))
-  msg.leftBlinkProb = float(sigmoid(ds_result.left_blink_prob))
-  msg.rightBlinkProb = float(sigmoid(ds_result.right_blink_prob))
-  msg.sunglassesProb = float(sigmoid(ds_result.sunglasses_prob))
-  msg.occludedProb = float(sigmoid(ds_result.occluded_prob))
-  msg.eyesVisibleProb = min(msg.leftEyeProb, msg.rightEyeProb)
-  msg.eyesClosedProb = max(msg.leftBlinkProb, msg.rightBlinkProb)
+  left_eye_prob = float(sigmoid(ds_result.left_eye_prob))
+  right_eye_prob = float(sigmoid(ds_result.right_eye_prob))
+  left_blink_prob = float(sigmoid(ds_result.left_blink_prob))
+  right_blink_prob = float(sigmoid(ds_result.right_blink_prob))
+  msg.eyesVisibleProb = min(left_eye_prob, right_eye_prob)
+  msg.eyesClosedProb = max(left_blink_prob, right_blink_prob)
   msg.phoneProb = 0.
-  msg.readyProb = [float(sigmoid(x)) for x in ds_result.ready_prob]
-  msg.notReadyProb = [float(sigmoid(x)) for x in ds_result.not_ready_prob]
 
 
 def get_driverstate_packet(model_output: np.ndarray, frame_id: int, location_ts: int, execution_time: float, gpu_execution_time: float):

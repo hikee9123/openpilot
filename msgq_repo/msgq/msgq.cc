@@ -380,10 +380,14 @@ int msgq_msg_recv(msgq_msg_t * msg, msgq_queue_t * q){
     goto start;
   }
 
-  // crashing is better than passing garbage data to the consumer
-  // the size will have weird value if it was overwritten by data accidentally
-  assert((uint64_t)size < q->size);
-  assert(size > 0);
+  // If the reader lands on a stale or partially overwritten slot, resync it to
+  // the latest write pointer instead of passing garbage data to the consumer.
+  if (size <= 0 || (uint64_t)size >= q->size) {
+    std::cerr << "Warning, invalid msgq message size " << size
+              << " on " << q->endpoint << ", resetting reader" << std::endl;
+    msgq_reset_reader(q);
+    goto start;
+  }
 
   uint32_t new_read_pointer = ALIGN(read_pointer + sizeof(std::int64_t) + size);
 
