@@ -1297,15 +1297,9 @@ struct ModelCompileStatus {
   QString backend;
 };
 
-struct BuiltInModelOption {
-  QString name;
-  QString description;
-};
-
-static const QList<BuiltInModelOption> &builtInModelOptions()
+static const QMap<QString, QString> &knownModelDescriptions()
 {
-  static const QList<BuiltInModelOption> options = {
-    {"11.POP_Model", "Progressive control profile for confident longitudinal response"},
+  static const QMap<QString, QString> descriptions = {
     {"10.CD210_Model", "Comfort-oriented profile tuned for smoother everyday driving"},
     {"9.WMI_Model", "Balanced experimental profile for natural lane keeping"},
     {"8.SC_Driving", "Smooth steering profile with calm corrections"},
@@ -1316,16 +1310,19 @@ static const QList<BuiltInModelOption> &builtInModelOptions()
     {"3.Firehose", "Smooth profile with quick reaction timing"},
     {"2.Steam_Powered", "Custom driving model profile"},
   };
-  return options;
+  return descriptions;
+}
+
+static int modelNumberPrefix(const QString &modelName)
+{
+  bool ok = false;
+  const int value = modelName.section('.', 0, 0).toInt(&ok);
+  return ok ? value : -1;
 }
 
 static QStringList modelOptions()
 {
   QStringList options;
-  for (const auto &model : builtInModelOptions()) {
-    options.append(model.name);
-  }
-
   QDir root(detectOpenpilotRoot());
   root.cd("openpilot");
   QDir supercombos(root.filePath("selfdrive/modeld/models/supercombos"));
@@ -1339,6 +1336,13 @@ static QStringList modelOptions()
       options.append(modelName);
     }
   }
+
+  std::sort(options.begin(), options.end(), [](const QString &a, const QString &b) {
+    const int aPrefix = modelNumberPrefix(a);
+    const int bPrefix = modelNumberPrefix(b);
+    if (aPrefix >= 0 && bPrefix >= 0 && aPrefix != bPrefix) return aPrefix > bPrefix;
+    return QString::localeAwareCompare(a, b) < 0;
+  });
 
   options.append("1.default");
   return options;
@@ -1478,10 +1482,7 @@ static QString modelSelectionLabel(const QString &modelName)
 static QString modelDescription(const QString &modelName)
 {
   if (modelName == "1.default") return "Built-in comma model";
-  for (const auto &model : builtInModelOptions()) {
-    if (model.name == modelName) return model.description;
-  }
-  return "Custom driving model profile";
+  return knownModelDescriptions().value(modelName, "Custom driving model profile");
 }
 
 static QLabel *makeModelStatusLine(QWidget *parent, int fontSize, const QString &color)
@@ -1539,7 +1540,9 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
 
     const QString selectedLabel = MultiOptionDialog::getSelection(tr("Select a model"), items, currentLabel, this);
     const QString selection = modelByLabel.value(selectedLabel, selectedLabel);
-    if (selection.isEmpty() || selection == currentModel) return;
+    const ModelCompileStatus selectedStatus = getModelCompileStatus(selection);
+    const bool needsCompile = selection != "1.default" && selectedStatus.state != "Ready";
+    if (selection.isEmpty() || (selection == currentModel && !needsCompile)) return;
 
     Params params;
     const std::string prev = params.get("ActiveModelName");
@@ -1573,7 +1576,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
     changeModelButton->setEnabled(false);
     changeModelButton->setTitle(selection);
     changeModelButton->setText(tr("WAIT"));
-    changeModelButton->setDescription(selection);
+    changeModelButton->setDescription(needsCompile ? selectedStatus.state : selection);
     modelCompileStartedAt = QDateTime::currentMSecsSinceEpoch();
     modelCompilingName = selection;
     if (modelDescriptionLabel) modelDescriptionLabel->setText(modelDescription(selection));
@@ -1586,6 +1589,10 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
 
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert("WORKDIR", modeldPath);
+    const QString venvBin = root.filePath("openpilot/.venv/bin");
+    if (QFileInfo::exists(venvBin)) {
+      env.insert("PATH", venvBin + ":" + env.value("PATH"));
+    }
     proc->setProcessEnvironment(env);
 
     connect(proc, &QProcess::readyReadStandardOutput, this, [this, proc]() {

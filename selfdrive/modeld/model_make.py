@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import hashlib
 import json
 import os
 import shutil
@@ -7,9 +6,8 @@ import sys
 import time
 import subprocess
 import threading
-import urllib.request
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 from openpilot.common.swaglog import cloudlog
 try:
   from openpilot.common.params import Params
@@ -52,84 +50,6 @@ POLICY_META = "driving_policy_metadata.pkl"
 VISION_PKL  = "driving_vision_tinygrad.pkl"
 POLICY_PKL  = "driving_policy_tinygrad.pkl"
 COMPILE_INFO = "compile_info.json"
-
-MODEL_DARK_SOULS = "6.Dark_Souls_2"
-MODEL_MACRO_STIFF = "7.MacroStiff_Model"
-MODEL_SC_DRIVING = "8.SC_Driving"
-MODEL_WMI = "9.WMI_Model"
-MODEL_CD210 = "10.CD210_Model"
-MODEL_POP = "11.POP_Model"
-
-def _supercombo_file(model_name: str, filename: str) -> Path:
-  return SUPERCOMBOS_DIR / model_name / filename
-
-LEGACY_MODEL_SOURCES: Dict[str, Dict[str, Dict[str, Any]]] = {
-  MODEL_MACRO_STIFF: {
-    VISION_ONNX: {
-      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/MacroStiff/driving_vision.onnx",
-      "sha256": "1dc66bc06f250b577653ccbeaa2c6521b3d46749f601d0a1a366419e929ca438",
-      "size": 46271942,
-      "local_candidates": [_supercombo_file(MODEL_DARK_SOULS, VISION_ONNX)],
-    },
-    POLICY_ONNX: {
-      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/MacroStiff/driving_policy.onnx",
-      "sha256": "4cf2023d6742c20aac7cecbf520afe370a64bcf5efdcf3531b1b128f9dfa3cc8",
-      "size": 13926324,
-    },
-  },
-  MODEL_SC_DRIVING: {
-    VISION_ONNX: {
-      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/SC/driving_vision.onnx",
-      "sha256": "1dc66bc06f250b577653ccbeaa2c6521b3d46749f601d0a1a366419e929ca438",
-      "size": 46271942,
-      "local_candidates": [_supercombo_file(MODEL_DARK_SOULS, VISION_ONNX)],
-    },
-    POLICY_ONNX: {
-      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/SC/driving_policy.onnx",
-      "sha256": "66f406ee179d984a4d8c93e38da479dcd1893127308dd3a7c322a7481a6b51b2",
-      "size": 13926324,
-    },
-  },
-  MODEL_WMI: {
-    VISION_ONNX: {
-      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/WMIv11/driving_vision.onnx",
-      "sha256": "1dc66bc06f250b577653ccbeaa2c6521b3d46749f601d0a1a366419e929ca438",
-      "size": 46271942,
-      "local_candidates": [_supercombo_file(MODEL_DARK_SOULS, VISION_ONNX)],
-    },
-    POLICY_ONNX: {
-      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/WMIv11/driving_policy.onnx",
-      "sha256": "1edea5bb56f876db4cec97c150799513f6a59373f3ad152d55e4dcaab1b809e3",
-      "size": 13926324,
-    },
-  },
-  MODEL_CD210: {
-    VISION_ONNX: {
-      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/CD210/driving_vision.onnx",
-      "sha256": "ee29ee5bce84d1ce23e9ff381280de9b4e4d96d2934cd751740354884e112c66",
-      "size": 46877473,
-    },
-    POLICY_ONNX: {
-      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/CD210/driving_policy.onnx",
-      "sha256": "78477124cbf3ffe30fa951ebada8410b43c4242c6054584d656f1d329b067e15",
-      "size": 14060847,
-    },
-  },
-  MODEL_POP: {
-    VISION_ONNX: {
-      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/CD210/driving_vision.onnx",
-      "sha256": "ee29ee5bce84d1ce23e9ff381280de9b4e4d96d2934cd751740354884e112c66",
-      "size": 46877473,
-      "local_candidates": [_supercombo_file(MODEL_CD210, VISION_ONNX)],
-    },
-    POLICY_ONNX: {
-      "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/CD210/driving_policy.onnx",
-      "sha256": "78477124cbf3ffe30fa951ebada8410b43c4242c6054584d656f1d329b067e15",
-      "size": 14060847,
-      "local_candidates": [_supercombo_file(MODEL_CD210, POLICY_ONNX)],
-    },
-  },
-}
 
 # 결정성(비결정적 해싱 등) 줄이기
 os.environ.setdefault("PYTHONHASHSEED", "0")
@@ -300,73 +220,6 @@ def _stale(target: Path, onnx: Path) -> bool:
   return (not target.exists()) or (onnx.stat().st_mtime > target.stat().st_mtime)
 
 
-def _sha256(path: Path) -> str:
-  h = hashlib.sha256()
-  with path.open("rb") as f:
-    for chunk in iter(lambda: f.read(1024 * 1024), b""):
-      h.update(chunk)
-  return h.hexdigest()
-
-
-def _verified_model_file(path: Path, spec: Dict[str, Any]) -> bool:
-  return path.exists() and path.stat().st_size == spec["size"] and _sha256(path) == spec["sha256"]
-
-
-def _copy_verified_candidate(dest: Path, spec: Dict[str, Any]) -> bool:
-  for candidate in spec.get("local_candidates", []):
-    if candidate == dest:
-      continue
-    if _verified_model_file(candidate, spec):
-      dest.parent.mkdir(parents=True, exist_ok=True)
-      shutil.copy2(candidate, dest)
-      cloudlog.warning(f"[modeld.fetch] copied {candidate} -> {dest}")
-      return True
-  return False
-
-
-def _download_verified_model_file(dest: Path, spec: Dict[str, Any]) -> None:
-  dest.parent.mkdir(parents=True, exist_ok=True)
-  tmp = dest.with_name(dest.name + ".tmp")
-  if tmp.exists():
-    tmp.unlink()
-
-  req = urllib.request.Request(spec["url"], headers={"User-Agent": "openpilot-model-make"})
-  cloudlog.warning(f"[modeld.fetch] downloading {spec['url']} -> {dest}")
-  with urllib.request.urlopen(req, timeout=300) as response, tmp.open("wb") as f:
-    while True:
-      chunk = response.read(1024 * 1024)
-      if not chunk:
-        break
-      f.write(chunk)
-
-  if not _verified_model_file(tmp, spec):
-    actual_size = tmp.stat().st_size if tmp.exists() else 0
-    actual_sha = _sha256(tmp) if tmp.exists() else ""
-    tmp.unlink(missing_ok=True)
-    raise RuntimeError(
-      f"Downloaded model verification failed for {dest}: "
-      f"size={actual_size} sha256={actual_sha}"
-    )
-
-  tmp.replace(dest)
-  cloudlog.warning(f"[modeld.fetch] verified {dest}")
-
-
-def _ensure_legacy_model_files(model_dir: Path) -> None:
-  specs = LEGACY_MODEL_SOURCES.get(model_dir.name)
-  if not specs:
-    return
-
-  for filename, spec in specs.items():
-    dest = model_dir / filename
-    if _verified_model_file(dest, spec):
-      continue
-    if _copy_verified_candidate(dest, spec):
-      continue
-    _download_verified_model_file(dest, spec)
-
-
-
 # ----------------------------
 # Generators
 # ----------------------------
@@ -382,11 +235,11 @@ def _ensure_metadata_generated(onnx_path: Path, meta_path: Path) -> None:
     raise FileNotFoundError(msg)
 
   # 생성
-  res = _run_subprocess(["python3", str(script), str(onnx_path)], cwd=Path(__file__).parent)
+  res = _run_subprocess([sys.executable, str(script), str(onnx_path)], cwd=Path(__file__).parent)
   if res.returncode != 0:
     msg = (
       f"Metadata generation failed\n"
-      f"cmd: python3 {script} {onnx_path}\nstdout:\n{res.stdout}\nstderr:\n{res.stderr}"
+      f"cmd: {sys.executable} {script} {onnx_path}\nstdout:\n{res.stdout}\nstderr:\n{res.stderr}"
     )
     cloudlog.error(msg)
     raise RuntimeError(msg)
@@ -431,7 +284,7 @@ def _ensure_pkl_and_metadata(onnx_path: Path, pkl_path: Path, meta_path: Path) -
   env.update(_parse_flags_to_env(flags))
 
   # 실행
-  args = ["python3", str(compile3), str(onnx_path), str(pkl_path)]
+  args = [sys.executable, str(compile3), str(onnx_path), str(pkl_path)]
   res = _run_subprocess(args, cwd=Path(__file__).parent, extra_env=env)
   if res.returncode != 0:
     err = (
@@ -467,8 +320,6 @@ def _resolve_onnx_only_paths(model_dir: Path) -> Dict[str, Path]:
   - 어떤 단계에서라도 예외가 발생하면 호출자에게 실패를 전달한다.
   """
   try:
-    _ensure_legacy_model_files(model_dir)
-
     vis_onnx = model_dir / VISION_ONNX
     pol_onnx = model_dir / POLICY_ONNX
     if not vis_onnx.exists() or not pol_onnx.exists():
@@ -513,7 +364,7 @@ def _resolve_onnx_only_paths(model_dir: Path) -> Dict[str, Path]:
 
 
 def _choose_model_dir_from_params_only() -> Optional[Path]:
-  """ActiveModelName 번들을 찾으면 Path, 아니면 None"""
+  """Return a model bundle registered as a supercombos/<name> folder."""
   try:
     pname = Params().get("ActiveModelName")
     if not pname:
@@ -523,7 +374,7 @@ def _choose_model_dir_from_params_only() -> Optional[Path]:
       cloudlog.warning("[modeld.params] ActiveModelName='1.default', using comma default PATH")
       return None
     bundle = SUPERCOMBOS_DIR / pname
-    if bundle.exists() or pname in LEGACY_MODEL_SOURCES:
+    if bundle.exists():
       cloudlog.warning(f"[modeld.params] ActiveModelName='{pname}'")
       return bundle
 
@@ -579,7 +430,7 @@ def choose_model_from_params() -> Dict[str, Path]:
 
 def compile_model_from_params() -> Dict[str, Path]:
   """
-  번들이 있으면 해당 번들에서 onnx/meta/pkl을 확인/필요 시 생성 후 반환,
+  번들이 있으면 해당 번들의 ONNX를 기준으로 meta/pkl을 확인/필요 시 생성 후 반환,
   없으면 comma defaults 반환
   """
   cloudlog.info("[modeld] compile_model_from_params")
