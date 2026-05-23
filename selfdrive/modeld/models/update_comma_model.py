@@ -109,6 +109,29 @@ def write_json(path: Path, data: dict[str, Any]) -> None:
   path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
 
 
+def emit_result(data: dict[str, Any], json_output: bool) -> None:
+  if json_output:
+    print(json.dumps(data, sort_keys=True))
+    return
+
+  print(f"comma ref: {data['comma_ref']}")
+  print(f"model commit: {data['source_commit']}")
+  print(f"model title: {data['source_title']}")
+  print(f"model name: {data['model_name']}")
+  print(f"vision oid: {data['vision_oid']}")
+  print(f"policy oid: {data['policy_oid']}")
+  if data.get("existing_model"):
+    print(f"existing model: {data['existing_model']}")
+  if data.get("new_model_folder"):
+    print(f"new model folder: {data['new_model_folder']}")
+  if data["status"] == "new":
+    print("dry run: use --apply to download and register")
+  elif data["status"] == "registered":
+    print("model registered")
+  elif data["status"] == "updated":
+    print("metadata updated")
+
+
 def find_existing_model(vision_oid: str, policy_oid: str) -> Path | None:
   for bundle in sorted(SUPERCOMBOS_DIR.iterdir()):
     if not bundle.is_dir():
@@ -165,6 +188,7 @@ def build_metadata(name: str, commit: str, title: str, branch: str, vision: dict
 def main() -> int:
   parser = argparse.ArgumentParser(description="Register the latest commaai/openpilot official driving model.")
   parser.add_argument("--apply", action="store_true", help="Create/update the local model folder. Without this, only report.")
+  parser.add_argument("--json", action="store_true", help="Print a single JSON object for UI integration.")
   parser.add_argument("--repo", default=COMMA_REPO)
   parser.add_argument("--branch", default=DEFAULT_BRANCH)
   args = parser.parse_args()
@@ -176,34 +200,42 @@ def main() -> int:
   model_name = model_name_from_title(source_title, source_commit)
 
   existing = find_existing_model(vision["oid"], policy["oid"])
-  print(f"comma ref: {commit}")
-  print(f"model commit: {source_commit}")
-  print(f"model title: {source_title}")
-  print(f"model name: {model_name}")
-  print(f"vision oid: {vision['oid']}")
-  print(f"policy oid: {policy['oid']}")
-
   metadata = build_metadata(model_name, source_commit, source_title, args.branch, vision, policy)
+  result = {
+    "status": "existing",
+    "comma_ref": commit,
+    "source_commit": source_commit,
+    "source_title": source_title,
+    "model_name": model_name,
+    "vision_oid": vision["oid"],
+    "policy_oid": policy["oid"],
+    "existing_model": "",
+    "new_model_folder": "",
+  }
+
   if existing:
-    print(f"existing model: {existing.relative_to(SUPERCOMBOS_DIR)}")
+    result["existing_model"] = str(existing.relative_to(SUPERCOMBOS_DIR))
     if args.apply:
       current = read_json(existing / "model.json")
       current.update(metadata)
       write_json(existing / "model.json", current)
-      print("metadata updated")
+      result["status"] = "updated"
+    emit_result(result, args.json)
     return 0
 
   folder = SUPERCOMBOS_DIR / f"{next_model_prefix()}.{folder_slug(model_name)}"
-  print(f"new model folder: {folder.relative_to(SUPERCOMBOS_DIR)}")
+  result["status"] = "new"
+  result["new_model_folder"] = str(folder.relative_to(SUPERCOMBOS_DIR))
   if not args.apply:
-    print("dry run: use --apply to download and register")
+    emit_result(result, args.json)
     return 0
 
   folder.mkdir(parents=True, exist_ok=False)
   download_lfs_file(source_commit, MODEL_FILES["vision"], folder / LOCAL_FILES["vision"], vision["oid"], vision["size"])
   download_lfs_file(source_commit, MODEL_FILES["policy"], folder / LOCAL_FILES["policy"], policy["oid"], policy["size"])
   write_json(folder / "model.json", metadata)
-  print("model registered")
+  result["status"] = "registered"
+  emit_result(result, args.json)
   return 0
 
 

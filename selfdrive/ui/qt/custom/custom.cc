@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cmath>
+#include <memory>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -1691,6 +1692,15 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
   });
 
   addItem(changeModelButton);
+
+  commaModelUpdateButton = new ButtonControl(
+      tr("Comma official model"), tr("CHECK"),
+      tr("Check commaai/openpilot for a new official driving model."));
+  QObject::connect(commaModelUpdateButton, &ButtonControl::clicked, this, [this]() {
+    runCommaModelUpdate(commaModelUpdateAvailable);
+  });
+  addItem(commaModelUpdateButton);
+
   modelStatusPanel = new QFrame(this);
   modelStatusPanel->setStyleSheet(R"(
     QFrame {
@@ -1716,6 +1726,92 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
   addItem(modelStatusPanel);
   refreshModelStatus();
   applyListWidgetBaseStyle(this);
+}
+
+void ModelTab::runCommaModelUpdate(bool apply)
+{
+  if (commaModelUpdateProcess && commaModelUpdateProcess->state() != QProcess::NotRunning) return;
+
+  QDir root(detectOpenpilotRoot());
+  const QString scriptPath = root.filePath("selfdrive/modeld/models/update_comma_model.py");
+  const QFileInfo script(scriptPath);
+  if (!script.exists() || !script.isFile()) {
+    commaModelUpdateButton->setTitle(tr("Script missing"));
+    commaModelUpdateButton->setText(tr("RETRY"));
+    commaModelUpdateButton->setDescription(scriptPath);
+    commaModelUpdateAvailable = false;
+    return;
+  }
+
+  const QString venvPython = root.filePath(".venv/bin/python");
+  const QString python = QFileInfo::exists(venvPython) ? venvPython : "python3";
+  QStringList args = {scriptPath, "--json"};
+  if (apply) args.append("--apply");
+
+  QProcess *proc = new QProcess(this);
+  commaModelUpdateProcess = proc;
+  commaModelUpdateButton->setEnabled(false);
+  commaModelUpdateButton->setText(apply ? tr("DOWN") : tr("WAIT"));
+  commaModelUpdateButton->setDescription(apply ? tr("Downloading official model") : tr("Checking official model"));
+  proc->setProgram(python);
+  proc->setArguments(args);
+  proc->setWorkingDirectory(root.absolutePath());
+
+  auto stdoutData = std::make_shared<QString>();
+  auto stderrData = std::make_shared<QString>();
+  connect(proc, &QProcess::readyReadStandardOutput, this, [proc, stdoutData]() {
+    *stdoutData += QString::fromUtf8(proc->readAllStandardOutput());
+  });
+  connect(proc, &QProcess::readyReadStandardError, this, [proc, stderrData]() {
+    *stderrData += QString::fromUtf8(proc->readAllStandardError());
+  });
+  connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+          this, [=](int code, QProcess::ExitStatus status) {
+    if (commaModelUpdateProcess == proc) commaModelUpdateProcess = nullptr;
+
+    if (status == QProcess::NormalExit && code == 0) {
+      const QJsonDocument doc = QJsonDocument::fromJson(stdoutData->trimmed().toUtf8());
+      const QJsonObject result = doc.object();
+      const QString resultStatus = result.value("status").toString();
+      const QString modelName = result.value("model_name").toString();
+      const QString folder = result.value("new_model_folder").toString();
+      const QString existing = result.value("existing_model").toString();
+
+      if (resultStatus == "new") {
+        commaModelUpdateAvailable = true;
+        commaModelUpdateFolder = folder;
+        commaModelUpdateButton->setTitle(modelName.isEmpty() ? tr("New comma model") : modelName);
+        commaModelUpdateButton->setText(tr("INSTALL"));
+        commaModelUpdateButton->setDescription(folder);
+      } else if (resultStatus == "registered") {
+        commaModelUpdateAvailable = false;
+        commaModelUpdateFolder.clear();
+        commaModelUpdateButton->setTitle(modelName.isEmpty() ? tr("Model added") : modelName);
+        commaModelUpdateButton->setText(tr("ADDED"));
+        commaModelUpdateButton->setDescription(folder);
+        refreshModelStatus();
+      } else {
+        commaModelUpdateAvailable = false;
+        commaModelUpdateFolder.clear();
+        commaModelUpdateButton->setTitle(tr("Comma official model"));
+        commaModelUpdateButton->setText(resultStatus == "updated" ? tr("UPDATED") : tr("LATEST"));
+        commaModelUpdateButton->setDescription(existing.isEmpty() ? modelName : existing);
+      }
+    } else {
+      commaModelUpdateButton->setTitle(tr("Update check failed"));
+      commaModelUpdateButton->setText(tr("RETRY"));
+      commaModelUpdateButton->setDescription(stderrData->trimmed().right(120));
+      commaModelUpdateAvailable = false;
+      commaModelUpdateFolder.clear();
+    }
+
+    commaModelUpdateButton->setEnabled(true);
+    proc->deleteLater();
+  });
+  connect(proc, &QObject::destroyed, this, [this, proc]() {
+    if (commaModelUpdateProcess == proc) commaModelUpdateProcess = nullptr;
+  });
+  proc->start();
 }
 
 void ModelTab::refreshModelStatus()

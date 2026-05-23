@@ -401,9 +401,11 @@ private:
   std::map<std::string, CValueControl*> m_valueCtrl;
   void refreshModelStatus();
   void setModelCompileProgress(const QString &stage, int percent, const QString &detail);
+  void runCommaModelUpdate(bool apply);
   bool isModelCompileActive() const;
   QString currentModel;
   ButtonControl *changeModelButton = nullptr;
+  ButtonControl *commaModelUpdateButton = nullptr;
   QFrame *modelStatusPanel = nullptr;
   QLabel *modelStatusTitle = nullptr;
   QLabel *modelDescriptionLabel = nullptr;
@@ -413,6 +415,9 @@ private:
   QProgressBar *modelProgressBar = nullptr;
   qint64 modelCompileStartedAt = 0;
   QProcess *modelProcess = nullptr;
+  QProcess *commaModelUpdateProcess = nullptr;
+  bool commaModelUpdateAvailable = false;
+  QString commaModelUpdateFolder;
   QString modelCompilingName;
   QString modelCompileStage;
   QString modelCompileDetail;
