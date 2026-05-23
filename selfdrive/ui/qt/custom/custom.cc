@@ -1368,6 +1368,13 @@ static QString modelMetadataValue(const QString &modelName, const QString &key)
   return doc.object().value(key).toString().trimmed();
 }
 
+static QString modelDisplayName(const QString &modelName)
+{
+  if (modelName == "1.default") return modelName;
+  const QString displayName = modelMetadataValue(modelName, "name");
+  return displayName.isEmpty() ? modelName : displayName;
+}
+
 static QString modelDescriptionFromFolder(const QString &modelName)
 {
   const QString jsonDescription = modelMetadataValue(modelName, "description");
@@ -1493,7 +1500,9 @@ static QString modelStatusSummary(const QString &modelName)
 
 static QString modelSelectionLabel(const QString &modelName)
 {
-  return modelName + "    " + modelStatusSummary(modelName);
+  const QString displayName = modelDisplayName(modelName);
+  const QString title = displayName == modelName ? modelName : displayName + " (" + modelName + ")";
+  return title + "    " + modelStatusSummary(modelName);
 }
 
 static QString modelDescription(const QString &modelName)
