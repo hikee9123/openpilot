@@ -191,11 +191,11 @@ class SelfdriveD:
       # Alerts
       vision_dm = self.sm['driverMonitoringState'].activePolicy == MonitoringPolicy.vision
       if self.sm['driverMonitoringState'].alertLevel == AlertLevel.one:
-        self.events.add(EventName.driverDistracted1 if vision_dm else EventName.driverUnresponsive1)
+        self.events.add(EventName.preDriverDistracted if vision_dm else EventName.preDriverUnresponsive)
       elif self.sm['driverMonitoringState'].alertLevel == AlertLevel.two:
-        self.events.add(EventName.driverDistracted2 if vision_dm else EventName.driverUnresponsive2)
+        self.events.add(EventName.promptDriverDistracted if vision_dm else EventName.promptDriverUnresponsive)
       elif self.sm['driverMonitoringState'].alertLevel == AlertLevel.three:
-        self.events.add(EventName.driverDistracted3 if vision_dm else EventName.driverUnresponsive3)
+        self.events.add(EventName.driverDistracted if vision_dm else EventName.driverUnresponsive)
       # Warn consistent DM uncertainty
       if self.sm['driverMonitoringState'].visionPolicyState.uncertainOffroadAlertPercent >= 100 and not self.dm_uncertain_alerted:
         set_offroad_alert("Offroad_DriverMonitoringUncertain", True)
