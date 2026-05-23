@@ -53,13 +53,23 @@ VISION_PKL  = "driving_vision_tinygrad.pkl"
 POLICY_PKL  = "driving_policy_tinygrad.pkl"
 COMPILE_INFO = "compile_info.json"
 
+MODEL_DARK_SOULS = "6.Dark_Souls_2"
+MODEL_MACRO_STIFF = "7.MacroStiff_Model"
+MODEL_SC_DRIVING = "8.SC_Driving"
+MODEL_WMI = "9.WMI_Model"
+MODEL_CD210 = "10.CD210_Model"
+MODEL_POP = "11.POP_Model"
+
+def _supercombo_file(model_name: str, filename: str) -> Path:
+  return SUPERCOMBOS_DIR / model_name / filename
+
 LEGACY_MODEL_SOURCES: Dict[str, Dict[str, Dict[str, Any]]] = {
-  "7.MacroStiff_Model": {
+  MODEL_MACRO_STIFF: {
     VISION_ONNX: {
       "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/MacroStiff/driving_vision.onnx",
       "sha256": "1dc66bc06f250b577653ccbeaa2c6521b3d46749f601d0a1a366419e929ca438",
       "size": 46271942,
-      "local_candidates": [SUPERCOMBOS_DIR / "6.Dark_Souls_2" / VISION_ONNX],
+      "local_candidates": [_supercombo_file(MODEL_DARK_SOULS, VISION_ONNX)],
     },
     POLICY_ONNX: {
       "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/MacroStiff/driving_policy.onnx",
@@ -67,12 +77,12 @@ LEGACY_MODEL_SOURCES: Dict[str, Dict[str, Dict[str, Any]]] = {
       "size": 13926324,
     },
   },
-  "8.SC_Driving": {
+  MODEL_SC_DRIVING: {
     VISION_ONNX: {
       "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/SC/driving_vision.onnx",
       "sha256": "1dc66bc06f250b577653ccbeaa2c6521b3d46749f601d0a1a366419e929ca438",
       "size": 46271942,
-      "local_candidates": [SUPERCOMBOS_DIR / "6.Dark_Souls_2" / VISION_ONNX],
+      "local_candidates": [_supercombo_file(MODEL_DARK_SOULS, VISION_ONNX)],
     },
     POLICY_ONNX: {
       "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/SC/driving_policy.onnx",
@@ -80,12 +90,12 @@ LEGACY_MODEL_SOURCES: Dict[str, Dict[str, Dict[str, Any]]] = {
       "size": 13926324,
     },
   },
-  "9.WMI_Model": {
+  MODEL_WMI: {
     VISION_ONNX: {
       "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/WMIv11/driving_vision.onnx",
       "sha256": "1dc66bc06f250b577653ccbeaa2c6521b3d46749f601d0a1a366419e929ca438",
       "size": 46271942,
-      "local_candidates": [SUPERCOMBOS_DIR / "6.Dark_Souls_2" / VISION_ONNX],
+      "local_candidates": [_supercombo_file(MODEL_DARK_SOULS, VISION_ONNX)],
     },
     POLICY_ONNX: {
       "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/WMIv11/driving_policy.onnx",
@@ -93,7 +103,7 @@ LEGACY_MODEL_SOURCES: Dict[str, Dict[str, Dict[str, Any]]] = {
       "size": 13926324,
     },
   },
-  "10.CD210_Model": {
+  MODEL_CD210: {
     VISION_ONNX: {
       "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/CD210/driving_vision.onnx",
       "sha256": "ee29ee5bce84d1ce23e9ff381280de9b4e4d96d2934cd751740354884e112c66",
@@ -105,18 +115,18 @@ LEGACY_MODEL_SOURCES: Dict[str, Dict[str, Dict[str, Any]]] = {
       "size": 14060847,
     },
   },
-  "11.POP_Model": {
+  MODEL_POP: {
     VISION_ONNX: {
       "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/CD210/driving_vision.onnx",
       "sha256": "ee29ee5bce84d1ce23e9ff381280de9b4e4d96d2934cd751740354884e112c66",
       "size": 46877473,
-      "local_candidates": [SUPERCOMBOS_DIR / "10.CD210_Model" / VISION_ONNX],
+      "local_candidates": [_supercombo_file(MODEL_CD210, VISION_ONNX)],
     },
     POLICY_ONNX: {
       "url": "https://raw.githubusercontent.com/happymaj11r/openpilot-models/main/models/CD210/driving_policy.onnx",
       "sha256": "78477124cbf3ffe30fa951ebada8410b43c4242c6054584d656f1d329b067e15",
       "size": 14060847,
-      "local_candidates": [SUPERCOMBOS_DIR / "10.CD210_Model" / POLICY_ONNX],
+      "local_candidates": [_supercombo_file(MODEL_CD210, POLICY_ONNX)],
     },
   },
 }

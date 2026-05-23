@@ -1297,21 +1297,51 @@ struct ModelCompileStatus {
   QString backend;
 };
 
+struct BuiltInModelOption {
+  QString name;
+  QString description;
+};
+
+static const QList<BuiltInModelOption> &builtInModelOptions()
+{
+  static const QList<BuiltInModelOption> options = {
+    {"11.POP_Model", "Progressive control profile for confident longitudinal response"},
+    {"10.CD210_Model", "Comfort-oriented profile tuned for smoother everyday driving"},
+    {"9.WMI_Model", "Balanced experimental profile for natural lane keeping"},
+    {"8.SC_Driving", "Smooth steering profile with calm corrections"},
+    {"7.MacroStiff_Model", "Stable high-speed profile with firm path tracking"},
+    {"6.Dark_Souls_2", "Fast response profile with controlled stability"},
+    {"5.North_Nevada", "Natural and stable profile for relaxed driving"},
+    {"4.The_Cool_Peoples", "Responsive profile with sharper lateral behavior"},
+    {"3.Firehose", "Smooth profile with quick reaction timing"},
+    {"2.Steam_Powered", "Custom driving model profile"},
+  };
+  return options;
+}
+
 static QStringList modelOptions()
 {
-  return {
-    "11.POP_Model",
-    "10.CD210_Model",
-    "9.WMI_Model",
-    "8.SC_Driving",
-    "7.MacroStiff_Model",
-    "6.Dark_Souls_2",
-    "5.North_Nevada",
-    "4.The_Cool_Peoples",
-    "3.Firehose",
-    "2.Steam_Powered",
-    "1.default",
-  };
+  QStringList options;
+  for (const auto &model : builtInModelOptions()) {
+    options.append(model.name);
+  }
+
+  QDir root(detectOpenpilotRoot());
+  root.cd("openpilot");
+  QDir supercombos(root.filePath("selfdrive/modeld/models/supercombos"));
+  const QFileInfoList bundles = supercombos.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+  for (const QFileInfo &bundle : bundles) {
+    const QDir dir(bundle.absoluteFilePath());
+    const QString modelName = bundle.fileName();
+    if (!options.contains(modelName) &&
+        QFileInfo::exists(dir.filePath("driving_vision.onnx")) &&
+        QFileInfo::exists(dir.filePath("driving_policy.onnx"))) {
+      options.append(modelName);
+    }
+  }
+
+  options.append("1.default");
+  return options;
 }
 
 static QString modeldRootPath()
@@ -1447,20 +1477,11 @@ static QString modelSelectionLabel(const QString &modelName)
 
 static QString modelDescription(const QString &modelName)
 {
-  static const QMap<QString, QString> descriptions = {
-    {"11.POP_Model", "Progressive control profile for confident longitudinal response"},
-    {"10.CD210_Model", "Comfort-oriented profile tuned for smoother everyday driving"},
-    {"9.WMI_Model", "Balanced experimental profile for natural lane keeping"},
-    {"8.SC_Driving", "Smooth steering profile with calm corrections"},
-    {"7.MacroStiff_Model", "Stable high-speed profile with firm path tracking"},
-    {"6.Dark_Souls_2", "Fast response profile with controlled stability"},
-    {"5.North_Nevada", "Natural and stable profile for relaxed driving"},
-    {"4.The_Cool_Peoples", "Responsive profile with sharper lateral behavior"},
-    {"3.Firehose", "Smooth profile with quick reaction timing"},
-    {"2.Steam_Powered", "Custom driving model profile"},
-    {"1.default", "Built-in comma model"},
-  };
-  return descriptions.value(modelName, "Custom driving model profile");
+  if (modelName == "1.default") return "Built-in comma model";
+  for (const auto &model : builtInModelOptions()) {
+    if (model.name == modelName) return model.description;
+  }
+  return "Custom driving model profile";
 }
 
 static QLabel *makeModelStatusLine(QWidget *parent, int fontSize, const QString &color)
