@@ -1391,6 +1391,35 @@ static QString formatModelTime(const QDateTime &dt)
   return dt.isValid() ? dt.toLocalTime().toString("yyyy-MM-dd HH:mm") : QString();
 }
 
+static QString formatModelTimestamp(const QString &value)
+{
+  if (value.isEmpty()) return QString();
+  QDateTime dt = QDateTime::fromString(value, Qt::ISODate);
+  if (!dt.isValid()) dt = QDateTime::fromString(value, "yyyy-MM-ddTHH:mm:ssZ");
+  return dt.isValid() ? formatModelTime(dt) : value;
+}
+
+static QString modelUpdatedAt(const QString &modelName)
+{
+  if (modelName.isEmpty() || modelName == "1.default") return QString();
+
+  QString updatedAt = formatModelTimestamp(modelMetadataValue(modelName, "source_date"));
+  if (!updatedAt.isEmpty()) return updatedAt;
+
+  updatedAt = formatModelTimestamp(modelMetadataValue(modelName, "updated_at"));
+  if (!updatedAt.isEmpty()) return updatedAt;
+
+  const QDir bundle(modelBundlePath(modelName));
+  const QFileInfo visionOnnx(bundle.filePath("driving_vision.onnx"));
+  const QFileInfo policyOnnx(bundle.filePath("driving_policy.onnx"));
+  QDateTime modelTime;
+  if (visionOnnx.exists()) modelTime = visionOnnx.lastModified();
+  if (policyOnnx.exists() && (!modelTime.isValid() || policyOnnx.lastModified() > modelTime)) {
+    modelTime = policyOnnx.lastModified();
+  }
+  return formatModelTime(modelTime);
+}
+
 static QString currentModelBackend()
 {
   if (QFileInfo::exists("/TICI")) return "QCOM";
@@ -1827,7 +1856,9 @@ void ModelTab::refreshModelStatus()
   const ModelCompileStatus status = getModelCompileStatus(currentModel);
   modelStatusTitle->setText(status.state == "Ready" ? status.state + " · " + status.backend : status.state);
   modelDescriptionLabel->setText(modelDescription(currentModel));
-  modelCompiledAt->setText(status.compiledAt.isEmpty() ? "Compiled: -" : "Compiled: " + status.compiledAt);
+  const QString updatedAt = modelUpdatedAt(currentModel);
+  const QString compiledAt = status.compiledAt.isEmpty() ? "-" : status.compiledAt;
+  modelCompiledAt->setText("Model update: " + (updatedAt.isEmpty() ? "-" : updatedAt) + "\nCompiled: " + compiledAt);
   modelProgressBar->setVisible(false);
   modelProgressDetail->setVisible(false);
   modelArtifactStatus->setText("Vision: " + status.vision + "\nPolicy: " + status.policy);

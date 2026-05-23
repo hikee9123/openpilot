@@ -51,13 +51,13 @@ def parse_lfs_pointer(ref: str, path: str) -> dict[str, Any]:
   return {"oid": oid, "size": size}
 
 
-def latest_model_commit(ref: str) -> tuple[str, str]:
+def latest_model_commit(ref: str) -> tuple[str, str, str]:
   paths = list(MODEL_FILES.values())
-  out = run_git(["log", "-1", "--format=%H%n%s", ref, "--", *paths])
+  out = run_git(["log", "-1", "--format=%H%n%cI%n%s", ref, "--", *paths])
   lines = out.splitlines()
-  if len(lines) < 2:
+  if len(lines) < 3:
     raise RuntimeError("Unable to find official model commit title")
-  return lines[0], lines[1]
+  return lines[0], lines[1], lines[2]
 
 
 def strip_pr_refs(title: str) -> str:
@@ -116,6 +116,7 @@ def emit_result(data: dict[str, Any], json_output: bool) -> None:
 
   print(f"comma ref: {data['comma_ref']}")
   print(f"model commit: {data['source_commit']}")
+  print(f"model date: {data['source_date']}")
   print(f"model title: {data['source_title']}")
   print(f"model name: {data['model_name']}")
   print(f"vision oid: {data['vision_oid']}")
@@ -169,13 +170,14 @@ def download_lfs_file(commit: str, source_path: str, dest: Path, oid: str, size:
   tmp.replace(dest)
 
 
-def build_metadata(name: str, commit: str, title: str, branch: str, vision: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
+def build_metadata(name: str, commit: str, commit_date: str, title: str, branch: str, vision: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
   return {
     "name": name,
     "description": "Comma official driving model from commaai/openpilot",
     "source": "commaai/openpilot",
     "source_branch": branch,
     "source_commit": commit,
+    "source_date": commit_date,
     "source_title": title,
     "vision_oid": vision["oid"],
     "vision_size": vision["size"],
@@ -194,17 +196,18 @@ def main() -> int:
   args = parser.parse_args()
 
   commit = fetch_comma_ref(args.repo, args.branch)
-  source_commit, source_title = latest_model_commit("FETCH_HEAD")
+  source_commit, source_date, source_title = latest_model_commit("FETCH_HEAD")
   vision = parse_lfs_pointer("FETCH_HEAD", MODEL_FILES["vision"])
   policy = parse_lfs_pointer("FETCH_HEAD", MODEL_FILES["policy"])
   model_name = model_name_from_title(source_title, source_commit)
 
   existing = find_existing_model(vision["oid"], policy["oid"])
-  metadata = build_metadata(model_name, source_commit, source_title, args.branch, vision, policy)
+  metadata = build_metadata(model_name, source_commit, source_date, source_title, args.branch, vision, policy)
   result = {
     "status": "existing",
     "comma_ref": commit,
     "source_commit": source_commit,
+    "source_date": source_date,
     "source_title": source_title,
     "model_name": model_name,
     "vision_oid": vision["oid"],
