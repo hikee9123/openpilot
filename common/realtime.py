@@ -1,4 +1,5 @@
 """Utilities for reading real time clocks and keeping soft real time constraints."""
+import errno
 import gc
 import os
 import sys
@@ -30,7 +31,17 @@ class Priority:
 
 def set_core_affinity(cores: list[int]) -> None:
   if sys.platform == 'linux' and not PC:
-    os.sched_setaffinity(0, cores)
+    try:
+      os.sched_setaffinity(0, cores)
+    except OSError as e:
+      if e.errno != errno.EINVAL:
+        raise
+
+      available_cores = os.sched_getaffinity(0)
+      fallback_cores = [core for core in cores if core in available_cores]
+      if not fallback_cores:
+        fallback_cores = sorted(available_cores)
+      os.sched_setaffinity(0, fallback_cores)
 
 
 def config_realtime_process(cores: int | list[int], priority: int) -> None:
