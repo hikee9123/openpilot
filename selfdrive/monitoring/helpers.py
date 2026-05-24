@@ -29,9 +29,9 @@ class DRIVER_MONITOR_SETTINGS:
     self._WHEELTOUCH_POLICY_ALERT_2_TIMEOUT = 24.
     self._WHEELTOUCH_POLICY_ALERT_3_TIMEOUT = 30.
     # https://cdn.euroncap.com/cars/assets/euro_ncap_protocol_safe_driving_driver_engagement_v11_a30e874152.pdf
-    self._VISION_POLICY_ALERT_1_TIMEOUT = 4.
-    self._VISION_POLICY_ALERT_2_TIMEOUT = 7.
-    self._VISION_POLICY_ALERT_3_TIMEOUT = 15.
+    self._VISION_POLICY_ALERT_1_TIMEOUT = 5.
+    self._VISION_POLICY_ALERT_2_TIMEOUT = 9.
+    self._VISION_POLICY_ALERT_3_TIMEOUT = 18.
 
     self._TIMEOUT_RECOVERY_FACTOR_MAX = 5.
     self._TIMEOUT_RECOVERY_FACTOR_MIN = 1.25
@@ -40,14 +40,14 @@ class DRIVER_MONITOR_SETTINGS:
     self._MAX_TERMINAL_DURATION = int(30 / DT_DMON)  # not allowed to engage after 30s of terminal alerts
 
     self._FACE_THRESHOLD = 0.7
-    self._EYE_THRESHOLD = 0.55
-    self._BLINK_THRESHOLD = 0.65
+    self._EYE_THRESHOLD = 0.70
+    self._BLINK_THRESHOLD = 0.90
     self._PHONE_THRESH = 0.5
-    self._POSE_PITCH_THRESHOLD = 0.36
-    self._POSE_PITCH_THRESHOLD_SLACK = 0.38
+    self._POSE_PITCH_THRESHOLD = 0.40
+    self._POSE_PITCH_THRESHOLD_SLACK = 0.42
     self._POSE_PITCH_THRESHOLD_STRICT = self._POSE_PITCH_THRESHOLD
-    self._POSE_YAW_THRESHOLD = 0.46
-    self._POSE_YAW_THRESHOLD_SLACK = 0.55
+    self._POSE_YAW_THRESHOLD = 0.52
+    self._POSE_YAW_THRESHOLD_SLACK = 0.60
     self._POSE_YAW_THRESHOLD_STRICT = self._POSE_YAW_THRESHOLD
     self._POSE_YAW_MIN_STEER_DEG = 30
     self._POSE_YAW_STEER_FACTOR = 0.15
@@ -67,7 +67,7 @@ class DRIVER_MONITOR_SETTINGS:
     self._DCAM_UNCERTAIN_RESET_COUNT = int(2  / DT_DMON)
     self._HI_STD_THRESHOLD = 0.3
     self._HI_STD_FALLBACK_TIME = int(10  / DT_DMON)  # fall back to wheel touch if model is uncertain for 10s
-    self._DISTRACTED_FILTER_TS = 0.40  # reduce short false-positive spikes
+    self._DISTRACTED_FILTER_TS = 0.50  # reduce short false-positive spikes
 
     self._POSE_CALIB_MIN_SPEED = 13  # 30 mph
     self._POSE_OFFSET_MIN_COUNT = int(60 / DT_DMON)  # valid data counts before calibration completes, 1min cumulative
