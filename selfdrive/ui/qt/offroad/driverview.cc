@@ -80,7 +80,7 @@ void drawDriverMonitoringPanel(QPainter &p, const QRect &surface_rect,
   p.drawText(QRect(x, y, panel_width - 48, line_height), Qt::AlignLeft | Qt::AlignVCenter, "Driver Monitoring");
   y += line_height + 8;
 
-  auto draw_line = [&](const QString &text, const QColor &color = normal_color) {
+  auto draw_line = [&](const QString &text, const QColor &color) {
     p.setFont(InterFont(25, QFont::Medium));
     p.setPen(color);
     p.drawText(QRect(x, y, panel_width - 48, line_height), Qt::AlignLeft | Qt::AlignVCenter, text);
@@ -106,11 +106,13 @@ void drawDriverMonitoringPanel(QPainter &p, const QRect &surface_rect,
   draw_line(QString("FaceProb %1   EyesVisible %2   EyesClosed %3")
               .arg(prob(driver_data.getFaceProb()))
               .arg(prob(driver_data.getEyesVisibleProb()))
-              .arg(prob(driver_data.getEyesClosedProb())));
+              .arg(prob(driver_data.getEyesClosedProb())),
+            normal_color);
   draw_line(QString("Pitch %1   Yaw %2   Uncertainty %3")
               .arg(prob(pose.getPitch()))
               .arg(prob(pose.getYaw()))
-              .arg(prob(pose.getUncertainty())));
+              .arg(prob(pose.getUncertainty())),
+            normal_color);
 
   p.restore();
 }
