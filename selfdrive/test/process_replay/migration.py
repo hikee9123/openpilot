@@ -1,5 +1,6 @@
 from collections import defaultdict
 from collections.abc import Callable
+from typing import cast
 import capnp
 import functools
 import traceback
@@ -38,6 +39,7 @@ def migrate_all(lr: LogIterable, manager_states: bool = False, panda_states: boo
     migrate_controlsState,
     migrate_carState,
     migrate_liveLocationKalman,
+    migrate_livePose,
     migrate_liveTracks,
     migrate_driverAssistance,
     migrate_drivingModelData,
@@ -67,7 +69,7 @@ def migrate(lr: LogIterable, migration_funcs: list[MigrationFunc]):
     if migration.product in grouped: # skip if product already exists
       continue
 
-    sorted_indices = sorted(ii for i in migration.inputs for ii in grouped[i])
+    sorted_indices = sorted(ii for i in cast(list[str], migration.inputs) for ii in grouped.get(i, []))
     msg_gen = [(i, lr[i]) for i in sorted_indices]
     r_ops, a_ops, d_ops = migration(msg_gen)
     replace_ops.extend(r_ops)
@@ -85,6 +87,10 @@ def migrate(lr: LogIterable, migration_funcs: list[MigrationFunc]):
   return lr
 
 
+def as_reader(builder) -> capnp.lib.capnp._DynamicStructReader:
+  return log.Event.from_bytes(builder.to_bytes()).__enter__()  # less memory than builder.as_reader()
+
+
 def migration(inputs: list[str], product: str|None=None):
   def decorator(func):
     @functools.wraps(func)
@@ -94,6 +100,17 @@ def migration(inputs: list[str], product: str|None=None):
     wrapper.product = product
     return wrapper
   return decorator
+
+
+def migrate_onroad_event(event: capnp.lib.capnp._DynamicStructReader):
+  event_dict = event.to_dict()
+  try:
+    return log.OnroadEvent(**event_dict)
+  except capnp.lib.capnp.KjException as e:
+    # Ignore legacy events the current schema no longer defines.
+    if "enum has no such enumerant" in str(e):
+      return None
+    raise
 
 
 @migration(inputs=["longitudinalPlan", "carParams"])
@@ -111,7 +128,7 @@ def migrate_longitudinalPlan(msgs):
     new_msg = msg.as_builder()
     a_target, should_stop = get_accel_from_plan(msg.longitudinalPlan.speeds, msg.longitudinalPlan.accels, CONTROL_N_T_IDX)
     new_msg.longitudinalPlan.aTarget, new_msg.longitudinalPlan.shouldStop = float(a_target), bool(should_stop)
-    ops.append((index, new_msg.as_reader()))
+    ops.append((index, as_reader(new_msg)))
   return ops, [], []
 
 
@@ -120,7 +137,7 @@ def migrate_driverAssistance(msgs):
   add_ops = []
   for _, msg in msgs:
     new_msg = messaging.new_message('driverAssistance', valid=True, logMonoTime=msg.logMonoTime)
-    add_ops.append(new_msg.as_reader())
+    add_ops.append(as_reader(new_msg))
   return [], add_ops, []
 
 
@@ -137,7 +154,7 @@ def migrate_drivingModelData(msgs):
       fill_lane_line_meta(dmd.drivingModelData.laneLineMeta, msg.modelV2.laneLines, msg.modelV2.laneLineProbs)
     if all(len(a) for a in [msg.modelV2.position.x, msg.modelV2.position.y, msg.modelV2.position.z]):
       fill_xyz_poly(dmd.drivingModelData.path, ModelConstants.POLY_PATH_DEGREE, msg.modelV2.position.x, msg.modelV2.position.y, msg.modelV2.position.z)
-    add_ops.append( dmd.as_reader())
+    add_ops.append(as_reader(dmd))
   return [], add_ops, []
 
 
@@ -162,7 +179,7 @@ def migrate_liveTracks(msgs):
       pts.append(pt)
 
     new_msg.liveTracks.points = pts
-    ops.append((index, new_msg.as_reader()))
+    ops.append((index, as_reader(new_msg)))
   return ops, [], []
 
 
@@ -181,8 +198,13 @@ def migrate_liveLocationKalman(msgs):
       lp_field.valid = llk_field.valid
     for flag in ["inputsOK", "posenetOK", "sensorsOK"]:
       setattr(m.livePose, flag, getattr(msg.liveLocationKalmanDEPRECATED, flag))
-    ops.append((index, m.as_reader()))
+    ops.append((index, as_reader(m)))
   return ops, [], []
+
+
+@migration(inputs=["livePose"])
+def migrate_livePose(msgs):
+  return [], [], []
 
 
 @migration(inputs=["controlsState"], product="selfdriveState")
@@ -196,8 +218,8 @@ def migrate_controlsState(msgs):
     for field in ("enabled", "active", "state", "engageable", "alertText1", "alertText2",
                   "alertStatus", "alertSize", "alertType", "experimentalMode",
                   "personality"):
-      setattr(ss, field, getattr(msg.controlsState, field+"DEPRECATED"))
-    add_ops.append(m.as_reader())
+      setattr(ss, field, getattr(msg.controlsState.deprecated, field))
+    add_ops.append(as_reader(m))
   return [], add_ops, []
 
 
@@ -209,11 +231,11 @@ def migrate_carState(msgs):
     if msg.which() == 'controlsState':
       last_cs = msg
     elif msg.which() == 'carState' and last_cs is not None:
-      if last_cs.controlsState.vCruiseDEPRECATED - msg.carState.vCruise > 0.1:
+      if last_cs.controlsState.deprecated.vCruise - msg.carState.vCruise > 0.1:
         msg = msg.as_builder()
-        msg.carState.vCruise = last_cs.controlsState.vCruiseDEPRECATED
-        msg.carState.vCruiseCluster = last_cs.controlsState.vCruiseClusterDEPRECATED
-        ops.append((index, msg.as_reader()))
+        msg.carState.vCruise = last_cs.controlsState.deprecated.vCruise
+        msg.carState.vCruiseCluster = last_cs.controlsState.deprecated.vCruiseCluster
+        ops.append((index, as_reader(msg)))
   return ops, [], []
 
 
@@ -223,7 +245,7 @@ def migrate_managerState(msgs):
   for index, msg in msgs:
     new_msg = msg.as_builder()
     new_msg.managerState.processes = [{'name': name, 'running': True} for name in managed_processes]
-    ops.append((index, new_msg.as_reader()))
+    ops.append((index, as_reader(new_msg)))
   return ops, [], []
 
 
@@ -236,7 +258,7 @@ def migrate_gpsLocation(msgs):
     # hasFix is a newer field
     if not g.hasFix and g.flags == 1:
       g.hasFix = True
-    ops.append((index, new_msg.as_reader()))
+    ops.append((index, as_reader(new_msg)))
   return ops, [], []
 
 
@@ -252,7 +274,7 @@ def migrate_deviceState(msgs):
     if msg.which() == 'deviceState':
       n = msg.as_builder()
       n.deviceState.deviceType = init_data.deviceType
-      ops.append((i, n.as_reader()))
+      ops.append((i, as_reader(n)))
   return ops, [], []
 
 
@@ -264,7 +286,7 @@ def migrate_carOutput(msgs):
     co.valid = msg.valid
     co.logMonoTime = msg.logMonoTime
     co.carOutput.actuatorsOutput = msg.carControl.actuatorsOutputDEPRECATED
-    add_ops.append(co.as_reader())
+    add_ops.append(as_reader(co))
   return [], add_ops, []
 
 
@@ -274,7 +296,7 @@ def migrate_pandaStates(msgs):
   safety_param_migration = {
     "TOYOTA_PRIUS": EPS_SCALE["TOYOTA_PRIUS"] | ToyotaSafetyFlags.STOCK_LONGITUDINAL,
     "TOYOTA_RAV4": EPS_SCALE["TOYOTA_RAV4"] | ToyotaSafetyFlags.ALT_BRAKE,
-    "KIA_EV6": HyundaiSafetyFlags.EV_GAS | HyundaiSafetyFlags.CANFD_LKA_STEERING,
+    "KIA_EV6": HyundaiSafetyFlags.EV_GAS | HyundaiSafetyFlags.CANFD_LKA_STEER_MSG,
     "CHEVROLET_VOLT": GMSafetyFlags.EV,
     "CHEVROLET_BOLT_EUV": GMSafetyFlags.EV | GMSafetyFlags.HW_CAM,
   }
@@ -302,13 +324,13 @@ def migrate_pandaStates(msgs):
       new_msg.logMonoTime = msg.logMonoTime
       new_msg.pandaStates[0] = msg.pandaStateDEPRECATED
       new_msg.pandaStates[0].safetyParam = safety_param
-      ops.append((index, new_msg.as_reader()))
+      ops.append((index, as_reader(new_msg)))
     elif msg.which() == 'pandaStates':
       new_msg = msg.as_builder()
       new_msg.pandaStates[-1].safetyParam = safety_param
       # Clear DISABLE_DISENGAGE_ON_GAS bit to fix controls mismatch
       new_msg.pandaStates[-1].alternativeExperience &= ~1
-      ops.append((index, new_msg.as_reader()))
+      ops.append((index, as_reader(new_msg)))
   return ops, [], []
 
 
@@ -323,7 +345,7 @@ def migrate_peripheralState(msgs):
     new_msg = messaging.new_message("peripheralState")
     new_msg.valid = msg.valid
     new_msg.logMonoTime = msg.logMonoTime
-    add_ops.append(new_msg.as_reader())
+    add_ops.append(as_reader(new_msg))
   return [], add_ops, []
 
 
@@ -378,7 +400,7 @@ def migrate_cameraStates(msgs):
     new_msg.valid = msg.valid
 
     del_ops.append(index)
-    add_ops.append(new_msg.as_reader())
+    add_ops.append(as_reader(new_msg))
   return [], add_ops, del_ops
 
 
@@ -390,7 +412,7 @@ def migrate_carParams(msgs):
     CP.carParams.carFingerprint = MIGRATION.get(CP.carParams.carFingerprint, CP.carParams.carFingerprint)
     for car_fw in CP.carParams.carFw:
       car_fw.brand = CP.carParams.brand
-    ops.append((index, CP.as_reader()))
+    ops.append((index, as_reader(CP)))
   return ops, [], []
 
 
@@ -425,7 +447,7 @@ def migrate_sensorEvents(msgs):
       m_dat.timestamp = evt.timestamp
       setattr(m_dat, evt.which(), getattr(evt, evt.which()))
 
-      add_ops.append(m.as_reader())
+      add_ops.append(as_reader(m))
     del_ops.append(index)
   return [], add_ops, del_ops
 
@@ -438,35 +460,56 @@ def migrate_onroadEvents(msgs):
     for event in msg.onroadEventsDEPRECATED:
       try:
         if not str(event.name).endswith('DEPRECATED'):
-          # dict converts name enum into string representation
-          onroadEvents.append(log.OnroadEvent(**event.to_dict()))
+          migrated_event = migrate_onroad_event(event)
+          if migrated_event is not None:
+            onroadEvents.append(migrated_event)
       except RuntimeError:  # Member was null
         traceback.print_exc()
 
-    new_msg = messaging.new_message('onroadEvents', len(msg.onroadEventsDEPRECATED))
+    new_msg = messaging.new_message('onroadEvents', len(onroadEvents))
     new_msg.valid = msg.valid
     new_msg.logMonoTime = msg.logMonoTime
     new_msg.onroadEvents = onroadEvents
-    ops.append((index, new_msg.as_reader()))
+    ops.append((index, as_reader(new_msg)))
 
   return ops, [], []
 
 
-@migration(inputs=["driverMonitoringState"])
+@migration(inputs=["driverMonitoringStateDEPRECATED"])
 def migrate_driverMonitoringState(msgs):
   ops = []
   for index, msg in msgs:
-    msg = msg.as_builder()
-    events = []
-    for event in msg.driverMonitoringState.eventsDEPRECATED:
-      try:
-        if not str(event.name).endswith('DEPRECATED'):
-          # dict converts name enum into string representation
-          events.append(log.OnroadEvent(**event.to_dict()))
-      except RuntimeError:  # Member was null
-        traceback.print_exc()
+    old = msg.driverMonitoringStateDEPRECATED
+    new_msg = messaging.new_message('driverMonitoringState', valid=msg.valid, logMonoTime=msg.logMonoTime)
+    dm = new_msg.driverMonitoringState
+    dm.isRHD = old.isRHD
+    dm.activePolicy = log.DriverMonitoringState.MonitoringPolicy.vision if old.isActiveMode else \
+                          log.DriverMonitoringState.MonitoringPolicy.wheeltouch
 
-    msg.driverMonitoringState.events = events
-    ops.append((index, msg.as_reader()))
+    AlertLevel = log.DriverMonitoringState.AlertLevel
+    event_to_alert_level = {
+      'driverDistracted1': AlertLevel.one, 'driverUnresponsive1': AlertLevel.one,
+      'driverDistracted2': AlertLevel.two, 'driverUnresponsive2': AlertLevel.two,
+      'driverDistracted3': AlertLevel.three, 'driverUnresponsive3': AlertLevel.three,
+      'tooDistracted': AlertLevel.three,
+    }
+    for event in old.events:
+      level = event_to_alert_level.get(str(event.name))
+      if level is not None:
+        dm.alertLevel = level
+        break
+
+    dm.visionPolicyState.awarenessPercent = int(max(0, min(100, (old.awarenessStatus if old.isActiveMode else old.awarenessActive) * 100)))
+    dm.visionPolicyState.awarenessStep = old.stepChange if old.isActiveMode else 0.
+    dm.visionPolicyState.isDistracted = old.isDistracted
+    dm.visionPolicyState.faceDetected = old.faceDetected
+    dm.visionPolicyState.pose.pitchCalib.offset = old.posePitchOffset
+    dm.visionPolicyState.pose.pitchCalib.calibratedPercent = int(min(100, old.posePitchValidCount / 600 * 100))
+    dm.visionPolicyState.pose.yawCalib.offset = old.poseYawOffset
+    dm.visionPolicyState.pose.yawCalib.calibratedPercent = int(min(100, old.poseYawValidCount / 600 * 100))
+    dm.visionPolicyState.pose.calibrated = old.posePitchValidCount >= 600 and old.poseYawValidCount >= 600
+    dm.wheeltouchPolicyState.awarenessPercent = int(max(0, min(100, (old.awarenessPassive if old.isActiveMode else old.awarenessStatus) * 100)))
+    dm.wheeltouchPolicyState.awarenessStep = 0. if old.isActiveMode else old.stepChange
+    ops.append((index, as_reader(new_msg)))
 
   return ops, [], []

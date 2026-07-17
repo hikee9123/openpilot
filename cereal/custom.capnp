@@ -38,6 +38,48 @@ struct NaviCustom @0xf35cc4560bbf6ec2 {
         currentRoadName @12 :Text;
         isNda2 @13 :Bool;
         cntIdx @14 :Int16;
+        osmRoadOverlayText @15 :Text;
+        osmRoadOverlay @16 :OsmRoadOverlay;
+
+        struct OsmRoadOverlay {
+            road @0 :Text;
+            bearing @1 :Float32;
+            roads @2 :List(OsmRoad);
+            predictionDistanceM @3 :Float32;
+            cameras @4 :List(OsmCamera);
+        }
+
+        struct OsmRoad {
+            roadId @0 :UInt64;
+            name @1 :Text;
+            highway @2 :Text;
+            x1 @3 :Float32;
+            y1 @4 :Float32;
+            x2 @5 :Float32;
+            y2 @6 :Float32;
+            current @7 :Bool;
+            predicted @8 :Bool;
+            history @9 :Bool;
+            fallback @10 :Bool;
+            assist @11 :Bool;
+        }
+
+        struct OsmCamera {
+            cameraId @0 :UInt64;
+            roadId @1 :UInt64;
+            cameraType @2 :Text;
+            speedLimitKph @3 :Int16;
+            x @4 :Float32;
+            y @5 :Float32;
+            matchDistanceM @6 :Float32;
+            matchConfidence @7 :Float32;
+            primaryMatch @8 :Bool;
+            bearingDeg @9 :Float32;
+            displayClass @10 :Text;
+            directionVerdict @11 :Text;
+            rejectReason @12 :Text;
+            signalCamera @13 :Bool;
+        }
     }
 }
 

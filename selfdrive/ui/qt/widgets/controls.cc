@@ -15,11 +15,14 @@ AbstractControl::AbstractControl(const QString &title, const QString &desc, cons
   icon_label = new QLabel(this);
   hlayout->addWidget(icon_label);
   if (!icon.isEmpty()) {
-    icon_pixmap = QPixmap(icon).scaledToWidth(80, Qt::SmoothTransformation);
-    icon_label->setPixmap(icon_pixmap);
-    icon_label->setSizePolicy(QSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed));
+    QPixmap pixmap(icon);
+    if (!pixmap.isNull()) {
+      icon_pixmap = pixmap.scaledToWidth(80, Qt::SmoothTransformation);
+      icon_label->setPixmap(icon_pixmap);
+      icon_label->setSizePolicy(QSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed));
+    }
   }
-  icon_label->setVisible(!icon.isEmpty());
+  icon_label->setVisible(!icon_pixmap.isNull());
 
   // title
   title_label = new QPushButton(title);

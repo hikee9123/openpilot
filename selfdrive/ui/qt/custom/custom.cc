@@ -2,23 +2,31 @@
 
 #include <cassert>
 #include <cmath>
+#include <memory>
 #include <string>
 #include <tuple>
 #include <vector>
 #include <cstdlib>
+#include <cstdio>
 #include <algorithm>   // std::clamp
 
+#include <QMouseEvent>
 #include <QTabWidget>
+#include <QTabBar>
+#include <QWheelEvent>
 #include <QObject>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
 #include <QDir>
+#include <QDirIterator>
 #include <QDateTime>
 #include <QDebug>
 #include <QFile>
 #include <QFileInfo>
+#include <QIODevice>
+#include <QCoreApplication>
 #include <QtConcurrent>
 #include <QVariant>
 #include <QHBoxLayout>
@@ -28,9 +36,12 @@
 #include <QToolButton>
 #include <QPropertyAnimation>
 #include <QFrame>
+#include <QStringList>
+#include <QStorageInfo>
 
 #include "common/params.h"
 #include "common/util.h"
+#include "system/hardware/hw.h"
 
 #include "selfdrive/ui/qt/util.h"
 #include "selfdrive/ui/qt/custom/custom.h"
@@ -40,6 +51,96 @@
 // ======================================================================================
 namespace {
 constexpr double kEPS = 1e-9;
+constexpr const char *kOsmRoadsInstallSession = "osm_db_install";
+constexpr const char *kOsmSpeedCamerasSession = "osm_speed_cameras_update";
+constexpr qint64 kLogStorageRefreshIntervalMs = 30000;
+
+struct LogStorageStats {
+  qint64 saved_bytes = 0;
+  qint64 available_bytes = -1;
+  qint64 total_bytes = -1;
+  int saved_segments = 0;
+};
+
+static QString formatBytes(qint64 bytes) {
+  if (bytes < 0) return QObject::tr("Unknown");
+  double value = static_cast<double>(bytes);
+  const QStringList units = {"B", "KB", "MB", "GB", "TB"};
+  int unit = 0;
+  while (value >= 1024.0 && unit < units.size() - 1) {
+    value /= 1024.0;
+    unit++;
+  }
+  return unit == 0 ? QString("%1 %2").arg(bytes).arg(units[unit])
+                   : QString("%1 %2").arg(value, 0, 'f', 1).arg(units[unit]);
+}
+
+static bool hasLockFile(const QString &path) {
+  return !QDir(path).entryList(QStringList() << "*.lock", QDir::Files).isEmpty();
+}
+
+static bool isRouteLogSegment(const QFileInfo &entry) {
+  const QString name = entry.fileName();
+  return entry.isDir() && name.contains("--") && name != "boot" && name != "crash";
+}
+
+static bool isCurrentRouteSegment(const QString &name, const QString &current_route) {
+  return !current_route.isEmpty() && name.startsWith(current_route + "--");
+}
+
+static qint64 directorySizeBytes(const QString &path) {
+  qint64 total = 0;
+  QDirIterator it(path, QDir::Files | QDir::NoSymLinks, QDirIterator::Subdirectories);
+  while (it.hasNext()) {
+    it.next();
+    total += it.fileInfo().size();
+  }
+  return total;
+}
+
+static QStringList collectDeletableRouteLogDirs(const QString &log_root, const QString &current_route,
+                                                qint64 *bytes = nullptr, int *segments = nullptr) {
+  QStringList paths;
+  if (bytes) *bytes = 0;
+  if (segments) *segments = 0;
+
+  const QFileInfo root_info(log_root);
+  if (!root_info.exists() || !root_info.isDir()) return paths;
+
+  const QFileInfoList entries = QDir(log_root).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+  for (const QFileInfo &entry : entries) {
+    const QString name = entry.fileName();
+    if (!isRouteLogSegment(entry) || isCurrentRouteSegment(name, current_route) || hasLockFile(entry.absoluteFilePath())) {
+      continue;
+    }
+
+    paths.append(entry.absoluteFilePath());
+    if (segments) (*segments)++;
+    if (bytes) (*bytes) += directorySizeBytes(entry.absoluteFilePath());
+  }
+  return paths;
+}
+
+static LogStorageStats collectLogStorageStats(const QString &log_root) {
+  LogStorageStats stats;
+  QStorageInfo storage(log_root);
+  storage.refresh();
+  if (storage.isValid() && storage.bytesTotal() > 0) {
+    stats.available_bytes = storage.bytesAvailable();
+    stats.total_bytes = storage.bytesTotal();
+  }
+
+  const QFileInfo root_info(log_root);
+  if (!root_info.exists() || !root_info.isDir()) return stats;
+
+  const QFileInfoList entries = QDir(log_root).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+  for (const QFileInfo &entry : entries) {
+    if (!isRouteLogSegment(entry)) continue;
+    stats.saved_segments++;
+    stats.saved_bytes += directorySizeBytes(entry.absoluteFilePath());
+  }
+  return stats;
+}
 
 // 버튼 공통 스타일(중복 제거)
 static const char *kRoundBtnStyle = R"(
@@ -76,7 +177,90 @@ static const char *kTabStyle = R"(
     background: black;
     color: white;
   }
+  QTabBar QToolButton {
+    min-width: 92px;
+    min-height: 64px;
+    margin: 2px;
+    border: 1px solid #666;
+    border-radius: 4px;
+    background-color: #393939;
+  }
+  QTabBar QToolButton:pressed {
+    background-color: #4a4a4a;
+  }
 )";
+
+class SwipeableTabBar : public QTabBar {
+public:
+  explicit SwipeableTabBar(QWidget *parent = nullptr) : QTabBar(parent) {
+    setUsesScrollButtons(true);
+    setExpanding(false);
+    setElideMode(Qt::ElideNone);
+  }
+
+protected:
+  void mousePressEvent(QMouseEvent *event) override {
+    dragStartPos = event->pos();
+    dragSwitched = false;
+    QTabBar::mousePressEvent(event);
+  }
+
+  void mouseMoveEvent(QMouseEvent *event) override {
+    const int dx = event->pos().x() - dragStartPos.x();
+    if (std::abs(dx) >= kSwipeThresholdPx) {
+      stepCurrentTab(dx < 0 ? 1 : -1);
+      dragStartPos = event->pos();
+      dragSwitched = true;
+      event->accept();
+      return;
+    }
+    QTabBar::mouseMoveEvent(event);
+  }
+
+  void mouseReleaseEvent(QMouseEvent *event) override {
+    if (dragSwitched) {
+      dragSwitched = false;
+      event->accept();
+      return;
+    }
+    QTabBar::mouseReleaseEvent(event);
+  }
+
+  void wheelEvent(QWheelEvent *event) override {
+    const QPoint delta = event->angleDelta();
+    if (!delta.isNull()) {
+      const int step = std::abs(delta.x()) > std::abs(delta.y()) ? -delta.x() : -delta.y();
+      if (step != 0) {
+        stepCurrentTab(step > 0 ? 1 : -1);
+        event->accept();
+        return;
+      }
+    }
+    QTabBar::wheelEvent(event);
+  }
+
+private:
+  void stepCurrentTab(int step) {
+    if (count() <= 0) {
+      return;
+    }
+    const int next = std::clamp(currentIndex() + step, 0, count() - 1);
+    if (next != currentIndex()) {
+      setCurrentIndex(next);
+    }
+  }
+
+  static constexpr int kSwipeThresholdPx = 90;
+  QPoint dragStartPos;
+  bool dragSwitched = false;
+};
+
+class SwipeableTabWidget : public QTabWidget {
+public:
+  explicit SwipeableTabWidget(QWidget *parent = nullptr) : QTabWidget(parent) {
+    setTabBar(new SwipeableTabBar(this));
+  }
+};
 
 inline void applyListWidgetBaseStyle(QWidget *w) {
   w->setStyleSheet(R"(
@@ -105,6 +289,128 @@ inline int decimalsFor(double step) {
     scale *= 10.0;
   }
   return 8;  // 안전한 fallback
+}
+
+static QString shellQuote(const QString &value) {
+  QString escaped = value;
+  escaped.replace("'", "'\\''");
+  return "'" + escaped + "'";
+}
+
+static QString osmRoadsNavdRoot() {
+  return QDir("/data/params/d").exists()
+      ? QString("/data/navd")
+      : QDir::home().absoluteFilePath(".comma/navd");
+}
+
+static QString osmRoadsNavdTmpRoot(bool ensure_dir = false) {
+  const QString navdTmpRoot = QDir(osmRoadsNavdRoot()).absoluteFilePath("tmp");
+  if (ensure_dir) {
+    QDir().mkpath(navdTmpRoot);
+  }
+  return navdTmpRoot;
+}
+
+static QString osmRoadsNavdSourceRoot(bool ensure_dir = false) {
+  const QString navdSourceRoot = QDir(osmRoadsNavdRoot()).absoluteFilePath("source");
+  if (ensure_dir) {
+    QDir().mkpath(navdSourceRoot);
+  }
+  return navdSourceRoot;
+}
+
+static QString osmRoadsNavdLogRoot(bool ensure_dir = false) {
+  const QString navdLogRoot = QDir(osmRoadsNavdRoot()).absoluteFilePath("logs");
+  if (ensure_dir) {
+    QDir().mkpath(navdLogRoot);
+  }
+  return navdLogRoot;
+}
+
+static QString osmRoadsInstalledDbPath() {
+  return QDir(QDir(osmRoadsNavdRoot()).absoluteFilePath("db")).absoluteFilePath("osm_roads_kr.sqlite3");
+}
+
+static QString osmRoadsInstallLogPath(bool ensure_dir = false) {
+  return QDir(osmRoadsNavdLogRoot(ensure_dir)).absoluteFilePath("osm_roads_install.log");
+}
+
+static QString osmSpeedCamerasLogPath(bool ensure_dir = false) {
+  return QDir(osmRoadsNavdLogRoot(ensure_dir)).absoluteFilePath("osm_speed_cameras_update.log");
+}
+
+static QString osmSpeedCamerasCsvPath(bool ensure_dir = false) {
+  return QDir(osmRoadsNavdSourceRoot(ensure_dir)).absoluteFilePath("speed_cameras.csv");
+}
+
+static QString osmRoadsTmpRepoPath() {
+  return QDir(osmRoadsNavdTmpRoot()).absoluteFilePath("osm_roads_git_db/repo");
+}
+
+static QString osmRoadsTmpDbPath() {
+  return QDir(osmRoadsTmpRepoPath()).absoluteFilePath("db/osm_roads_kr.sqlite3");
+}
+
+static bool osmRoadsInstallSessionActive() {
+  return QProcess::execute("bash", {"-lc", QString("command -v tmux >/dev/null && tmux has-session -t %1 2>/dev/null").arg(kOsmRoadsInstallSession)}) == 0;
+}
+
+static void stopOsmRoadsInstallSession() {
+  QProcess::execute("bash", {"-lc", QString("command -v tmux >/dev/null && tmux kill-session -t %1 2>/dev/null || true").arg(kOsmRoadsInstallSession)});
+}
+
+static bool osmSpeedCamerasSessionActive() {
+  return QProcess::execute("bash", {"-lc", QString("command -v tmux >/dev/null && tmux has-session -t %1 2>/dev/null").arg(kOsmSpeedCamerasSession)}) == 0;
+}
+
+static void stopOsmSpeedCamerasSession() {
+  QProcess::execute("bash", {"-lc", QString("command -v tmux >/dev/null && tmux kill-session -t %1 2>/dev/null || true").arg(kOsmSpeedCamerasSession)});
+}
+
+static QString formatOsmRoadsBytes(qint64 size_bytes) {
+  double value = static_cast<double>(std::max<qint64>(0, size_bytes));
+  const QStringList units = {"B", "KB", "MB", "GB"};
+  for (const QString &unit : units) {
+    if (value < 1024.0 || unit == "GB") {
+      return unit == "B" ? QString("%1 B").arg(static_cast<qint64>(value)) : QString("%1 %2").arg(value, 0, 'f', 1).arg(unit);
+    }
+    value /= 1024.0;
+  }
+  return QString("%1 GB").arg(value, 0, 'f', 1);
+}
+
+static QString osmRoadsFileDetail(const QString &label, const QString &path) {
+  const QFileInfo info(path);
+  if (!info.exists()) {
+    return QString();
+  }
+  const QString modified = info.lastModified().toString("yyyy-MM-dd HH:mm");
+  return QString("%1 %2 (%3, %4)").arg(label, path, formatOsmRoadsBytes(info.size()), modified);
+}
+
+static qint64 osmRoadsLfsPointerSize() {
+  QFile file(osmRoadsTmpDbPath());
+  if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    return 0;
+  }
+  while (!file.atEnd()) {
+    const QByteArray line = file.readLine().trimmed();
+    if (line.startsWith("size ")) {
+      bool ok = false;
+      const qint64 size = QString::fromUtf8(line.mid(5)).toLongLong(&ok);
+      return ok ? size : 0;
+    }
+  }
+  return 0;
+}
+
+static qint64 osmRoadsLfsIncompleteSize() {
+  const QDir incompleteDir(QDir(osmRoadsTmpRepoPath()).absoluteFilePath(".git/lfs/incomplete"));
+  qint64 largest = 0;
+  for (const QFileInfo &file : incompleteDir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot)) {
+    largest = std::max(largest, file.size());
+  }
+  return largest;
 }
 
 } // namespace
@@ -387,7 +693,7 @@ CustomPanel::CustomPanel(SettingsWindow *parent) : QWidget(parent) {
   };
 
   // 탭 위젯
-  auto *tabWidget = new QTabWidget(this);
+  auto *tabWidget = new SwipeableTabWidget(this);
   tabWidget->setStyleSheet(kTabStyle);
   for (auto &[name, panel] : panels) {
     panel->setContentsMargins(50, 25, 50, 25);
@@ -665,7 +971,72 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
 
   auto *logSec = new CollapsibleSection(tr("Logging"), this);
   addItem(logSec);
-  logSec->addWidget(new ParamControl("EnableLogging", tr("Enable logging"), tr("Record runtime logs"), kIcon, this));
+  logSec->addWidget(new ParamControl(
+      "LogCaptureEnabled",
+      tr("Runtime logging"),
+      tr("Record driving logs under the log root, including rlog, qlog, and camera files."),
+      kIcon,
+      this));
+  logSec->addWidget(new ParamControl(
+      "LogUploadEnabled",
+      tr("Upload logs"),
+      tr("Run the uploader for completed logs when the device is registered and network policy allows uploads."),
+      kIcon,
+      this));
+  logSec->addWidget(new ParamControl(
+      "LogAutoCleanupEnabled",
+      tr("Auto cleanup old logs"),
+      tr("Run the log cleanup process to protect storage when old route logs accumulate."),
+      kIcon,
+      this));
+  logSec->addWidget(new ParamControl(
+      "RecordFront",
+      tr("Record and Upload Driver Camera"),
+      tr("Record driver camera data for upload according to the uploader and network settings."),
+      kIcon,
+      this));
+  logSec->addWidget(new ParamControl(
+      "RecordAudio",
+      tr("Record Microphone Audio"),
+      tr("Record microphone audio while driving and include it in route media when available."),
+      kIcon,
+      this));
+
+  auto *uploadCurrentRoute = new ButtonControl(
+      tr("Upload current route"),
+      tr("MARK"),
+      tr("Add the current route to the upload request list. The uploader still respects registration and network policy."),
+      this);
+  QObject::connect(uploadCurrentRoute, &ButtonControl::clicked, this, &CommunityTab::markCurrentRouteForUpload);
+  logSec->addWidget(uploadCurrentRoute);
+
+  m_deleteLogsButton = new ButtonControl(
+      tr("Delete local route logs"),
+      tr("DELETE"),
+      tr("Delete completed local route logs when upload is disabled. Boot, crash, active recording, and current route logs are kept."),
+      this);
+  QObject::connect(m_deleteLogsButton, &ButtonControl::clicked, this, &CommunityTab::deleteLocalRouteLogs);
+  logSec->addWidget(m_deleteLogsButton);
+
+  m_loggerStatus = new LabelControl(tr("Logger status"), "", tr("Current loggerd process state."), this);
+  m_uploaderStatus = new LabelControl(tr("Uploader status"), "", tr("Current uploader process state."), this);
+  m_deleterStatus = new LabelControl(tr("Cleanup status"), "", tr("Current log cleanup process state."), this);
+  m_routeStatus = new LabelControl(tr("Current route"), "", tr("Route that can be marked for upload while logging is active."), this);
+  m_logPathStatus = new LabelControl(tr("Log path"), "", tr("Root directory used for route logs."), this);
+  m_savedLogsStatus = new LabelControl(tr("Saved logs"), "", tr("Total size and count of locally stored route log segments."), this);
+  m_recordingSpaceStatus = new LabelControl(tr("Recording space"), "", tr("Available filesystem space for future route logs."), this);
+  logSec->addWidget(m_loggerStatus);
+  logSec->addWidget(m_uploaderStatus);
+  logSec->addWidget(m_deleterStatus);
+  logSec->addWidget(m_routeStatus);
+  logSec->addWidget(m_logPathStatus);
+  logSec->addWidget(m_savedLogsStatus);
+  logSec->addWidget(m_recordingSpaceStatus);
+
+  QObject::connect(uiState(), &UIState::uiUpdate, this, [this](const UIState &) {
+    if (isVisible()) refreshLogStatus();
+  });
+  refreshLogStatus();
 
   // CruiseMode ↔ CruiseGap 의존성
   auto syncCruiseGapEnabled = [this]() {
@@ -708,7 +1079,151 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
   applyListWidgetBaseStyle(this);
 }
 
-void CommunityTab::showEvent(QShowEvent *event) { QWidget::showEvent(event); }
+QString CommunityTab::managerProcessStatus(const char *name) const {
+  UIState *s = uiState();
+  if (!s || !s->sm || !s->sm->alive("managerState")) {
+    return tr("Unknown");
+  }
+
+  for (auto proc : (*s->sm)["managerState"].getManagerState().getProcesses()) {
+    if (proc.getName() == name) {
+      return proc.getRunning() ? tr("Running") : tr("Stopped");
+    }
+  }
+  return tr("Unavailable");
+}
+
+void CommunityTab::deleteLocalRouteLogs() {
+  Params params;
+  if (params.getBool("LogUploadEnabled")) {
+    ConfirmationDialog::alert(tr("Disable Upload logs before deleting local route logs."), this);
+    return;
+  }
+
+  UIState *s = uiState();
+  if (s && s->scene.started) {
+    ConfirmationDialog::alert(tr("Stop driving before deleting local route logs."), this);
+    return;
+  }
+
+  const QString logRoot = QString::fromStdString(Path::log_root());
+  const QString currentRoute = QString::fromStdString(params.get("CurrentRoute")).trimmed();
+  qint64 deleteBytes = 0;
+  int deleteSegments = 0;
+  const QStringList deletePaths = collectDeletableRouteLogDirs(logRoot, currentRoute, &deleteBytes, &deleteSegments);
+  if (deletePaths.isEmpty()) {
+    ConfirmationDialog::alert(tr("No completed local route logs are available to delete."), this);
+    refreshLogStorageStats(true);
+    return;
+  }
+
+  const QString prompt = tr(
+      "Delete local route logs?\n\n"
+      "Upload is disabled.\n"
+      "This will delete %1 from %2 completed route segments under:\n%3\n\n"
+      "Deleted logs cannot be uploaded later.\n"
+      "Boot, crash, active recording, and current route logs will be kept.")
+      .arg(formatBytes(deleteBytes))
+      .arg(deleteSegments)
+      .arg(logRoot);
+  if (!ConfirmationDialog::confirm(prompt, tr("Delete"), this)) {
+    return;
+  }
+
+  int deleted = 0;
+  int failed = 0;
+  qint64 deletedBytes = 0;
+  for (const QString &path : deletePaths) {
+    const qint64 pathBytes = directorySizeBytes(path);
+    if (QDir(path).removeRecursively()) {
+      deleted++;
+      deletedBytes += pathBytes;
+    } else {
+      failed++;
+    }
+  }
+
+  ConfirmationDialog::alert(
+      tr("Deleted %1 route segments (%2). Failed: %3.")
+      .arg(deleted)
+      .arg(formatBytes(deletedBytes))
+      .arg(failed),
+      this);
+  refreshLogStorageStats(true);
+  refreshLogStatus();
+}
+
+void CommunityTab::markCurrentRouteForUpload() {
+  Params params;
+  const QString currentRoute = QString::fromStdString(params.get("CurrentRoute")).trimmed();
+  if (currentRoute.isEmpty()) {
+    ConfirmationDialog::alert(tr("No current route is available yet."), this);
+    refreshLogStatus();
+    return;
+  }
+
+  QStringList routes = QString::fromStdString(params.get("AthenadRecentlyViewedRoutes")).split(",", QString::SkipEmptyParts);
+  routes.removeAll(currentRoute);
+  routes.append(currentRoute);
+  while (routes.size() > 10) {
+    routes.removeFirst();
+  }
+  params.put("AthenadRecentlyViewedRoutes", routes.join(",").toStdString());
+
+  ConfirmationDialog::alert(tr("Current route marked for upload."), this);
+  refreshLogStatus();
+}
+
+void CommunityTab::refreshLogStorageStats(bool force) {
+  if (!m_savedLogsStatus || !m_recordingSpaceStatus) {
+    return;
+  }
+
+  const qint64 now = QDateTime::currentMSecsSinceEpoch();
+  if (!force && m_lastLogStorageRefreshMs > 0 && now - m_lastLogStorageRefreshMs < kLogStorageRefreshIntervalMs) {
+    return;
+  }
+  m_lastLogStorageRefreshMs = now;
+
+  const LogStorageStats stats = collectLogStorageStats(QString::fromStdString(Path::log_root()));
+  m_savedLogsStatus->setText(tr("%1 / %2 segments").arg(formatBytes(stats.saved_bytes)).arg(stats.saved_segments));
+
+  if (stats.available_bytes >= 0 && stats.total_bytes > 0) {
+    const double availablePercent = 100.0 * static_cast<double>(stats.available_bytes) / static_cast<double>(stats.total_bytes);
+    m_recordingSpaceStatus->setText(tr("%1 free / %2%")
+        .arg(formatBytes(stats.available_bytes))
+        .arg(availablePercent, 0, 'f', 0));
+  } else {
+    m_recordingSpaceStatus->setText(tr("Unknown"));
+  }
+}
+
+void CommunityTab::refreshLogStatus() {
+  if (!m_loggerStatus || !m_uploaderStatus || !m_deleterStatus || !m_routeStatus || !m_logPathStatus ||
+      !m_savedLogsStatus || !m_recordingSpaceStatus) {
+    return;
+  }
+
+  Params params;
+  const bool uploadEnabled = params.getBool("LogUploadEnabled");
+  m_loggerStatus->setText(params.getBool("LogCaptureEnabled") ? managerProcessStatus("loggerd") : tr("Disabled"));
+  m_uploaderStatus->setText(uploadEnabled ? managerProcessStatus("uploader") : tr("Disabled"));
+  m_deleterStatus->setText(params.getBool("LogAutoCleanupEnabled") ? managerProcessStatus("deleter") : tr("Disabled"));
+
+  const QString currentRoute = QString::fromStdString(params.get("CurrentRoute")).trimmed();
+  m_routeStatus->setText(currentRoute.isEmpty() ? tr("No active route") : currentRoute);
+  m_logPathStatus->setText(QString::fromStdString(Path::log_root()));
+  if (m_deleteLogsButton) {
+    UIState *s = uiState();
+    m_deleteLogsButton->setEnabled(!uploadEnabled && !(s && s->scene.started));
+  }
+  refreshLogStorageStats(false);
+}
+
+void CommunityTab::showEvent(QShowEvent *event) {
+  QWidget::showEvent(event);
+  refreshLogStatus();
+}
 void CommunityTab::hideEvent(QHideEvent *event) { QWidget::hideEvent(event); }
 
 // ======================================================================================
@@ -762,17 +1277,31 @@ void GitTab::hideEvent(QHideEvent *event) { QWidget::hideEvent(event); }
 // ======================================================================================
 static inline QString detectOpenpilotRoot()
 {
-    // 1) 기기(AGNOS/Android) 경로가 실제로 있는지 먼저 확인
-    if (QFileInfo::exists("/data/openpilot"))
-        return "/data";
+    auto isRepoRoot = [](const QString &path) {
+      const QDir dir(path);
+      return QFileInfo::exists(dir.filePath("selfdrive/modeld/model_make.py")) &&
+             QFileInfo::exists(dir.filePath("selfdrive/ui/qt/custom/script/model_make.sh"));
+    };
 
-    // 2) 개발 PC 기본 경로
-    QString pc = QDir::homePath();// + "/openpilot";
-    if (QFileInfo::exists(pc))
-        return pc;
+    const QString envRoot = qEnvironmentVariable("OPENPILOT_ROOT");
+    if (!envRoot.isEmpty() && isRepoRoot(envRoot)) return QDir(envRoot).absolutePath();
 
-    // 3) 마지막 fallback: 홈 디렉터리
-    return QDir::homePath();
+    const QStringList candidates = {
+      "/data/openpilot",
+      QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../.."),
+      QDir::currentPath(),
+      QDir::home().filePath("openpilot"),
+    };
+
+    for (const QString &candidate : candidates) {
+      QDir dir(candidate);
+      for (int i = 0; i < 6; ++i) {
+        if (isRepoRoot(dir.absolutePath())) return dir.absolutePath();
+        if (!dir.cdUp()) break;
+      }
+    }
+
+    return "/data/openpilot";
 }
 
 struct ModelCompileStatus {
@@ -783,27 +1312,43 @@ struct ModelCompileStatus {
   QString backend;
 };
 
+static int modelNumberPrefix(const QString &modelName)
+{
+  bool ok = false;
+  const int value = modelName.section('.', 0, 0).toInt(&ok);
+  return ok ? value : -1;
+}
+
 static QStringList modelOptions()
 {
-  return {
-    "11.POP_Model",
-    "10.CD210_Model",
-    "9.WMI_Model",
-    "8.SC_Driving",
-    "7.MacroStiff_Model",
-    "6.Dark_Souls_2",
-    "5.North_Nevada",
-    "4.The_Cool_Peoples",
-    "3.Firehose",
-    "2.Steam_Powered",
-    "1.default",
-  };
+  QStringList options;
+  QDir root(detectOpenpilotRoot());
+  QDir supercombos(root.filePath("selfdrive/modeld/models/supercombos"));
+  const QFileInfoList bundles = supercombos.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+  for (const QFileInfo &bundle : bundles) {
+    const QDir dir(bundle.absoluteFilePath());
+    const QString modelName = bundle.fileName();
+    if (!options.contains(modelName) &&
+        QFileInfo::exists(dir.filePath("driving_vision.onnx")) &&
+        QFileInfo::exists(dir.filePath("driving_policy.onnx"))) {
+      options.append(modelName);
+    }
+  }
+
+  std::sort(options.begin(), options.end(), [](const QString &a, const QString &b) {
+    const int aPrefix = modelNumberPrefix(a);
+    const int bPrefix = modelNumberPrefix(b);
+    if (aPrefix >= 0 && bPrefix >= 0 && aPrefix != bPrefix) return aPrefix > bPrefix;
+    return QString::localeAwareCompare(a, b) < 0;
+  });
+
+  options.append("1.default");
+  return options;
 }
 
 static QString modeldRootPath()
 {
   QDir root(detectOpenpilotRoot());
-  root.cd("openpilot");
   return root.filePath("selfdrive/modeld");
 }
 
@@ -813,9 +1358,66 @@ static QString modelBundlePath(const QString &modelName)
   return modeld.filePath("models/supercombos/" + modelName);
 }
 
+static QString modelMetadataValue(const QString &modelName, const QString &key)
+{
+  const QDir bundle(modelBundlePath(modelName));
+  QFile file(bundle.filePath("model.json"));
+  if (!file.open(QIODevice::ReadOnly)) return QString();
+
+  const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+  if (!doc.isObject()) return QString();
+  return doc.object().value(key).toString().trimmed();
+}
+
+static QString modelDisplayName(const QString &modelName)
+{
+  if (modelName == "1.default") return modelName;
+  const QString displayName = modelMetadataValue(modelName, "name");
+  return displayName.isEmpty() ? modelName : displayName;
+}
+
+static QString modelDescriptionFromFolder(const QString &modelName)
+{
+  const QString jsonDescription = modelMetadataValue(modelName, "description");
+  if (!jsonDescription.isEmpty()) return jsonDescription;
+
+  QFile file(QDir(modelBundlePath(modelName)).filePath("description.txt"));
+  if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return QString();
+  return QString::fromUtf8(file.readAll()).trimmed();
+}
+
 static QString formatModelTime(const QDateTime &dt)
 {
   return dt.isValid() ? dt.toLocalTime().toString("yyyy-MM-dd HH:mm") : QString();
+}
+
+static QString formatModelTimestamp(const QString &value)
+{
+  if (value.isEmpty()) return QString();
+  QDateTime dt = QDateTime::fromString(value, Qt::ISODate);
+  if (!dt.isValid()) dt = QDateTime::fromString(value, "yyyy-MM-ddTHH:mm:ssZ");
+  return dt.isValid() ? formatModelTime(dt) : value;
+}
+
+static QString modelUpdatedAt(const QString &modelName)
+{
+  if (modelName.isEmpty() || modelName == "1.default") return QString();
+
+  QString updatedAt = formatModelTimestamp(modelMetadataValue(modelName, "source_date"));
+  if (!updatedAt.isEmpty()) return updatedAt;
+
+  updatedAt = formatModelTimestamp(modelMetadataValue(modelName, "updated_at"));
+  if (!updatedAt.isEmpty()) return updatedAt;
+
+  const QDir bundle(modelBundlePath(modelName));
+  const QFileInfo visionOnnx(bundle.filePath("driving_vision.onnx"));
+  const QFileInfo policyOnnx(bundle.filePath("driving_policy.onnx"));
+  QDateTime modelTime;
+  if (visionOnnx.exists()) modelTime = visionOnnx.lastModified();
+  if (policyOnnx.exists() && (!modelTime.isValid() || policyOnnx.lastModified() > modelTime)) {
+    modelTime = policyOnnx.lastModified();
+  }
+  return formatModelTime(modelTime);
 }
 
 static QString currentModelBackend()
@@ -928,25 +1530,16 @@ static QString modelStatusSummary(const QString &modelName)
 
 static QString modelSelectionLabel(const QString &modelName)
 {
-  return modelName + "    " + modelStatusSummary(modelName);
+  const QString displayName = modelDisplayName(modelName);
+  const QString title = displayName == modelName ? modelName : displayName + " (" + modelName + ")";
+  return title + "    " + modelStatusSummary(modelName);
 }
 
 static QString modelDescription(const QString &modelName)
 {
-  static const QMap<QString, QString> descriptions = {
-    {"11.POP_Model", "Progressive control profile for confident longitudinal response"},
-    {"10.CD210_Model", "Comfort-oriented profile tuned for smoother everyday driving"},
-    {"9.WMI_Model", "Balanced experimental profile for natural lane keeping"},
-    {"8.SC_Driving", "Smooth steering profile with calm corrections"},
-    {"7.MacroStiff_Model", "Stable high-speed profile with firm path tracking"},
-    {"6.Dark_Souls_2", "Fast response profile with controlled stability"},
-    {"5.North_Nevada", "Natural and stable profile for relaxed driving"},
-    {"4.The_Cool_Peoples", "Responsive profile with sharper lateral behavior"},
-    {"3.Firehose", "Smooth profile with quick reaction timing"},
-    {"2.Steam_Powered", "Custom driving model profile"},
-    {"1.default", "Built-in comma model"},
-  };
-  return descriptions.value(modelName, "Custom driving model profile");
+  if (modelName == "1.default") return "Built-in comma model";
+  const QString description = modelDescriptionFromFolder(modelName);
+  return description.isEmpty() ? "Custom driving model profile" : description;
 }
 
 static QLabel *makeModelStatusLine(QWidget *parent, int fontSize, const QString &color)
@@ -1004,7 +1597,9 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
 
     const QString selectedLabel = MultiOptionDialog::getSelection(tr("Select a model"), items, currentLabel, this);
     const QString selection = modelByLabel.value(selectedLabel, selectedLabel);
-    if (selection.isEmpty() || selection == currentModel) return;
+    const ModelCompileStatus selectedStatus = getModelCompileStatus(selection);
+    const bool needsCompile = selection != "1.default" && selectedStatus.state != "Ready";
+    if (selection.isEmpty() || (selection == currentModel && !needsCompile)) return;
 
     Params params;
     const std::string prev = params.get("ActiveModelName");
@@ -1019,10 +1614,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
       return;
     }
 
-    //QDir root(QDir::homePath());
-    //QDir root("/data");
-    QDir  root(detectOpenpilotRoot());
-    root.cd("openpilot"); // ~/openpilot
+    QDir root(detectOpenpilotRoot());
     const QString modeldPath = root.filePath("selfdrive/modeld");
     const QString scriptPath = root.filePath("selfdrive/ui/qt/custom/script/model_make.sh");
 
@@ -1038,7 +1630,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
     changeModelButton->setEnabled(false);
     changeModelButton->setTitle(selection);
     changeModelButton->setText(tr("WAIT"));
-    changeModelButton->setDescription(selection);
+    changeModelButton->setDescription(needsCompile ? selectedStatus.state : selection);
     modelCompileStartedAt = QDateTime::currentMSecsSinceEpoch();
     modelCompilingName = selection;
     if (modelDescriptionLabel) modelDescriptionLabel->setText(modelDescription(selection));
@@ -1051,6 +1643,10 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
 
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert("WORKDIR", modeldPath);
+    const QString venvBin = root.filePath(".venv/bin");
+    if (QFileInfo::exists(venvBin)) {
+      env.insert("PATH", venvBin + ":" + env.value("PATH"));
+    }
     proc->setProcessEnvironment(env);
 
     connect(proc, &QProcess::readyReadStandardOutput, this, [this, proc]() {
@@ -1125,6 +1721,15 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
   });
 
   addItem(changeModelButton);
+
+  commaModelUpdateButton = new ButtonControl(
+      tr("Comma official model"), tr("CHECK"),
+      tr("Check commaai/openpilot for a new official driving model."));
+  QObject::connect(commaModelUpdateButton, &ButtonControl::clicked, this, [this]() {
+    runCommaModelUpdate(commaModelUpdateAvailable);
+  });
+  addItem(commaModelUpdateButton);
+
   modelStatusPanel = new QFrame(this);
   modelStatusPanel->setStyleSheet(R"(
     QFrame {
@@ -1152,6 +1757,92 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
   applyListWidgetBaseStyle(this);
 }
 
+void ModelTab::runCommaModelUpdate(bool apply)
+{
+  if (commaModelUpdateProcess && commaModelUpdateProcess->state() != QProcess::NotRunning) return;
+
+  QDir root(detectOpenpilotRoot());
+  const QString scriptPath = root.filePath("selfdrive/modeld/models/update_comma_model.py");
+  const QFileInfo script(scriptPath);
+  if (!script.exists() || !script.isFile()) {
+    commaModelUpdateButton->setTitle(tr("Script missing"));
+    commaModelUpdateButton->setText(tr("RETRY"));
+    commaModelUpdateButton->setDescription(scriptPath);
+    commaModelUpdateAvailable = false;
+    return;
+  }
+
+  const QString venvPython = root.filePath(".venv/bin/python");
+  const QString python = QFileInfo::exists(venvPython) ? venvPython : "python3";
+  QStringList args = {scriptPath, "--json"};
+  if (apply) args.append("--apply");
+
+  QProcess *proc = new QProcess(this);
+  commaModelUpdateProcess = proc;
+  commaModelUpdateButton->setEnabled(false);
+  commaModelUpdateButton->setText(apply ? tr("DOWN") : tr("WAIT"));
+  commaModelUpdateButton->setDescription(apply ? tr("Downloading official model") : tr("Checking official model"));
+  proc->setProgram(python);
+  proc->setArguments(args);
+  proc->setWorkingDirectory(root.absolutePath());
+
+  auto stdoutData = std::make_shared<QString>();
+  auto stderrData = std::make_shared<QString>();
+  connect(proc, &QProcess::readyReadStandardOutput, this, [proc, stdoutData]() {
+    *stdoutData += QString::fromUtf8(proc->readAllStandardOutput());
+  });
+  connect(proc, &QProcess::readyReadStandardError, this, [proc, stderrData]() {
+    *stderrData += QString::fromUtf8(proc->readAllStandardError());
+  });
+  connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+          this, [=](int code, QProcess::ExitStatus status) {
+    if (commaModelUpdateProcess == proc) commaModelUpdateProcess = nullptr;
+
+    if (status == QProcess::NormalExit && code == 0) {
+      const QJsonDocument doc = QJsonDocument::fromJson(stdoutData->trimmed().toUtf8());
+      const QJsonObject result = doc.object();
+      const QString resultStatus = result.value("status").toString();
+      const QString modelName = result.value("model_name").toString();
+      const QString folder = result.value("new_model_folder").toString();
+      const QString existing = result.value("existing_model").toString();
+
+      if (resultStatus == "new") {
+        commaModelUpdateAvailable = true;
+        commaModelUpdateFolder = folder;
+        commaModelUpdateButton->setTitle(modelName.isEmpty() ? tr("New comma model") : modelName);
+        commaModelUpdateButton->setText(tr("INSTALL"));
+        commaModelUpdateButton->setDescription(folder);
+      } else if (resultStatus == "registered") {
+        commaModelUpdateAvailable = false;
+        commaModelUpdateFolder.clear();
+        commaModelUpdateButton->setTitle(modelName.isEmpty() ? tr("Model added") : modelName);
+        commaModelUpdateButton->setText(tr("ADDED"));
+        commaModelUpdateButton->setDescription(folder);
+        refreshModelStatus();
+      } else {
+        commaModelUpdateAvailable = false;
+        commaModelUpdateFolder.clear();
+        commaModelUpdateButton->setTitle(tr("Comma official model"));
+        commaModelUpdateButton->setText(resultStatus == "updated" ? tr("UPDATED") : tr("LATEST"));
+        commaModelUpdateButton->setDescription(existing.isEmpty() ? modelName : existing);
+      }
+    } else {
+      commaModelUpdateButton->setTitle(tr("Update check failed"));
+      commaModelUpdateButton->setText(tr("RETRY"));
+      commaModelUpdateButton->setDescription(stderrData->trimmed().right(120));
+      commaModelUpdateAvailable = false;
+      commaModelUpdateFolder.clear();
+    }
+
+    commaModelUpdateButton->setEnabled(true);
+    proc->deleteLater();
+  });
+  connect(proc, &QObject::destroyed, this, [this, proc]() {
+    if (commaModelUpdateProcess == proc) commaModelUpdateProcess = nullptr;
+  });
+  proc->start();
+}
+
 void ModelTab::refreshModelStatus()
 {
   if (!modelStatusTitle || !modelDescriptionLabel || !modelCompiledAt || !modelArtifactStatus || !modelProgressBar || !modelProgressDetail) return;
@@ -1165,7 +1856,9 @@ void ModelTab::refreshModelStatus()
   const ModelCompileStatus status = getModelCompileStatus(currentModel);
   modelStatusTitle->setText(status.state == "Ready" ? status.state + " · " + status.backend : status.state);
   modelDescriptionLabel->setText(modelDescription(currentModel));
-  modelCompiledAt->setText(status.compiledAt.isEmpty() ? "Compiled: -" : "Compiled: " + status.compiledAt);
+  const QString updatedAt = modelUpdatedAt(currentModel);
+  const QString compiledAt = status.compiledAt.isEmpty() ? "-" : status.compiledAt;
+  modelCompiledAt->setText("Model update: " + (updatedAt.isEmpty() ? "-" : updatedAt) + "\nCompiled: " + compiledAt);
   modelProgressBar->setVisible(false);
   modelProgressDetail->setVisible(false);
   modelArtifactStatus->setText("Vision: " + status.vision + "\nPolicy: " + status.policy);
@@ -1204,7 +1897,7 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
   : ListWidget(parent), m_jsonobj(jsonobj), m_pCustom(parent) {
   std::vector<std::tuple<QString, QString, QString, QString>> toggle_defs{
     { "UseExternalNaviRoutes", tr("Use external navi routes"), "",
-      "../assets/offroad/icon_openpilot.png" },
+      "../assets/icons/road.png" },
   };
 
   for (auto &[param, title, desc, icon] : toggle_defs) {
@@ -1221,6 +1914,597 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
   addItem(toggle1);
 
   addItem(new MapboxToken());
+
+  auto *osmSection = new CollapsibleSection(tr("OSM road prediction"), this);
+  addItem(osmSection);
+
+  auto *osmEnable = new ParamControl(
+      "OSMEnable",
+      tr("Use OSM road prediction"),
+      tr("Use the local OSM road DB for current-road matching, forward-road prediction, and the mini map."),
+      "../assets/icons/road.png",
+      this);
+  const bool osmLocked = params.getBool("OSMEnableLock");
+  osmEnable->setEnabled(!osmLocked);
+  osmSection->addWidget(osmEnable);
+  toggles["OSMEnable"] = osmEnable;
+
+  auto *osmCameraSection = new CollapsibleSection(tr("OSM speed camera"), this);
+  addItem(osmCameraSection);
+
+  if (params.get("OsmShowSuspiciousCameras").empty()) {
+    params.putBool("OsmShowSuspiciousCameras", true);
+  }
+  auto *osmShowSuspiciousCameras = new ParamControl(
+      "OsmShowSuspiciousCameras",
+      tr("Show suspicious OSM cameras"),
+      tr("Show suspicious OSM speed camera candidates on the mini map for validation. When disabled, only verified normal speed camera icons are shown."),
+      "../assets/icons/road.png",
+      this);
+  osmCameraSection->addWidget(osmShowSuspiciousCameras);
+  toggles["OsmShowSuspiciousCameras"] = osmShowSuspiciousCameras;
+
+  if (params.get("OsmCameraDisplayDistanceM").empty()) {
+    params.put("OsmCameraDisplayDistanceM", "1000");
+  }
+  auto *osmCameraDisplayDistance = new CValueControl2(
+      "OsmCameraDisplayDistanceM",
+      tr("OSM camera icon distance"),
+      tr("Set how far ahead OSM speed camera icons are shown on the mini map and HUD camera alert."),
+      "../assets/icons/road.png",
+      350, 3000, 100);
+  osmCameraSection->addWidget(osmCameraDisplayDistance);
+
+  updateOsmSpeedCamerasButton = new ButtonControl(
+      tr("Update OSM speed cameras"),
+      tr("UPDATE"),
+      tr("Download the public speed camera CSV and rematch it into the installed OSM road DB. The road graph DB is not rebuilt."),
+      this);
+  connect(updateOsmSpeedCamerasButton, &ButtonControl::clicked, this, [=]() {
+    Params p;
+    if (osmSpeedCamerasUpdateRunning()) {
+      if (osmSpeedCamerasSessionActive()) {
+        stopOsmSpeedCamerasSession();
+        p.put("OsmSpeedCamerasUpdateStatus", "failed");
+        p.put("OsmSpeedCamerasUpdateError", "OSM speed camera update stopped by user.");
+        p.put("OsmSpeedCamerasUpdateProgress", "0");
+        refreshOsmSpeedCamerasStatus();
+        return;
+      }
+
+      p.put("OsmSpeedCamerasUpdateStatus", "failed");
+      p.put("OsmSpeedCamerasUpdateError", "Previous OSM speed camera update process is not running. Starting a new update.");
+    }
+
+    if (osmRoadsInstallRunning()) {
+      p.put("OsmSpeedCamerasUpdateStatus", "failed");
+      p.put("OsmSpeedCamerasUpdateError", "OSM road DB install is running. Retry after the DB install finishes.");
+      p.put("OsmSpeedCamerasUpdateProgress", "0");
+      refreshOsmSpeedCamerasStatus();
+      return;
+    }
+
+    const QString dbPath = osmRoadsInstalledDbPath();
+    if (!QFileInfo(dbPath).exists()) {
+      p.put("OsmSpeedCamerasUpdateStatus", "failed");
+      p.put("OsmSpeedCamerasUpdateError", QString("OSM road DB missing: %1").arg(dbPath).toStdString());
+      p.put("OsmSpeedCamerasUpdateProgress", "0");
+      refreshOsmSpeedCamerasStatus();
+      return;
+    }
+
+    const QString csvPath = osmSpeedCamerasCsvPath(true);
+    p.put("OsmSpeedCamerasUpdateStatus", "running");
+    p.put("OsmSpeedCamerasUpdateError", "");
+    p.put("OsmSpeedCamerasUpdateProgress", "0");
+    p.put("OsmSpeedCamerasCsvPath", csvPath.toStdString());
+    p.put("OsmSpeedCamerasDownloadRows", "0");
+    p.put("OsmSpeedCamerasDownloadTotalRows", "0");
+    p.put("OsmSpeedCamerasImportedCount", "0");
+    p.put("OsmSpeedCamerasMatchedCount", "0");
+    p.put("OsmSpeedCamerasLookupCount", "0");
+
+    QProcess *proc = new QProcess(this);
+    const QString repoRoot = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../..");
+    const QString canonicalRepoRoot = QDir(repoRoot).canonicalPath();
+    const bool navLogsEnabled = p.getBool("NavdLogging");
+    const QString tmpRoot = osmRoadsNavdTmpRoot(true);
+    const QString logPath = osmSpeedCamerasLogPath(navLogsEnabled);
+    if (navLogsEnabled) {
+      QFile::remove(logPath);
+      QFile logFile(logPath);
+      if (logFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        logFile.close();
+      }
+    }
+    const QString updateCommand = navLogsEnabled
+        ? QString("cd %1 && python3 tools/scripts/update_osm_speed_cameras.py --db %2 --csv %3 --tmp-dir %4 --match-radius-m 65 --require-road-graph 2>&1 | tee %5")
+              .arg(shellQuote(canonicalRepoRoot), shellQuote(dbPath), shellQuote(csvPath), shellQuote(tmpRoot), shellQuote(logPath))
+        : QString("cd %1 && python3 tools/scripts/update_osm_speed_cameras.py --db %2 --csv %3 --tmp-dir %4 --match-radius-m 65 --require-road-graph >/dev/null 2>&1")
+              .arg(shellQuote(canonicalRepoRoot), shellQuote(dbPath), shellQuote(csvPath), shellQuote(tmpRoot));
+    const QString tmuxCommand = QString("command -v tmux >/dev/null && "
+                                        "(tmux has-session -t %1 2>/dev/null || "
+                                        "tmux new-session -d -s %1 %2)")
+        .arg(QString::fromLatin1(kOsmSpeedCamerasSession), shellQuote(updateCommand));
+    proc->setWorkingDirectory(canonicalRepoRoot);
+    proc->setProgram("bash");
+    proc->setArguments({"-lc", tmuxCommand});
+    proc->setProcessChannelMode(QProcess::MergedChannels);
+    connect(proc, &QProcess::readyRead, proc, [proc]() { proc->readAll(); });
+
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int code, QProcess::ExitStatus status) {
+      Params finishedParams;
+      if (status != QProcess::NormalExit || code != 0) {
+        finishedParams.put("OsmSpeedCamerasUpdateStatus", "failed");
+        finishedParams.put("OsmSpeedCamerasUpdateError", QString("tmux start failed: exit code %1").arg(code).toStdString());
+      }
+      proc->deleteLater();
+      refreshOsmSpeedCamerasStatus();
+    });
+    proc->start();
+  });
+  osmCameraSection->addWidget(updateOsmSpeedCamerasButton);
+
+  auto *speedCameraStatusPanel = new QFrame(this);
+  speedCameraStatusPanel->setStyleSheet(R"(
+    QFrame {
+      border: none;
+      background-color: black;
+    }
+  )");
+  auto *speedCameraStatusLayout = new QVBoxLayout(speedCameraStatusPanel);
+  speedCameraStatusLayout->setContentsMargins(0, 18, 0, 24);
+  speedCameraStatusLayout->setSpacing(10);
+  osmSpeedCamerasStatusLabel = makeModelStatusLine(speedCameraStatusPanel, 32, "#f4f4f4");
+  osmSpeedCamerasDetailLabel = makeModelStatusLine(speedCameraStatusPanel, 26, "#a8a8a8");
+  osmSpeedCamerasProgressBar = makeModelProgressBar(speedCameraStatusPanel);
+  speedCameraStatusLayout->addWidget(osmSpeedCamerasStatusLabel);
+  speedCameraStatusLayout->addWidget(osmSpeedCamerasProgressBar);
+  speedCameraStatusLayout->addWidget(osmSpeedCamerasDetailLabel);
+  osmCameraSection->addWidget(speedCameraStatusPanel);
+
+  auto *navdLogging = new ParamControl(
+      "NavdLogging",
+      tr("Navigation logging"),
+      tr("Record navd and OSM diagnostic logs under the navd logs directory."),
+      "../assets/icons/road.png",
+      this);
+  osmSection->addWidget(navdLogging);
+  toggles["NavdLogging"] = navdLogging;
+
+  auto *osmGpsSimulation = new ParamControl(
+      "OsmGpsSimulation",
+      tr("OSM GPS simulation"),
+      tr("Publish simulated GPS only in webcam mode for OSM road prediction testing."),
+      "../assets/icons/road.png",
+      this);
+  if (!Hardware::PC()) {
+    params.putBool("OsmGpsSimulation", false);
+    osmGpsSimulation->setEnabled(false);
+    osmGpsSimulation->setDescription(tr("Disabled on device hardware. GPS simulation is only available on PC webcam mode."));
+  }
+  osmSection->addWidget(osmGpsSimulation);
+  toggles["OsmGpsSimulation"] = osmGpsSimulation;
+
+  auto *osmPredictionLogging = new ParamControl(
+      "OsmPredictionLogging",
+      tr("OSM prediction logging"),
+      tr("Create OSM route prediction trace and failure logs for validation. Requires Navigation logging and writes under the navd logs directory."),
+      "../assets/icons/road.png",
+      this);
+  osmSection->addWidget(osmPredictionLogging);
+  toggles["OsmPredictionLogging"] = osmPredictionLogging;
+
+  auto *osmMinimapPosition = new ButtonParamControl(
+      "OsmMinimapPosition",
+      tr("OSM minimap position"),
+      tr("Select where the OSM mini map is shown on the driving screen. Center shows a larger debug map fitted to the full OSM road overlay."),
+      "../assets/icons/road.png",
+      {tr("LT"), tr("RT"), tr("LB"), tr("RB"), tr("C")},
+      120);
+  osmSection->addWidget(osmMinimapPosition);
+
+  installOsmDbButton = new ButtonControl(
+      tr("Install OSM road DB"),
+      tr("INSTALL"),
+      tr("Downloads the prebuilt OSM road graph DB from Git LFS and installs it in the navd DB path."),
+      this);
+  connect(installOsmDbButton, &ButtonControl::clicked, this, [=]() {
+    Params p;
+    if (osmRoadsInstallRunning()) {
+      if (osmRoadsInstallSessionActive()) {
+        stopOsmRoadsInstallSession();
+        resetOsmRoadsLogReplay(false);
+        p.put("OsmRoadsUpdateStatus", "failed");
+        p.put("OsmRoadsUpdateError", "OSM road DB install stopped by user.");
+        p.put("OsmRoadsUpdateProgress", "0");
+        refreshOsmRoadsStatus();
+        return;
+      }
+
+      p.put("OsmRoadsUpdateStatus", "failed");
+      p.put("OsmRoadsUpdateError", "Previous OSM road DB install process is not running. Starting a new install.");
+    }
+
+    p.put("OsmRoadsUpdateStatus", "running");
+    p.put("OsmRoadsUpdateError", "");
+    p.put("OsmRoadsUpdateProgress", "0");
+    refreshOsmRoadsStatus();
+
+    QProcess *proc = new QProcess(this);
+    const QString repoRoot = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../..");
+    const QString canonicalRepoRoot = QDir(repoRoot).canonicalPath();
+    const bool navLogsEnabled = p.getBool("NavdLogging");
+    const QString logPath = osmRoadsInstallLogPath(navLogsEnabled);
+    if (navLogsEnabled) {
+      QFile::remove(logPath);
+      QFile logFile(logPath);
+      if (logFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        logFile.close();
+      }
+    }
+    resetOsmRoadsLogReplay(true);
+    const QString installCommand = navLogsEnabled
+        ? QString("cd %1 && python3 tools/scripts/install_osm_roads_db_from_git.py --require-road-graph 2>&1 | tee %2")
+              .arg(shellQuote(canonicalRepoRoot), shellQuote(logPath))
+        : QString("cd %1 && python3 tools/scripts/install_osm_roads_db_from_git.py --require-road-graph >/dev/null 2>&1")
+              .arg(shellQuote(canonicalRepoRoot));
+    const QString tmuxCommand = QString("command -v tmux >/dev/null && "
+                                        "(tmux has-session -t osm_db_install 2>/dev/null || "
+                                        "tmux new-session -d -s osm_db_install %1)")
+        .arg(shellQuote(installCommand));
+    proc->setWorkingDirectory(canonicalRepoRoot);
+    proc->setProgram("bash");
+    proc->setArguments({"-lc", tmuxCommand});
+    proc->setProcessChannelMode(QProcess::MergedChannels);
+    connect(proc, &QProcess::readyRead, proc, [proc]() { proc->readAll(); });
+
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int code, QProcess::ExitStatus status) {
+      Params finishedParams;
+      if (status != QProcess::NormalExit || code != 0) {
+        finishedParams.put("OsmRoadsUpdateStatus", "failed");
+        finishedParams.put("OsmRoadsUpdateError", QString("tmux start failed: exit code %1").arg(code).toStdString());
+      }
+      proc->deleteLater();
+      refreshOsmRoadsStatus();
+    });
+    proc->start();
+  });
+  osmSection->addWidget(installOsmDbButton);
+
+  auto *statusPanel = new QFrame(this);
+  statusPanel->setStyleSheet(R"(
+    QFrame {
+      border: none;
+      background-color: black;
+    }
+  )");
+  auto *statusLayout = new QVBoxLayout(statusPanel);
+  statusLayout->setContentsMargins(0, 18, 0, 24);
+  statusLayout->setSpacing(10);
+  osmRoadsStatusLabel = makeModelStatusLine(statusPanel, 32, "#f4f4f4");
+  osmRoadsDetailLabel = makeModelStatusLine(statusPanel, 26, "#a8a8a8");
+  osmRoadsProgressBar = makeModelProgressBar(statusPanel);
+  statusLayout->addWidget(osmRoadsStatusLabel);
+  statusLayout->addWidget(osmRoadsProgressBar);
+  statusLayout->addWidget(osmRoadsDetailLabel);
+  osmSection->addWidget(statusPanel);
+
+  osmRoadsStatusTimer = new QTimer(this);
+  connect(osmRoadsStatusTimer, &QTimer::timeout, this, &NavigationTab::refreshOsmRoadsStatus);
+  osmRoadsStatusTimer->start(1000);
+  skipOsmRoadsExistingLog();
+  refreshOsmRoadsStatus();
+
+  osmSpeedCamerasStatusTimer = new QTimer(this);
+  connect(osmSpeedCamerasStatusTimer, &QTimer::timeout, this, &NavigationTab::refreshOsmSpeedCamerasStatus);
+  osmSpeedCamerasStatusTimer->start(1000);
+  refreshOsmSpeedCamerasStatus();
+}
+
+bool NavigationTab::osmRoadsInstallRunning()
+{
+  return params.get("OsmRoadsUpdateStatus") == "running";
+}
+
+bool NavigationTab::osmSpeedCamerasUpdateRunning()
+{
+  return params.get("OsmSpeedCamerasUpdateStatus") == "running";
+}
+
+void NavigationTab::skipOsmRoadsExistingLog()
+{
+  if (!params.getBool("NavdLogging")) {
+    osmRoadsLogReadOffset = -1;
+    osmRoadsLastLoggedDownloadBytes = -1;
+    return;
+  }
+  QFile logFile(osmRoadsInstallLogPath(false));
+  osmRoadsLogReadOffset = logFile.exists() ? logFile.size() : 0;
+  osmRoadsLastLoggedDownloadBytes = -1;
+}
+
+void NavigationTab::resetOsmRoadsLogReplay(bool fromBeginning)
+{
+  osmRoadsLogReadOffset = fromBeginning ? 0 : -1;
+  osmRoadsLastLoggedDownloadBytes = -1;
+}
+
+void NavigationTab::emitOsmRoadsInstallLog()
+{
+  if (!params.getBool("NavdLogging")) {
+    return;
+  }
+  const QString logPath = osmRoadsInstallLogPath(true);
+  QFile logFile(logPath);
+  if (!logFile.exists() && logFile.open(QIODevice::WriteOnly)) {
+    logFile.close();
+  }
+
+  if (!logFile.open(QIODevice::ReadOnly)) {
+    return;
+  }
+
+  const qint64 size = logFile.size();
+  if (osmRoadsLogReadOffset < 0) {
+    osmRoadsLogReadOffset = std::max<qint64>(0, size - 4096);
+  }
+  if (size < osmRoadsLogReadOffset) {
+    osmRoadsLogReadOffset = 0;
+  }
+  if (size <= osmRoadsLogReadOffset) {
+    return;
+  }
+  if (size - osmRoadsLogReadOffset > 8192) {
+    osmRoadsLogReadOffset = size;
+    return;
+  }
+
+  logFile.seek(osmRoadsLogReadOffset);
+  const QByteArray output = logFile.read(8192);
+  osmRoadsLogReadOffset = logFile.pos();
+
+  const QStringList lines = QString::fromLocal8Bit(output).split('\n', QString::SkipEmptyParts);
+  for (const QString &line : lines) {
+    const QByteArray text = line.left(500).toLocal8Bit();
+    fprintf(stderr, "[osm_db_install] %s\n", text.constData());
+    fflush(stderr);
+  }
+}
+
+void NavigationTab::refreshOsmSpeedCamerasStatus()
+{
+  if (!updateOsmSpeedCamerasButton || !osmSpeedCamerasStatusLabel || !osmSpeedCamerasDetailLabel || !osmSpeedCamerasProgressBar) return;
+
+  QString status = QString::fromStdString(params.get("OsmSpeedCamerasUpdateStatus"));
+  QString error = QString::fromStdString(params.get("OsmSpeedCamerasUpdateError"));
+  const QString updatedAt = QString::fromStdString(params.get("OsmSpeedCamerasUpdatedAt"));
+  QString csvPath = QString::fromStdString(params.get("OsmSpeedCamerasCsvPath"));
+  if (csvPath.isEmpty()) {
+    csvPath = osmSpeedCamerasCsvPath();
+  }
+
+  bool ok = false;
+  const int progress = std::clamp(QString::fromStdString(params.get("OsmSpeedCamerasUpdateProgress")).toInt(&ok), 0, 100);
+  bool rowsOk = false;
+  const qint64 downloadRows = QString::fromStdString(params.get("OsmSpeedCamerasDownloadRows")).toLongLong(&rowsOk);
+  bool totalOk = false;
+  const qint64 downloadTotalRows = QString::fromStdString(params.get("OsmSpeedCamerasDownloadTotalRows")).toLongLong(&totalOk);
+  bool importedOk = false;
+  const qint64 importedCount = QString::fromStdString(params.get("OsmSpeedCamerasImportedCount")).toLongLong(&importedOk);
+  bool matchedOk = false;
+  const qint64 matchedCount = QString::fromStdString(params.get("OsmSpeedCamerasMatchedCount")).toLongLong(&matchedOk);
+  bool lookupOk = false;
+  const qint64 lookupCount = QString::fromStdString(params.get("OsmSpeedCamerasLookupCount")).toLongLong(&lookupOk);
+  const QString installedDbDetail = osmRoadsFileDetail("local DB", osmRoadsInstalledDbPath());
+  const QString csvDetail = osmRoadsFileDetail("CSV", csvPath);
+  const bool navLogsEnabled = params.getBool("NavdLogging");
+  const QString logFileDetail = navLogsEnabled ? osmRoadsFileDetail("log", osmSpeedCamerasLogPath()) : tr("navd log disabled");
+
+  bool running = status == "running";
+  if (running && !osmSpeedCamerasSessionActive()) {
+    running = false;
+    status = "failed";
+    error = tr("Previous OSM speed camera update process is not running.");
+    Params staleParams;
+    staleParams.put("OsmSpeedCamerasUpdateStatus", "failed");
+    staleParams.put("OsmSpeedCamerasUpdateError", error.toStdString());
+  }
+
+  osmSpeedCamerasProgressBar->setValue(ok ? progress : 0);
+  osmSpeedCamerasProgressBar->setVisible(running || progress > 0);
+  updateOsmSpeedCamerasButton->setEnabled(true);
+
+  auto appendCounts = [&](QStringList &details) {
+    if (rowsOk && downloadRows > 0) {
+      if (totalOk && downloadTotalRows > 0) {
+        details.append(QString("%1 / %2 rows downloaded").arg(downloadRows).arg(downloadTotalRows));
+      } else {
+        details.append(QString("%1 rows downloaded").arg(downloadRows));
+      }
+    }
+    if (importedOk && importedCount > 0) details.append(QString("%1 cameras").arg(importedCount));
+    if (matchedOk && matchedCount > 0) details.append(QString("%1 matched").arg(matchedCount));
+    if (lookupOk && lookupCount > 0) details.append(QString("%1 lookup rows").arg(lookupCount));
+  };
+
+  if (running) {
+    updateOsmSpeedCamerasButton->setText(tr("STOP"));
+    osmSpeedCamerasStatusLabel->setText(tr("Updating OSM speed cameras"));
+    QStringList details;
+    details.append(QString("%1%").arg(ok ? progress : 0));
+    appendCounts(details);
+    if (!installedDbDetail.isEmpty()) details.append(installedDbDetail);
+    details.append(QString("tmux a -t %1").arg(kOsmSpeedCamerasSession));
+    if (navLogsEnabled) {
+      details.append(QString("tail -f %1").arg(osmSpeedCamerasLogPath()));
+    } else {
+      details.append(tr("navd log disabled"));
+    }
+    osmSpeedCamerasDetailLabel->setText(details.join(" | "));
+    return;
+  }
+
+  if (status == "success") {
+    updateOsmSpeedCamerasButton->setText(tr("UPDATE"));
+    osmSpeedCamerasStatusLabel->setText(tr("OSM speed cameras ready"));
+    QStringList details;
+    appendCounts(details);
+    if (!updatedAt.isEmpty()) details.append(tr("Updated ") + updatedAt);
+    if (!csvDetail.isEmpty()) details.append(csvDetail);
+    if (!installedDbDetail.isEmpty()) details.append(installedDbDetail);
+    osmSpeedCamerasDetailLabel->setText(details.isEmpty() ? tr("Update completed") : details.join(" | "));
+    return;
+  }
+
+  if (status == "failed") {
+    updateOsmSpeedCamerasButton->setText(tr("RETRY"));
+    osmSpeedCamerasStatusLabel->setText(tr("OSM speed camera update failed"));
+    QStringList details;
+    details.append(error.isEmpty() ? tr("Check network and OSM road DB state.") : error.right(220));
+    if (!csvDetail.isEmpty()) details.append(csvDetail);
+    if (!installedDbDetail.isEmpty()) details.append(installedDbDetail);
+    details.append(logFileDetail.isEmpty() ? QString("log %1").arg(osmSpeedCamerasLogPath()) : logFileDetail);
+    osmSpeedCamerasDetailLabel->setText(details.join(" | "));
+    return;
+  }
+
+  updateOsmSpeedCamerasButton->setText(tr("UPDATE"));
+  osmSpeedCamerasStatusLabel->setText(tr("OSM speed cameras"));
+  QStringList details;
+  if (!csvDetail.isEmpty()) {
+    details.append(csvDetail);
+  } else {
+    details.append(QString("CSV will be downloaded to %1").arg(csvPath));
+  }
+  if (!installedDbDetail.isEmpty()) {
+    details.append(installedDbDetail);
+  } else {
+    details.append(QString("local DB missing %1").arg(osmRoadsInstalledDbPath()));
+  }
+  osmSpeedCamerasDetailLabel->setText(details.join(" | "));
+}
+
+void NavigationTab::refreshOsmRoadsStatus()
+{
+  if (!installOsmDbButton || !osmRoadsStatusLabel || !osmRoadsDetailLabel || !osmRoadsProgressBar) return;
+
+  QString status = QString::fromStdString(params.get("OsmRoadsUpdateStatus"));
+  QString error = QString::fromStdString(params.get("OsmRoadsUpdateError"));
+  const QString updatedAt = QString::fromStdString(params.get("OsmRoadsUpdatedAt"));
+  bool ok = false;
+  const int progress = std::clamp(QString::fromStdString(params.get("OsmRoadsUpdateProgress")).toInt(&ok), 0, 100);
+  bool downloadOk = false;
+  qint64 downloadBytes = QString::fromStdString(params.get("OsmRoadsDownloadBytes")).toLongLong(&downloadOk);
+  bool downloadTotalOk = false;
+  qint64 downloadTotalBytes = QString::fromStdString(params.get("OsmRoadsDownloadTotalBytes")).toLongLong(&downloadTotalOk);
+  bool countOk = false;
+  const int segmentCount = QString::fromStdString(params.get("OsmRoadsSegmentCount")).toInt(&countOk);
+  const QString installedDbDetail = osmRoadsFileDetail("local DB", osmRoadsInstalledDbPath());
+  const QString tmpDbDetail = osmRoadsFileDetail("tmp DB", osmRoadsTmpDbPath());
+  const bool navLogsEnabled = params.getBool("NavdLogging");
+  const QString logFileDetail = navLogsEnabled ? osmRoadsFileDetail("log", osmRoadsInstallLogPath()) : tr("navd log disabled");
+  bool running = status == "running";
+  if (running && !osmRoadsInstallSessionActive()) {
+    running = false;
+    status = "failed";
+    error = tr("Previous OSM road DB install process is not running.");
+    Params staleParams;
+    staleParams.put("OsmRoadsUpdateStatus", "failed");
+    staleParams.put("OsmRoadsUpdateError", error.toStdString());
+  }
+
+  osmRoadsProgressBar->setValue(ok ? progress : 0);
+  osmRoadsProgressBar->setVisible(running || progress > 0);
+  installOsmDbButton->setEnabled(true);
+
+  if (running) {
+    emitOsmRoadsInstallLog();
+    if (!downloadOk || downloadBytes <= 0) {
+      downloadBytes = osmRoadsLfsIncompleteSize();
+      downloadOk = downloadBytes > 0;
+    }
+    if (!downloadTotalOk || downloadTotalBytes <= 0) {
+      downloadTotalBytes = osmRoadsLfsPointerSize();
+      downloadTotalOk = downloadTotalBytes > 0;
+    }
+    if (downloadOk && downloadBytes > 0) {
+      const qint64 logStepBytes = 10LL * 1024LL * 1024LL;
+      const bool completedDownload = downloadTotalOk && downloadTotalBytes > 0 && downloadBytes >= downloadTotalBytes;
+      if (osmRoadsLastLoggedDownloadBytes < 0 ||
+          downloadBytes - osmRoadsLastLoggedDownloadBytes >= logStepBytes ||
+          completedDownload) {
+        const QString downloaded = formatOsmRoadsBytes(downloadBytes);
+        const QString total = (downloadTotalOk && downloadTotalBytes > 0) ? formatOsmRoadsBytes(downloadTotalBytes) : QString();
+        const QByteArray message = total.isEmpty()
+            ? QString("downloaded %1").arg(downloaded).toLocal8Bit()
+            : QString("downloaded %1 / %2").arg(downloaded, total).toLocal8Bit();
+        fprintf(stderr, "[osm_db_install] %s\n", message.constData());
+        fflush(stderr);
+        osmRoadsLastLoggedDownloadBytes = downloadBytes;
+      }
+    }
+    installOsmDbButton->setText(tr("STOP"));
+    osmRoadsStatusLabel->setText(tr("Installing OSM road DB"));
+    QStringList details;
+    details.append(QString("%1%").arg(ok ? progress : 0));
+    if (downloadOk && downloadBytes > 0) {
+      const QString downloaded = formatOsmRoadsBytes(downloadBytes);
+      if (downloadTotalOk && downloadTotalBytes > 0) {
+        details.append(QString("%1 / %2").arg(downloaded, formatOsmRoadsBytes(downloadTotalBytes)));
+      } else {
+        details.append(downloaded);
+      }
+    }
+    if (!installedDbDetail.isEmpty()) {
+      details.append(installedDbDetail);
+    }
+    details.append(tr("tmux a -t osm_db_install"));
+    if (navLogsEnabled) {
+      details.append(QString("tail -f %1").arg(osmRoadsInstallLogPath()));
+    } else {
+      details.append(tr("navd log disabled"));
+    }
+    osmRoadsDetailLabel->setText(details.join(" | "));
+    return;
+  }
+
+  if (status == "success") {
+    installOsmDbButton->setText(tr("UPDATE"));
+    osmRoadsStatusLabel->setText(tr("OSM road DB ready"));
+    QStringList details;
+    if (countOk && segmentCount > 0) details.append(QString("%1 segments").arg(segmentCount));
+    if (!updatedAt.isEmpty()) details.append(tr("Updated ") + updatedAt);
+    if (!installedDbDetail.isEmpty()) details.append(installedDbDetail);
+    osmRoadsDetailLabel->setText(details.isEmpty() ? tr("Install completed") : details.join(" | "));
+    return;
+  }
+
+  if (status == "failed") {
+    installOsmDbButton->setText(tr("RETRY"));
+    osmRoadsStatusLabel->setText(tr("OSM road DB install failed"));
+    QStringList details;
+    details.append(error.isEmpty() ? tr("Check network, Git LFS, and storage space.") : error.right(220));
+    if (!installedDbDetail.isEmpty()) details.append(installedDbDetail);
+    if (!tmpDbDetail.isEmpty()) details.append(tmpDbDetail);
+    details.append(logFileDetail.isEmpty() ? QString("log %1").arg(osmRoadsInstallLogPath()) : logFileDetail);
+    osmRoadsDetailLabel->setText(details.join(" | "));
+    return;
+  }
+
+  resetOsmRoadsLogReplay(false);
+  if (!installedDbDetail.isEmpty()) {
+    installOsmDbButton->setText(tr("UPDATE"));
+    osmRoadsStatusLabel->setText(tr("OSM road DB found"));
+    osmRoadsDetailLabel->setText(installedDbDetail);
+    return;
+  }
+
+  installOsmDbButton->setText(tr("INSTALL"));
+  osmRoadsStatusLabel->setText(tr("OSM road DB"));
+  osmRoadsDetailLabel->setText(QString("Not installed or status unknown | local DB missing %1").arg(osmRoadsInstalledDbPath()));
 }
 
 // ======================================================================================
@@ -1230,15 +2514,15 @@ UITab::UITab(CustomPanel *parent, QJsonObject &jsonobj)
   : ListWidget(parent), m_jsonobj(jsonobj), m_pCustom(parent) {
   std::vector<std::tuple<QString, QString, QString, QString>> toggle_defs{
     { "ShowDebugMessage", "Show Debug Message",
-      "Display debug popups/log overlays for troubleshooting.", "../assets/offroad/icon_shell.png" },
+      "Display debug popups/log overlays for troubleshooting.", "../assets/icons/shell.png" },
     { "DisableUpdates", "Disable OTA Updates",
-      "Prevents downloading and installing software updates.", "../assets/offroad/icon_shell.png" },
+      "Prevents downloading and installing software updates.", "../assets/icons/shell.png" },
     { "ShowCarTracking", "how Vehicle Tracking",
-      "Display detected vehicles and paths on the HUD.", "../assets/offroad/icon_shell.png" },
+      "Display detected vehicles and paths on the HUD.", "../assets/icons/shell.png" },
     { "tpms", "Show tpms",
-      "Show tire pressure monitoring values on the HUD.", "../assets/offroad/icon_shell.png" },
+      "Show tire pressure monitoring values on the HUD.", "../assets/icons/shell.png" },
     { "ParamDebug", "Show debug trace message",
-      "Enable verbose internal trace messages for diagnostics.", "../assets/offroad/icon_shell.png" },
+      "Enable verbose internal trace messages for diagnostics.", "../assets/icons/shell.png" },
   };
   // 섹션 만들기
   auto *normal = new CollapsibleSection(tr("Toggle def"), this);
@@ -1252,15 +2536,15 @@ UITab::UITab(CustomPanel *parent, QJsonObject &jsonobj)
 
   std::vector<std::tuple<QString, QString, QString, QString>> kegman_defs{
     { "kegman", "HUD Overlay (Kegman)",
-      "Select up to 4 items below to show on the HUD.", "../assets/offroad/icon_shell.png" },
-    { "kegmanCPU", "CPU temperature", "1. Shows max CPU temperature and max CPU usage. Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
-    { "kegmanLag", "UI Lag", "2. Shows UI frame latency (ms). Counts toward the 4-item HUD limit", "../assets/offroad/icon_shell.png" },
-    { "kegmanBattery", "Battery Voltage", "3. Shows system/battery voltage (V). Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
-    { "kegmanGPU", "GPU load", "4. Shows GPU temperature and GPU usage. Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
-    { "kegmanAngle", "Steering Angle", "5. Shows steering angle (°). Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
-    { "kegmanEngine", "Engine Status", "6. Shows engine state (e.g., RPM/ON-OFF). Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
-    { "kegmanDistance", "Relative Distance", "7. Shows radar relative distance (m). Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
-    { "kegmanSpeed", "Relative Speed", "8. Shows radar relative speed (m/s). Counts toward the 4-item HUD limit.", "../assets/offroad/icon_shell.png" },
+      "Select up to 4 items below to show on the HUD.", "../assets/icons/shell.png" },
+    { "kegmanCPU", "CPU temperature", "1. Shows max CPU temperature and max CPU usage. Counts toward the 4-item HUD limit.", "../assets/icons/shell.png" },
+    { "kegmanLag", "UI Lag", "2. Shows UI frame latency (ms). Counts toward the 4-item HUD limit", "../assets/icons/shell.png" },
+    { "kegmanBattery", "Battery Voltage", "3. Shows system/battery voltage (V). Counts toward the 4-item HUD limit.", "../assets/icons/shell.png" },
+    { "kegmanGPU", "GPU load", "4. Shows GPU temperature and GPU usage. Counts toward the 4-item HUD limit.", "../assets/icons/shell.png" },
+    { "kegmanAngle", "Steering Angle", "5. Shows steering angle (°). Counts toward the 4-item HUD limit.", "../assets/icons/shell.png" },
+    { "kegmanEngine", "Engine Status", "6. Shows engine state (e.g., RPM/ON-OFF). Counts toward the 4-item HUD limit.", "../assets/icons/shell.png" },
+    { "kegmanDistance", "Relative Distance", "7. Shows radar relative distance (m). Counts toward the 4-item HUD limit.", "../assets/icons/shell.png" },
+    { "kegmanSpeed", "Relative Speed", "8. Shows radar relative speed (m/s). Counts toward the 4-item HUD limit.", "../assets/icons/shell.png" },
   };
  // 섹션 만들기
   auto *kegman = new CollapsibleSection(tr("Kegman Show"), this);
@@ -1332,11 +2616,11 @@ void UITab::updateToggles(int bSave) {
 Debug::Debug(CustomPanel *parent, QJsonObject &jsonobj)
   : ListWidget(parent), m_jsonobj(jsonobj), m_pCustom(parent) {
   std::vector<std::tuple<QString, QString, QString, QString>> toggle_defs{
-    {"debug1", tr("debug1"), "", "../assets/offroad/icon_shell.png"},
-    {"debug2", tr("debug2"), "", "../assets/offroad/icon_shell.png"},
-    {"debug3", tr("debug3"), "", "../assets/offroad/icon_shell.png"},
-    {"debug4", tr("debug4"), "", "../assets/offroad/icon_shell.png"},
-    {"debug5", tr("debug5"), "", "../assets/offroad/icon_shell.png"},
+    {"debug1", tr("debug1"), "", "../assets/icons/shell.png"},
+    {"debug2", tr("debug2"), "", "../assets/icons/shell.png"},
+    {"debug3", tr("debug3"), "", "../assets/icons/shell.png"},
+    {"debug4", tr("debug4"), "", "../assets/icons/shell.png"},
+    {"debug5", tr("debug5"), "", "../assets/icons/shell.png"},
   };
 
   for (auto &[param, title, desc, icon] : toggle_defs) {

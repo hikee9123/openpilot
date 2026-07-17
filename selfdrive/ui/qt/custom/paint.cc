@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <limits>
+#include <string>
 
 #include <QDebug>
 #include <QPaintEvent>
@@ -10,7 +13,22 @@
 #include <QPen>
 
 
+#include "common/util.h"
 #include "selfdrive/ui/qt/util.h"
+
+namespace {
+
+constexpr float kOsmCameraSelectBehindM = -10.0f;
+constexpr float kOsmCameraHoldBehindM = -30.0f;
+
+bool alertableOsmCamera(const OsmMinimapCamera &camera, float behind_limit_m) {
+  return camera.display_class == QStringLiteral("normal")
+      && camera.speed_limit_kph > 0
+      && std::isfinite(camera.x)
+      && camera.x >= behind_limit_m;
+}
+
+}  // namespace
 
 
 
@@ -145,6 +163,17 @@ void OnPaint::updateState(const UIState &s)
 
   if ( (sm1.frame % UI_FREQ) != 0 )
       sm2.update(0);
+  if ((sm1.frame % UI_FREQ) == 0) {
+    osm_enabled = params.getBool("OSMEnable");
+    const std::string show_suspicious_param = params.get("OsmShowSuspiciousCameras");
+    osm_show_suspicious_cameras = show_suspicious_param.empty() || params.getBool("OsmShowSuspiciousCameras");
+    osm_minimap_position = std::clamp(get_param("OsmMinimapPosition"), 0, 4);
+    osm_debug_map_zoom = std::clamp(get_param("OsmDebugMapZoom"), 0, 4);
+    osm_gps_sim_speed_kph = std::clamp(get_param("OsmGpsSimSpeedKph"), 0, 250);
+    const bool webcam_or_cam_sim = std::getenv("USE_WEBCAM") != nullptr || util::getenv("CAM_SIM", "") == "webcam";
+    osm_debug_zoom_controls_enabled = true;
+    osm_debug_speed_controls_enabled = webcam_or_cam_sim || params.getBool("OsmGpsSimulation");
+  }
 
   // 1.
   auto uiCustom = sm2["uICustom"].getUICustom();
@@ -159,6 +188,7 @@ void OnPaint::updateState(const UIState &s)
 
   // carState drives drawSpeed(), so keep it fresh regardless of overlay settings.
   auto car_state = sm1["carState"].getCarState();
+  m_param.vEgo = car_state.getVEgo();
   m_param.angleSteers = car_state.getSteeringAngleDeg();
   m_param.enginRpm =  car_state.getEngineRpmDEPRECATED();
   m_gasVal = car_state.getGasDEPRECATED();
@@ -184,6 +214,65 @@ void OnPaint::updateState(const UIState &s)
     scene->custom.touched++;
   }
 
+  // Navigation overlay data is used by the OSM mini map even when debug/kegman overlays are off.
+  auto navi_custom = sm2["naviCustom"].getNaviCustom();
+  auto naviData = navi_custom.getNaviData();
+  m_nda.activeNDA = naviData.getActive();
+  m_nda.camType = naviData.getCamType();
+  m_nda.roadLimitSpeed = naviData.getRoadLimitSpeed();
+  m_nda.camLimitSpeed = naviData.getCamLimitSpeed();
+  m_nda.camLimitSpeedLeftDist = naviData.getCamLimitSpeedLeftDist();
+  m_nda.cntIdx = naviData.getCntIdx();
+  m_nda.osmRoadOverlay.clear();
+  if (osm_enabled) {
+    m_nda.osmRoadOverlay.status = QString::fromUtf8(naviData.getOsmRoadOverlayText().cStr());
+  }
+  if (osm_enabled && naviData.getActive()) {
+    auto overlay = naviData.getOsmRoadOverlay();
+    auto roads = overlay.getRoads();
+    auto cameras = overlay.getCameras();
+    m_nda.osmRoadOverlay.available = true;
+    m_nda.osmRoadOverlay.road = QString::fromUtf8(overlay.getRoad().cStr());
+    m_nda.osmRoadOverlay.bearing = overlay.getBearing();
+    m_nda.osmRoadOverlay.prediction_distance_m = overlay.getPredictionDistanceM();
+    m_nda.osmRoadOverlay.roads.reserve(roads.size());
+    for (auto road : roads) {
+      m_nda.osmRoadOverlay.roads.push_back({
+        road.getRoadId(),
+        QString::fromUtf8(road.getName().cStr()),
+        QString::fromUtf8(road.getHighway().cStr()),
+        road.getX1(),
+        road.getY1(),
+        road.getX2(),
+        road.getY2(),
+        road.getCurrent(),
+        road.getPredicted(),
+        road.getHistory(),
+        road.getFallback(),
+        road.getAssist(),
+      });
+    }
+    m_nda.osmRoadOverlay.cameras.reserve(cameras.size());
+    for (auto camera : cameras) {
+      m_nda.osmRoadOverlay.cameras.push_back({
+        camera.getCameraId(),
+        camera.getRoadId(),
+        QString::fromUtf8(camera.getCameraType().cStr()),
+        camera.getSpeedLimitKph(),
+        camera.getX(),
+        camera.getY(),
+        camera.getMatchDistanceM(),
+        camera.getMatchConfidence(),
+        camera.getPrimaryMatch(),
+        camera.getBearingDeg(),
+        QString::fromUtf8(camera.getDisplayClass().cStr()),
+        QString::fromUtf8(camera.getDirectionVerdict().cStr()),
+        QString::fromUtf8(camera.getRejectReason().cStr()),
+        camera.getSignalCamera(),
+      });
+    }
+  }
+
   if( !is_debug && !m_param.ui.getKegman() ) return;
 
   // 1.
@@ -203,24 +292,6 @@ void OnPaint::updateState(const UIState &s)
   // 1.
   auto peripheralState = sm2["peripheralState"].getPeripheralState();
   m_param.batteryVoltage = peripheralState.getVoltage() * 0.001;
-
-
-  // 1.
-  auto navi_custom = sm2["naviCustom"].getNaviCustom();
-  auto naviData = navi_custom.getNaviData();
-  int activeNDA = naviData.getActive();
-  int camType  = naviData.getCamType();
-  int roadLimitSpeed = naviData.getRoadLimitSpeed();
-  int camLimitSpeed = naviData.getCamLimitSpeed();
-  int camLimitSpeedLeftDist = naviData.getCamLimitSpeedLeftDist();
-  int cntIdx = naviData.getCntIdx();
-
-  m_nda.activeNDA = activeNDA;
-  m_nda.camType = camType;
-  m_nda.roadLimitSpeed = roadLimitSpeed;
-  m_nda.camLimitSpeed = camLimitSpeed;
-  m_nda.camLimitSpeedLeftDist = camLimitSpeedLeftDist;
-  m_nda.cntIdx = cntIdx;
 
 
   // 2.
@@ -353,13 +424,15 @@ void OnPaint::drawLead(QPainter &p, const cereal::RadarState::LeadData::Reader &
 
 void OnPaint::drawHud(QPainter &p)
 {
+  osm_minimap.draw(p, QRect(0, 0, state->fb_w, state->fb_h), m_nda.osmRoadOverlay, osm_enabled,
+                   osm_minimap_position, m_param.vEgo, osm_debug_map_zoom, osm_gps_sim_speed_kph,
+                   osm_show_suspicious_cameras, osm_debug_zoom_controls_enabled, osm_debug_speed_controls_enabled);
+
   if( !is_debug && !m_param.ui.getKegman() ) return;
 
   if( is_debug )
   {
     ui_main_debug( p );
-
-    ui_main_navi( p );
 
     //ui_graph( p );
 
@@ -380,6 +453,46 @@ void OnPaint::drawHud(QPainter &p)
   {
      bb_ui_draw_UI( p );
   }
+}
+
+bool OnPaint::handleMousePress(const QPoint &pt, const QRect &surface)
+{
+  int delta = 0;
+  osm_debug_zoom_pressed = osm_minimap.debugZoomControlAt(surface, osm_minimap_position, pt,
+                                                         osm_debug_zoom_controls_enabled, delta);
+  osm_debug_speed_pressed = !osm_debug_zoom_pressed
+                         && osm_minimap.debugSpeedControlAt(surface, osm_minimap_position, pt,
+                                                            osm_debug_speed_controls_enabled, delta);
+  return osm_debug_zoom_pressed || osm_debug_speed_pressed;
+}
+
+bool OnPaint::handleMouseRelease(const QPoint &pt, const QRect &surface)
+{
+  int delta = 0;
+  const bool zoom_hit = osm_minimap.debugZoomControlAt(surface, osm_minimap_position, pt,
+                                                      osm_debug_zoom_controls_enabled, delta);
+  const bool zoom_handled = osm_debug_zoom_pressed || zoom_hit;
+  if (zoom_hit && delta != 0) {
+    osm_debug_map_zoom = std::clamp(osm_debug_map_zoom + delta, 0, 4);
+    params.put("OsmDebugMapZoom", std::to_string(osm_debug_map_zoom));
+    osm_debug_zoom_pressed = false;
+    osm_debug_speed_pressed = false;
+    return true;
+  }
+
+  delta = 0;
+  const bool speed_hit = osm_minimap.debugSpeedControlAt(surface, osm_minimap_position, pt,
+                                                        osm_debug_speed_controls_enabled, delta);
+  const bool speed_handled = osm_debug_speed_pressed || speed_hit;
+  osm_debug_zoom_pressed = false;
+  osm_debug_speed_pressed = false;
+  if (speed_hit && delta != 0) {
+    osm_gps_sim_speed_kph = std::clamp(osm_gps_sim_speed_kph + delta, 0, 250);
+    params.put("OsmGpsSimSpeedKph", std::to_string(osm_gps_sim_speed_kph));
+    return true;
+  }
+
+  return zoom_handled || speed_handled;
 }
 
 
@@ -433,7 +546,6 @@ void OnPaint::drawSpeed(QPainter &p, int x, QString speedStr, QString speedUnit 
        val_color = interp_color(QColor(255, 255, 255), QColor(200, 100, 50), QColor(255, 0, 0));
     }
   }
-  else if( brakeLights ) val_color = QColor(201, 34, 49, 100);
   else if( brakePress  ) val_color = QColor(255, 0, 0, 255);
   else if (gasVal > 0) {
     auto interp_color = [=](QColor c1, QColor c2) {
@@ -449,6 +561,30 @@ void OnPaint::drawSpeed(QPainter &p, int x, QString speedStr, QString speedUnit 
   p.setPen( val_color );
   drawText3(p, x, 210, speedStr, val_color );
   p.setFont(InterFont(66));
+  if (brakeLights || brakePress) {
+    const QColor lamp_color = brakePress ? QColor(255, 55, 65, 235) : QColor(201, 34, 49, 190);
+    const QFontMetrics fm(p.font());
+    QRect unit_rect = fm.boundingRect(speedUnit);
+    unit_rect.moveCenter({x, 290 - unit_rect.height() / 2});
+
+    const int lamp_w = 42;
+    const int lamp_h = 18;
+    const int lamp_gap = 18;
+    const int lamp_y = unit_rect.center().y() - lamp_h / 2;
+    const QRect left_lamp(unit_rect.left() - lamp_gap - lamp_w, lamp_y, lamp_w, lamp_h);
+    const QRect right_lamp(unit_rect.right() + lamp_gap, lamp_y, lamp_w, lamp_h);
+
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(Qt::NoPen);
+    p.setBrush(lamp_color);
+    p.drawRoundedRect(left_lamp, 7, 7);
+    p.drawRoundedRect(right_lamp, 7, 7);
+    p.setBrush(QColor(255, 255, 255, brakePress ? 80 : 45));
+    p.drawRoundedRect(left_lamp.adjusted(5, 4, -5, -10), 4, 4);
+    p.drawRoundedRect(right_lamp.adjusted(5, 4, -5, -10), 4, 4);
+    p.restore();
+  }
   drawText3(p, x, 290, speedUnit, QColor(255,255,255,200) );
 
 
@@ -456,6 +592,151 @@ void OnPaint::drawSpeed(QPainter &p, int x, QString speedStr, QString speedUnit 
   str.sprintf("%.0f/%.0f", m_param.breakPos, gasVal );
   p.setFont(InterFont(30));
   drawText3(p, x, 335, str, QColor(255,255,255,200) );
+}
+
+bool OnPaint::speedCameraAlert(int &cam_type, int &limit_speed, int &distance_m, bool &signal_camera)
+{
+  if (m_nda.camType != 0 && m_nda.camLimitSpeedLeftDist > 0) {
+    osm_active_camera_id = 0;
+    cam_type = m_nda.camType;
+    limit_speed = std::max(0, m_nda.camLimitSpeed);
+    distance_m = std::max(0, m_nda.camLimitSpeedLeftDist);
+    signal_camera = cam_type == 3;
+    return true;
+  }
+
+  const OsmMinimapCamera *nearest_camera = nullptr;
+  const OsmMinimapCamera *active_camera = nullptr;
+  float nearest_forward_m = std::numeric_limits<float>::max();
+  for (const OsmMinimapCamera &camera : m_nda.osmRoadOverlay.cameras) {
+    if (!alertableOsmCamera(camera, kOsmCameraHoldBehindM)) continue;
+    if (osm_active_camera_id != 0 && camera.camera_id == osm_active_camera_id) {
+      active_camera = &camera;
+    }
+    if (camera.x < kOsmCameraSelectBehindM) continue;
+    if (camera.x < nearest_forward_m) {
+      nearest_forward_m = camera.x;
+      nearest_camera = &camera;
+    }
+  }
+
+  const OsmMinimapCamera *selected_camera = nullptr;
+  if (active_camera != nullptr) {
+    selected_camera = active_camera;
+  } else {
+    osm_active_camera_id = 0;
+    selected_camera = nearest_camera;
+  }
+  if (selected_camera == nullptr) {
+    return false;
+  }
+
+  signal_camera = selected_camera->signal_camera;
+  bool type_ok = false;
+  const int parsed_type = selected_camera->camera_type.toInt(&type_ok);
+  cam_type = signal_camera ? 3 : (type_ok ? parsed_type : 1);
+  limit_speed = selected_camera->speed_limit_kph;
+  distance_m = std::max(0, static_cast<int>(std::round(selected_camera->x)));
+  osm_active_camera_id = selected_camera->camera_id;
+  return true;
+}
+
+QString OnPaint::cameraTypeLabel(int cam_type, bool signal_camera) const
+{
+  if (signal_camera) {
+    return QStringLiteral("Speed+Signal");
+  }
+  switch (cam_type) {
+    case 3:
+      return QStringLiteral("Speed+Signal");
+    case 4:
+      return QStringLiteral("Section");
+    case 8:
+      return QStringLiteral("Security");
+    case 10:
+      return QStringLiteral("Protected");
+    case 1:
+    case 2:
+      return QStringLiteral("Speed");
+    default:
+      return QStringLiteral("Camera");
+  }
+}
+
+void OnPaint::drawSignalBadge(QPainter &p, double center_x, double top_y) const
+{
+  const QRectF badge_rect(center_x - 27.0, top_y, 54.0, 18.0);
+  p.setPen(QPen(QColor(52, 120, 246, 255), 1));
+  p.setBrush(QColor(16, 18, 22, 230));
+  p.drawRoundedRect(badge_rect, 8.0, 8.0);
+
+  const double lamp_y = badge_rect.center().y();
+  const double start_x = badge_rect.left() + 16.0;
+  p.setPen(Qt::NoPen);
+  p.setBrush(QColor(235, 56, 64, 255));
+  p.drawEllipse(QPointF(start_x, lamp_y), 5.0, 5.0);
+  p.setBrush(QColor(245, 190, 64, 255));
+  p.drawEllipse(QPointF(start_x + 11.0, lamp_y), 5.0, 5.0);
+  p.setBrush(QColor(55, 210, 125, 255));
+  p.drawEllipse(QPointF(start_x + 22.0, lamp_y), 5.0, 5.0);
+}
+
+void OnPaint::drawSpeedLimitSign(QPainter &p, const QPointF &center, int radius, int cam_type, int limit_speed, bool signal_camera) const
+{
+  const bool speed_camera = limit_speed > 0 || cam_type == 1 || cam_type == 2 || cam_type == 4;
+  const QColor ring_color = speed_camera ? QColor(210, 32, 42, 255) : QColor(52, 120, 246, 255);
+  const int inner_gap = speed_camera ? 10 : 8;
+
+  p.setPen(Qt::NoPen);
+  p.setBrush(ring_color);
+  p.drawEllipse(center, radius, radius);
+  p.setBrush(QColor(255, 255, 255, 255));
+  p.drawEllipse(center, radius - inner_gap, radius - inner_gap);
+
+  const QString text = limit_speed > 0 ? QString::number(limit_speed) : QStringLiteral("--");
+  const int font_size = text.size() <= 2 ? 58 : 48;
+  p.setFont(InterFont(font_size, QFont::Bold));
+  p.setPen(QColor(18, 18, 18, 255));
+  p.drawText(QRectF(center.x() - radius + 4.0, center.y() - 36.0, radius * 2.0 - 8.0, 72.0), Qt::AlignCenter, text);
+
+  if (signal_camera) {
+    drawSignalBadge(p, center.x(), center.y() - radius + 2.0);
+  }
+}
+
+void OnPaint::drawSpeedCameraAlert(QPainter &p, const QRect &set_speed_rect)
+{
+  int cam_type = 0;
+  int limit_speed = 0;
+  int distance_m = 0;
+  bool signal_camera = false;
+  if (!speedCameraAlert(cam_type, limit_speed, distance_m, signal_camera)) {
+    return;
+  }
+
+  const int width = set_speed_rect.width();
+  const int x = set_speed_rect.x();
+  const int y = set_speed_rect.y() + set_speed_rect.height() + 16;
+  const int sign_radius = width >= 190 ? 74 : 66;
+  const QPointF sign_center(x + width / 2.0, y + 92.0);
+
+  p.save();
+  p.setRenderHint(QPainter::Antialiasing, true);
+  drawSpeedLimitSign(p, sign_center, sign_radius, cam_type, limit_speed, signal_camera);
+
+  const QString distance_text = distance_m >= 1000
+      ? QStringLiteral("%1km").arg(distance_m / 1000.0, 0, 'f', 1)
+      : QStringLiteral("%1m").arg(distance_m);
+  QRectF distance_rect(x, y + 176.0, width, 34.0);
+  p.setFont(InterFont(30, QFont::Normal));
+  p.setPen(QColor(255, 255, 255, 205));
+  p.drawText(distance_rect, Qt::AlignCenter, distance_text);
+
+  QRectF label_rect(x, y + 206.0, width, 30.0);
+  p.setFont(InterFont(22, QFont::Normal));
+  p.setPen(QColor(255, 198, 77, 255));
+  p.drawText(label_rect, Qt::AlignCenter, cameraTypeLabel(cam_type, signal_camera));
+  p.restore();
 }
 
 

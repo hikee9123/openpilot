@@ -270,7 +270,7 @@ WifiUI::WifiUI(QWidget *parent, WifiManager* wifi) : QWidget(parent), wifi(wifi)
 
   // load imgs
   for (const auto &s : {"low", "medium", "high", "full"}) {
-    QPixmap pix(ASSET_PATH + "/icons/wifi_strength_" + s + ".svg");
+    QPixmap pix(ASSET_PATH + "icons/wifi_strength_" + s + ".svg");
     strengths.push_back(pix.scaledToHeight(68, Qt::SmoothTransformation));
   }
   lock = QPixmap(ASSET_PATH + "icons/lock_closed.svg").scaledToWidth(ICON_WIDTH, Qt::SmoothTransformation);

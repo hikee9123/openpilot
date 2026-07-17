@@ -1,0 +1,1311 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OSM Roads DB</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111318;
+      --panel: #191d24;
+      --panel-2: #202632;
+      --text: #edf1f7;
+      --muted: #9da8b8;
+      --line: #303846;
+      --accent: #41c7a7;
+      --warn: #e9b44c;
+      --bad: #f06c75;
+      --good: #65d17d;
+      --idle: #778293;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    main {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 24px 0;
+    }
+
+    header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 20px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .sub {
+      margin-top: 4px;
+      color: var(--muted);
+    }
+
+    .health {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+      max-width: min(760px, calc(100vw - 32px));
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--muted);
+      padding: 5px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .health-text {
+      min-width: 0;
+    }
+
+    .health-actions {
+      display: inline-flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .health button {
+      height: 24px;
+      border-radius: 5px;
+      padding: 0 7px;
+      font-size: 11px;
+      line-height: 1;
+      flex: 0 0 auto;
+    }
+
+    .health.ok {
+      border-color: #2e6f54;
+      color: var(--good);
+    }
+
+    .health.warn {
+      border-color: #806b32;
+      color: var(--warn);
+    }
+
+    .health.bad {
+      border-color: #8a3e47;
+      color: var(--bad);
+    }
+
+    .notice {
+      display: none;
+      margin-top: 14px;
+      border: 1px solid #6f5724;
+      border-radius: 8px;
+      background: #241d10;
+      color: #f2d99a;
+      padding: 10px 12px;
+    }
+
+    .notice.show {
+      display: block;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .build-options {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      margin-top: 10px;
+      color: var(--muted);
+    }
+
+    .build-options label {
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    select,
+    input {
+      height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--text);
+      padding: 0 10px;
+      font: inherit;
+      min-width: 190px;
+    }
+
+    input {
+      min-width: min(360px, 100%);
+    }
+
+    button {
+      height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--text);
+      padding: 0 14px;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    button:hover:not(:disabled) {
+      border-color: var(--accent);
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    button.primary {
+      background: #1b6f62;
+      border-color: #2aa891;
+    }
+
+    button.danger {
+      background: #64252b;
+      border-color: #99414b;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 18px;
+    }
+
+    .task {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 14px;
+      min-width: 0;
+    }
+
+    .task-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .task-title {
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .status {
+      min-width: 74px;
+      text-align: center;
+      border-radius: 999px;
+      padding: 3px 9px;
+      color: #0b1014;
+      background: var(--idle);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .status.running,
+    .status.stopping {
+      background: var(--warn);
+    }
+
+    .status.success {
+      background: var(--good);
+    }
+
+    .status.failed,
+    .status.stopped {
+      background: var(--bad);
+    }
+
+    .progress {
+      height: 9px;
+      border-radius: 999px;
+      background: #0c0f13;
+      overflow: hidden;
+      margin: 13px 0 9px;
+    }
+
+    .bar {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      transition: width 160ms ease;
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: 68px 1fr;
+      gap: 5px 10px;
+      color: var(--muted);
+      min-height: 56px;
+    }
+
+    .meta span:nth-child(even) {
+      color: var(--text);
+      overflow-wrap: anywhere;
+    }
+
+    .log-shell {
+      margin-top: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #090b0f;
+      overflow: hidden;
+    }
+
+    .db-panel {
+      margin-top: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .map-panel {
+      margin-top: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .map-panel.hidden {
+      display: none;
+    }
+
+    .map-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      background: #12161d;
+    }
+
+    .map-status {
+      color: var(--muted);
+      overflow-wrap: anywhere;
+      font-size: 12px;
+    }
+
+    .map-meta {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+    }
+
+    .map-meta strong {
+      color: var(--text);
+    }
+
+    .map-canvas {
+      width: 100%;
+      height: min(640px, 72vh);
+      min-height: 420px;
+      background: #0c0f13;
+    }
+
+    .leaflet-container {
+      background: #0c0f13;
+      color: #18202a;
+      font: 13px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .db-panel.hidden {
+      display: none;
+    }
+
+    .db-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      background: #12161d;
+    }
+
+    .db-path {
+      color: var(--muted);
+      overflow-wrap: anywhere;
+      font-size: 12px;
+    }
+
+    .db-stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .db-stat {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      padding: 10px;
+      min-width: 0;
+    }
+
+    .db-stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .db-stat strong {
+      display: block;
+      margin-top: 4px;
+      font-size: 18px;
+      overflow-wrap: anywhere;
+    }
+
+    .db-meta {
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      gap: 5px 10px;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+    }
+
+    .db-meta span:nth-child(even) {
+      color: var(--text);
+      overflow-wrap: anywhere;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .tabs button.active {
+      border-color: var(--accent);
+      background: #193f3a;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      max-height: 440px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    th,
+    td {
+      padding: 8px 10px;
+      border-bottom: 1px solid #242b36;
+      text-align: left;
+      vertical-align: top;
+      white-space: nowrap;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #12161d;
+      color: var(--muted);
+      z-index: 1;
+    }
+
+    .log-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      background: #12161d;
+      color: var(--muted);
+    }
+
+    pre {
+      margin: 0;
+      padding: 12px;
+      height: 360px;
+      overflow: auto;
+      color: #d7dde8;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font: 12px/1.45 Consolas, "Liberation Mono", monospace;
+    }
+
+    @media (max-width: 820px) {
+      main {
+        width: min(100vw - 20px, 720px);
+        padding: 16px 0;
+      }
+
+      header {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .build-options {
+        justify-content: stretch;
+      }
+
+      select,
+      input {
+        flex: 1 1 190px;
+      }
+
+      .toolbar {
+        justify-content: stretch;
+      }
+
+      button {
+        flex: 1 1 160px;
+      }
+
+      .db-stats {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .db-meta {
+        grid-template-columns: 90px 1fr;
+      }
+
+      .map-canvas {
+        min-height: 360px;
+        height: 58vh;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>OSM Roads DB</h1>
+        <div class="sub" id="summary">연결 대기</div>
+        <div class="health warn" id="server-health">서버 상태 확인 중</div>
+      </div>
+      <div class="toolbar">
+        <button data-task="download" title="OSM 도로 원본 south-korea-latest.osm.pbf를 다운로드합니다">PBF 다운로드</button>
+        <button data-task="generate_cameras" title="공공데이터에서 단속카메라 목록을 받아 speed_cameras.csv를 생성합니다">단속카메라 생성</button>
+        <button class="primary" data-task="build" title="PBF 도로 원본과 카메라 CSV를 읽어 OSM 도로 DB를 생성하고 검증합니다">DB 생성</button>
+        <button data-task="replace" title="생성은 끝났지만 파일 잠금으로 교체 실패한 pending DB를 최종 DB로 다시 교체합니다">DB 교체 재시도</button>
+        <button data-task="import_cameras" title="기존 OSM 도로 DB에 speed_cameras.csv를 매칭해 카메라 테이블을 갱신합니다">카메라 매칭</button>
+        <button data-task="validate" title="현재 설정된 OSM 도로 DB의 스키마, 도로 그래프, 카메라 데이터를 검증합니다">DB 검증</button>
+        <button id="db-view" title="현재 OSM 도로 DB의 메타데이터, 건수, 샘플 데이터를 표시합니다">DB 보기</button>
+        <button id="map-view" title="현재 화면 안에서 카메라와 매칭 도로를 지도 패널로 표시합니다">지도 보기</button>
+        <button id="map-page" title="지도 전용 화면을 열어 카메라와 도로 데이터를 더 크게 확인합니다">지도 전용</button>
+        <button data-task="upload_dry_run" title="GitHub 업로드 전에 DB 검증과 Git 작업 가능 상태를 dry-run으로 확인합니다">업로드 확인</button>
+        <button class="primary" data-task="upload_push" title="검증된 OSM 도로 DB를 GitHub 데이터 저장소에 커밋하고 업로드합니다">GitHub 업로드</button>
+        <button class="danger" id="stop" title="현재 실행 중인 다운로드, 생성, 검증, 업로드 작업을 중지합니다" disabled>중지</button>
+      </div>
+      <div class="build-options">
+        <label for="build-profile">DB 생성 모드</label>
+        <select id="build-profile">
+          <option value="camera-balanced" selected>카메라 추적용</option>
+          <option value="full">전체 도로</option>
+          <option value="major">주요도로</option>
+        </select>
+        <input id="speed-cameras" type="text" placeholder="단속카메라 CSV 경로">
+      </div>
+    </header>
+    <div class="notice" id="notice"></div>
+
+    <section class="grid" id="tasks"></section>
+
+    <section class="db-panel hidden" id="db-panel">
+      <div class="db-head">
+        <strong>DB 보기</strong>
+        <span class="db-path" id="db-path">-</span>
+      </div>
+      <div class="db-stats" id="db-stats"></div>
+      <div class="db-meta" id="db-meta"></div>
+      <div class="tabs">
+        <button data-db-tab="matches" class="active">카메라 매칭</button>
+        <button data-db-tab="cameras">단속카메라</button>
+        <button data-db-tab="roads">도로</button>
+      </div>
+      <div class="table-wrap" id="db-table"></div>
+    </section>
+
+    <section class="map-panel hidden" id="map-panel">
+      <div class="map-head">
+        <strong>지도 보기</strong>
+        <span class="map-status" id="map-status">대기</span>
+      </div>
+      <div class="map-meta" id="map-meta">
+        <span>카메라 <strong>-</strong></span>
+        <span>도로 <strong>-</strong></span>
+        <span>확대/이동하면 현재 화면만 다시 조회합니다</span>
+      </div>
+      <div class="map-canvas" id="camera-map"></div>
+    </section>
+
+    <section class="log-shell">
+      <div class="log-head">
+        <strong id="log-title">로그</strong>
+        <span id="event-state">SSE 연결 중</span>
+      </div>
+      <pre id="log"></pre>
+    </section>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const taskOrder = ["download", "generate_cameras", "build", "replace", "import_cameras", "validate", "upload_dry_run", "upload_push"];
+    const statusText = {
+      idle: "대기",
+      running: "실행",
+      stopping: "중지",
+      success: "성공",
+      failed: "실패",
+      stopped: "중지됨"
+    };
+    const taskRoot = document.getElementById("tasks");
+    const logEl = document.getElementById("log");
+    const logTitle = document.getElementById("log-title");
+    const summary = document.getElementById("summary");
+    const eventState = document.getElementById("event-state");
+    const notice = document.getElementById("notice");
+    const stopButton = document.getElementById("stop");
+    const buildProfile = document.getElementById("build-profile");
+    const speedCameras = document.getElementById("speed-cameras");
+    const dbButton = document.getElementById("db-view");
+    const dbPanel = document.getElementById("db-panel");
+    const dbPath = document.getElementById("db-path");
+    const dbStats = document.getElementById("db-stats");
+    const dbMeta = document.getElementById("db-meta");
+    const dbTable = document.getElementById("db-table");
+    const mapButton = document.getElementById("map-view");
+    const mapPageButton = document.getElementById("map-page");
+    const mapPanel = document.getElementById("map-panel");
+    const mapStatus = document.getElementById("map-status");
+    const mapMeta = document.getElementById("map-meta");
+    const mapEl = document.getElementById("camera-map");
+    const apiBase = location.protocol === "file:" ? "http://127.0.0.1:8765" : "";
+    const mapPageUrl = new URL("map.html", location.href).href;
+    const healthEl = document.getElementById("server-health");
+    const serverHost = location.protocol === "file:" ? "127.0.0.1" : (location.hostname || "127.0.0.1");
+    const serverPort = location.protocol === "file:" ? "8765" : (location.port || "8765");
+    const serverCommands = {
+      windows: `tools\\osm_roads_webui\\start_server.cmd ${serverPort}`,
+      ubuntu: `tools/osm_roads_webui/start_server.sh ${serverPort}`,
+    };
+    let activePlatform = preferredClientPlatform();
+    let startScriptPaths = localStartScriptPaths();
+    let state = null;
+    let selectedTask = "download";
+    let speedCameraTouched = false;
+    let dbData = null;
+    let selectedDbTab = "matches";
+    let cameraMap = null;
+    let cameraLayer = null;
+    let roadLayer = null;
+    let mapLoadTimer = null;
+    let mapRequestId = 0;
+    let events = null;
+
+    if (location.protocol === "file:") {
+      notice.classList.add("show");
+      notice.textContent = "HTML 파일을 직접 열었습니다. API는 http://127.0.0.1:8765 로 연결합니다. 서버가 꺼져 있으면 python tools/scripts/osm_roads_webui.py --host 127.0.0.1 --port 8765 를 먼저 실행하세요.";
+    }
+
+    function taskTemplate(key) {
+      const el = document.createElement("article");
+      el.className = "task";
+      el.id = `task-${key}`;
+      el.innerHTML = `
+        <div class="task-head">
+          <div class="task-title"></div>
+          <div class="status"></div>
+        </div>
+        <div class="progress"><div class="bar"></div></div>
+        <div class="meta">
+          <span>단계</span><span class="stage"></span>
+          <span>모드</span><span class="mode"></span>
+          <span>카메라</span><span class="cameras"></span>
+          <span>진행률</span><span class="percent"></span>
+          <span>메시지</span><span class="message"></span>
+          <span>경과</span><span class="elapsed"></span>
+          <span>DB 크기</span><span class="dbsize"></span>
+          <span>배치</span><span class="batch"></span>
+          <span>갱신</span><span class="updated"></span>
+          <span>시작</span><span class="started"></span>
+          <span>종료</span><span class="finished"></span>
+        </div>
+      `;
+      el.addEventListener("click", () => {
+        selectedTask = key;
+        renderLog();
+      });
+      return el;
+    }
+
+    for (const key of taskOrder) {
+      taskRoot.appendChild(taskTemplate(key));
+    }
+
+    async function post(path) {
+      try {
+        const res = await fetch(`${apiBase}${path}`, { method: "POST" });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          alert(data.message || "요청 실패");
+        }
+      } catch (e) {
+        const message = `서버 요청 실패: ${e.message}`;
+        summary.textContent = message;
+        eventState.textContent = "서버 연결 실패";
+        alert(`${message}\n\n서버 실행:\n${serverCommands[activePlatform] || serverCommands.windows}`);
+      }
+    }
+
+    async function refreshHealth() {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2500);
+      const started = performance.now();
+      try {
+        const res = await fetch(`${apiBase}/api/health`, { signal: controller.signal, cache: "no-store" });
+        const data = await res.json();
+        const latencyMs = Math.round(performance.now() - started);
+        renderHealth(data, latencyMs);
+      } catch (e) {
+        const reason = e.name === "AbortError" ? "응답 시간 초과" : e.message;
+        setHealth("bad", `서버 오프라인 | ${reason}`, "", true, false);
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
+    function renderHealth(data, latencyMs) {
+      const db = data.db || {};
+      const server = data.server || {};
+      if (data.platform) {
+        activePlatform = data.platform;
+      }
+      if (data.start_scripts) {
+        startScriptPaths = { ...startScriptPaths, ...data.start_scripts };
+      }
+      if (data.start_script_path) {
+        startScriptPaths[activePlatform] = data.start_script_path;
+      }
+      const host = server.host && server.port ? `${server.host}:${server.port}` : "서버";
+      const pathMode = db.uses_default_path ? "기본 DB" : "사용자 DB";
+      const sizeText = db.size_bytes ? ` | ${formatBytes(db.size_bytes)}` : "";
+      if (db.read_blocked) {
+        setHealth(
+          "warn",
+          `${host} 온라인 | DB 교체 중 | DB 조회 일시 중지${sizeText}`,
+          `${db.configured_path || ""}`,
+          false,
+          true,
+        );
+        return;
+      }
+      if (data.ok) {
+        setHealth(
+          db.uses_default_path ? "ok" : "warn",
+          `${host} 온라인 | ${pathMode} OK${sizeText} | API ${latencyMs}ms`,
+          `${db.configured_path || ""}`,
+          false,
+          true,
+        );
+        return;
+      }
+      const reason = db.error || (db.exists ? "스키마/스모크 테스트 실패" : "DB 파일 없음");
+      setHealth("bad", `${host} 온라인 | ${pathMode} 오류: ${reason}`, `${db.configured_path || ""}`, false, true);
+    }
+
+    function setHealth(stateClass, text, title, showCopy, showOpen) {
+      const textEl = document.createElement("span");
+      textEl.className = "health-text";
+      textEl.textContent = text;
+      const actionsEl = document.createElement("span");
+      actionsEl.className = "health-actions";
+
+      const retryButton = document.createElement("button");
+      retryButton.type = "button";
+      retryButton.textContent = "다시 확인";
+      retryButton.addEventListener("click", forceOnlineCheck);
+      actionsEl.appendChild(retryButton);
+
+      if (showCopy) {
+        for (const platform of ["windows", "ubuntu"]) {
+          const copyButton = document.createElement("button");
+          copyButton.type = "button";
+          copyButton.textContent = `${platformLabel(platform)} 실행 복사`;
+          copyButton.addEventListener("click", () => copyServerCommand(copyButton, platform));
+          actionsEl.appendChild(copyButton);
+
+          const pathButton = document.createElement("button");
+          pathButton.type = "button";
+          pathButton.textContent = `${platformLabel(platform)} 경로 복사`;
+          pathButton.addEventListener("click", () => copyStartScriptPath(pathButton, platform));
+          actionsEl.appendChild(pathButton);
+        }
+      }
+
+      if (showOpen) {
+        const openButton = document.createElement("button");
+        openButton.type = "button";
+        openButton.textContent = `${platformLabel(activePlatform)} 위치 열기`;
+        openButton.addEventListener("click", () => openStartScriptFolder(openButton));
+        actionsEl.appendChild(openButton);
+      }
+
+      healthEl.className = `health ${stateClass}`;
+      healthEl.title = title || "";
+      healthEl.replaceChildren(textEl, actionsEl);
+    }
+
+    function forceOnlineCheck() {
+      pollState();
+      connectEvents();
+      refreshHealth();
+    }
+
+    async function copyServerCommand(button, platform) {
+      const command = serverCommands[platform] || serverCommands.windows;
+      const copied = await copyText(command);
+      if (!copied) {
+        window.prompt(`${platformLabel(platform)} 서버 실행 명령`, command);
+        return;
+      }
+      const previousText = button.textContent;
+      button.textContent = "복사됨";
+      setTimeout(() => {
+        button.textContent = previousText;
+      }, 1500);
+    }
+
+    async function copyStartScriptPath(button, platform) {
+      const path = startScriptPaths[platform] || startScriptPaths.windows;
+      const copied = await copyText(path);
+      if (!copied) {
+        window.prompt(`${platformLabel(platform)} 시작 스크립트 경로`, path);
+        return;
+      }
+      const previousText = button.textContent;
+      button.textContent = "복사됨";
+      setTimeout(() => {
+        button.textContent = previousText;
+      }, 1500);
+    }
+
+    async function openStartScriptFolder(button) {
+      const previousText = button.textContent;
+      button.disabled = true;
+      button.textContent = "여는 중";
+      try {
+        const res = await fetch(`${apiBase}/api/open/start-script-folder`, { method: "POST" });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          alert(data.message || "파일 탐색기 열기 실패");
+        }
+      } catch (e) {
+        alert(`파일 탐색기 열기 실패: ${e.message}`);
+      } finally {
+        button.disabled = false;
+        button.textContent = previousText;
+      }
+    }
+
+    function preferredClientPlatform() {
+      const platform = `${navigator.platform || ""} ${navigator.userAgent || ""}`.toLowerCase();
+      if (platform.includes("win")) return "windows";
+      if (platform.includes("linux") || platform.includes("ubuntu")) return "ubuntu";
+      return "windows";
+    }
+
+    function platformLabel(platform) {
+      return platform === "ubuntu" ? "Ubuntu" : "Windows";
+    }
+
+    function localStartScriptPaths() {
+      if (location.protocol === "file:") {
+        const windowsPath = decodeURIComponent(new URL("start_server.cmd", location.href).pathname)
+          .replace(/^\/([A-Za-z]:)/, "$1")
+          .replaceAll("/", "\\");
+        const ubuntuPath = decodeURIComponent(new URL("start_server.sh", location.href).pathname);
+        return { windows: windowsPath, ubuntu: ubuntuPath };
+      }
+      return {
+        windows: "tools\\osm_roads_webui\\start_server.cmd",
+        ubuntu: "tools/osm_roads_webui/start_server.sh",
+      };
+    }
+
+    async function copyText(text) {
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch (e) {
+        // Fall back to a temporary textarea below.
+      }
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        return document.execCommand("copy");
+      } finally {
+        textarea.remove();
+      }
+    }
+
+    document.querySelectorAll("[data-task]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const task = button.dataset.task;
+        if (task === "upload_push" && !confirm("GitHub에 커밋/푸시를 진행할까요?")) {
+          return;
+        }
+        selectedTask = task;
+        const params = new URLSearchParams();
+        if (task === "build") {
+          params.set("profile", buildProfile.value);
+        }
+        if ((task === "generate_cameras" || task === "build" || task === "import_cameras") && speedCameras.value.trim()) {
+          params.set("speed_cameras", speedCameras.value.trim());
+        }
+        const query = params.toString();
+        const path = query ? `/api/tasks/${task}?${query}` : `/api/tasks/${task}`;
+        await post(path);
+      });
+    });
+
+    stopButton.addEventListener("click", () => post("/api/stop"));
+    dbButton.addEventListener("click", () => loadDbView());
+    mapButton.addEventListener("click", () => showMapView());
+    mapPageButton.addEventListener("click", () => {
+      window.location.href = mapPageUrl;
+    });
+    speedCameras.addEventListener("input", () => {
+      speedCameraTouched = true;
+    });
+    document.querySelectorAll("[data-db-tab]").forEach((button) => {
+      button.addEventListener("click", () => {
+        selectedDbTab = button.dataset.dbTab;
+        renderDbTable();
+      });
+    });
+
+    function render(nextState) {
+      state = nextState;
+      const busy = Boolean(state.busy);
+      const active = state.active_task;
+      if (!speedCameraTouched && !speedCameras.value && state.defaults && state.defaults.speed_cameras) {
+        speedCameras.value = state.defaults.speed_cameras;
+      }
+      summary.textContent = busy ? `${state.tasks[active].label} 실행 중` : "대기 중";
+      stopButton.disabled = !busy;
+      buildProfile.disabled = busy;
+      speedCameras.disabled = busy;
+      document.querySelectorAll("[data-task]").forEach((button) => {
+        button.disabled = busy;
+      });
+      dbButton.disabled = busy;
+      mapButton.disabled = busy;
+      mapPageButton.disabled = busy;
+
+      for (const key of taskOrder) {
+        const task = state.tasks[key];
+        const el = document.getElementById(`task-${key}`);
+        el.querySelector(".task-title").textContent = task.label;
+        const status = el.querySelector(".status");
+        status.className = `status ${task.status}`;
+        status.textContent = statusText[task.status] || task.status;
+        const details = task.details || {};
+        el.querySelector(".bar").style.width = `${Math.max(0, Math.min(100, task.progress))}%`;
+        el.querySelector(".percent").textContent = `${task.progress}%`;
+        el.querySelector(".message").textContent = task.message || "-";
+        el.querySelector(".stage").textContent = task.stage || details.step || "-";
+        el.querySelector(".mode").textContent = formatProfile(details.build_profile);
+        el.querySelector(".cameras").textContent = formatCameras(details);
+        el.querySelector(".elapsed").textContent = formatElapsed(details.elapsed_s);
+        el.querySelector(".dbsize").textContent = formatBytes(details.db_size_bytes);
+        el.querySelector(".batch").textContent = formatBatch(details);
+        el.querySelector(".updated").textContent = task.updated_at || "-";
+        el.querySelector(".started").textContent = task.started_at || "-";
+        el.querySelector(".finished").textContent = task.finished_at || "-";
+      }
+      renderLog();
+    }
+
+    async function showMapView() {
+      mapPanel.classList.remove("hidden");
+      if (!window.L) {
+        mapStatus.textContent = "지도 라이브러리 로드 실패";
+        return;
+      }
+      if (!cameraMap) {
+        cameraMap = L.map(mapEl, { preferCanvas: true }).setView([36.35, 127.85], 7);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxZoom: 19,
+          attribution: "&copy; OpenStreetMap contributors"
+        }).addTo(cameraMap);
+        roadLayer = L.layerGroup().addTo(cameraMap);
+        cameraLayer = L.layerGroup().addTo(cameraMap);
+        cameraMap.on("moveend zoomend", scheduleMapLoad);
+      }
+      setTimeout(() => {
+        cameraMap.invalidateSize();
+        loadMapData();
+      }, 80);
+    }
+
+    function scheduleMapLoad() {
+      clearTimeout(mapLoadTimer);
+      mapLoadTimer = setTimeout(loadMapData, 350);
+    }
+
+    async function loadMapData() {
+      if (!cameraMap) return;
+      const requestId = ++mapRequestId;
+      const bounds = cameraMap.getBounds();
+      const bbox = [
+        bounds.getWest(),
+        bounds.getSouth(),
+        bounds.getEast(),
+        bounds.getNorth()
+      ].map((value) => value.toFixed(6)).join(",");
+      mapStatus.textContent = "지도 데이터 조회 중";
+      try {
+        const res = await fetch(`${apiBase}/api/db/map?bbox=${encodeURIComponent(bbox)}&camera_limit=800&road_limit=1200`);
+        const data = await res.json();
+        if (requestId !== mapRequestId) return;
+        if (!res.ok || !data.ok) {
+          mapStatus.textContent = data.message || "지도 조회 실패";
+          return;
+        }
+        renderMapData(data);
+      } catch (e) {
+        if (requestId === mapRequestId) {
+          mapStatus.textContent = `지도 조회 실패: ${e.message}`;
+        }
+      }
+    }
+
+    function renderMapData(data) {
+      roadLayer.clearLayers();
+      cameraLayer.clearLayers();
+      for (const road of data.roads || []) {
+        const line = L.polyline(
+          [[Number(road.lat1), Number(road.lon1)], [Number(road.lat2), Number(road.lon2)]],
+          {
+            color: roadColor(road.highway),
+            weight: roadWeight(road.highway),
+            opacity: 0.72
+          }
+        );
+        line.bindPopup(`
+          <strong>${escapeHtml(road.name || road.ref || "road")}</strong><br>
+          road_id ${escapeHtml(road.road_id)} / camera ${escapeHtml(road.camera_id)}<br>
+          ${escapeHtml(road.highway || "-")} / confidence ${escapeHtml(formatCell(road.match_confidence))}
+        `);
+        line.addTo(roadLayer);
+      }
+      for (const camera of data.cameras || []) {
+        const marker = L.circleMarker([Number(camera.lat), Number(camera.lon)], {
+          radius: 5,
+          color: cameraDisplayColor(camera),
+          fillColor: cameraDisplayColor(camera),
+          fillOpacity: 0.88,
+          weight: 1.5
+        });
+        marker.bindPopup(cameraPopup(camera));
+        marker.addTo(cameraLayer);
+      }
+      const cameras = (data.cameras || []).length;
+      const roads = (data.roads || []).length;
+      const cameraLimit = Number((data.limits || {}).camera_limit);
+      const roadLimit = Number((data.limits || {}).road_limit);
+      const limited = (Number.isFinite(cameraLimit) && cameras >= cameraLimit) || (Number.isFinite(roadLimit) && roads >= roadLimit);
+      mapStatus.textContent = limited ? "조회 제한 도달, 확대하면 더 자세히 표시됩니다" : "지도 데이터 표시 완료";
+      mapMeta.innerHTML = `
+        <span>카메라 <strong>${formatNumber(cameras)}</strong></span>
+        <span>도로 <strong>${formatNumber(roads)}</strong></span>
+        <span>줌 <strong>${cameraMap.getZoom()}</strong></span>
+        <span>${limited ? "현재 화면 결과 일부만 표시" : "현재 화면 전체 표시"}</span>
+      `;
+    }
+
+    function roadColor(highway) {
+      if (highway === "motorway" || highway === "trunk") return "#f06c75";
+      if (highway === "primary") return "#e9b44c";
+      if (highway === "secondary" || highway === "tertiary") return "#41c7a7";
+      return "#9da8b8";
+    }
+
+    function roadWeight(highway) {
+      if (highway === "motorway" || highway === "trunk") return 4;
+      if (highway === "primary") return 3;
+      return 2;
+    }
+
+    function cameraColor(speed) {
+      const value = Number(speed);
+      if (Number.isFinite(value) && value >= 80) return "#f06c75";
+      if (Number.isFinite(value) && value <= 30) return "#e9b44c";
+      return "#65d17d";
+    }
+
+    function cameraDisplayColor(camera) {
+      if ((camera.display_class || "") === "suspicious") return "#f59e0b";
+      if ((camera.display_class || "") === "rejected") return "#94a3b8";
+      return cameraColor(camera.speed_limit_kph);
+    }
+
+    function cameraPopup(camera) {
+      const displayClass = camera.display_class || "unknown";
+      const verdict = camera.direction_verdict || "-";
+      const reason = camera.reject_reason || "-";
+      const opposite = Number(camera.opposite_road_id) > 0
+        ? `<br>opposite road ${escapeHtml(camera.opposite_road_id)} / ${escapeHtml(formatCell(camera.opposite_match_distance_m))}m / confidence ${escapeHtml(formatCell(camera.opposite_match_confidence))}`
+        : "";
+      return `
+        <strong>camera ${escapeHtml(camera.id)}</strong><br>
+        상태 ${escapeHtml(displayClass)} / ${escapeHtml(verdict)}<br>
+        사유 ${escapeHtml(reason)}<br>
+        제한속도 ${escapeHtml(formatSpeed(camera.speed_limit_kph))}<br>
+        ${escapeHtml(camera.address || camera.road_name || "-")}<br>
+        road ${escapeHtml(camera.road_id || "-")} ${escapeHtml(camera.matched_road_name || camera.matched_road_ref || "")}<br>
+        거리 ${escapeHtml(formatCell(camera.match_distance_m))}m / confidence ${escapeHtml(formatCell(camera.match_confidence))}${opposite}
+      `;
+    }
+
+    function formatSpeed(speed) {
+      const value = Number(speed);
+      return Number.isFinite(value) && value > 0 ? `${value} km/h` : "-";
+    }
+
+    async function loadDbView() {
+      dbPanel.classList.remove("hidden");
+      dbPath.textContent = "조회 중";
+      try {
+        const res = await fetch(`${apiBase}/api/db/summary`);
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          dbPath.textContent = data.message || "DB 조회 실패";
+          dbStats.innerHTML = "";
+          dbMeta.innerHTML = "";
+          dbTable.innerHTML = "";
+          return;
+        }
+        dbData = data;
+        renderDbView();
+      } catch (e) {
+        dbPath.textContent = `DB 조회 실패: ${e.message}`;
+      }
+    }
+
+    function renderDbView() {
+      if (!dbData) return;
+      const counts = dbData.counts || {};
+      const metadata = dbData.metadata || {};
+      dbPath.textContent = `${dbData.db_path} | ${formatBytes(dbData.size_bytes)} | ${formatTimestamp(dbData.modified_at)}`;
+      const statItems = [
+        ["도로", counts.roads],
+        ["연결", counts.road_adjacency],
+        ["카메라", counts.speed_cameras],
+        ["매칭", counts.route_camera_lookup]
+      ];
+      dbStats.innerHTML = statItems.map(([label, value]) => `
+        <div class="db-stat"><span>${label}</span><strong>${formatNumber(value)}</strong></div>
+      `).join("");
+      const metaItems = [
+        ["모드", formatProfile(metadata.build_profile) || metadata.build_profile || "-"],
+        ["카메라 CSV", metadata.speed_camera_csv || "-"],
+        ["PBF", metadata.source_pbf || "-"],
+        ["포함 도로", metadata.included_highways || "-"]
+      ];
+      dbMeta.innerHTML = metaItems.map(([label, value]) => `<span>${label}</span><span>${escapeHtml(String(value))}</span>`).join("");
+      renderDbTable();
+    }
+
+    function renderDbTable() {
+      if (!dbData) return;
+      document.querySelectorAll("[data-db-tab]").forEach((button) => {
+        button.classList.toggle("active", button.dataset.dbTab === selectedDbTab);
+      });
+      const sample = (dbData.samples || {})[selectedDbTab] || { columns: [], rows: [] };
+      if (!sample.columns.length) {
+        dbTable.innerHTML = "";
+        return;
+      }
+      const head = sample.columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("");
+      const rows = sample.rows.map((row) => `
+        <tr>${sample.columns.map((column) => `<td>${escapeHtml(formatCell(row[column]))}</td>`).join("")}</tr>
+      `).join("");
+      dbTable.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    function formatElapsed(seconds) {
+      if (!Number.isFinite(Number(seconds))) return "-";
+      const value = Math.max(0, Number(seconds));
+      const h = Math.floor(value / 3600);
+      const m = Math.floor((value % 3600) / 60);
+      const s = Math.floor(value % 60);
+      if (h > 0) return `${h}h ${m}m ${s}s`;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
+    }
+
+    function formatBytes(bytes) {
+      const value = Number(bytes);
+      if (!Number.isFinite(value) || value <= 0) return "-";
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      let size = value;
+      let unit = 0;
+      while (size >= 1024 && unit < units.length - 1) {
+        size /= 1024;
+        unit += 1;
+      }
+      return unit === 0 ? `${Math.round(size)} ${units[unit]}` : `${size.toFixed(1)} ${units[unit]}`;
+    }
+
+    function formatNumber(value) {
+      const number = Number(value);
+      return Number.isFinite(number) ? number.toLocaleString() : "-";
+    }
+
+    function formatTimestamp(seconds) {
+      const value = Number(seconds);
+      if (!Number.isFinite(value) || value <= 0) return "-";
+      return new Date(value * 1000).toLocaleString();
+    }
+
+    function formatCell(value) {
+      if (value === null || value === undefined || value === "") return "-";
+      if (typeof value === "number" && Number.isFinite(value)) return value.toLocaleString();
+      return String(value);
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function formatBatch(details) {
+      const batch = Number(details.batch);
+      const count = Number(details.batch_count);
+      const inserted = Number(details.inserted_rows);
+      const parts = [];
+      if (Number.isFinite(batch) && Number.isFinite(count) && count > 0) {
+        parts.push(`${batch}/${count}`);
+      }
+      if (Number.isFinite(inserted) && inserted > 0) {
+        parts.push(`${inserted.toLocaleString()} rows`);
+      }
+      return parts.length ? parts.join(" | ") : "-";
+    }
+
+    function formatProfile(profile) {
+      if (profile === "camera-balanced") return "카메라 추적용";
+      if (profile === "full") return "전체 도로";
+      if (profile === "major") return "주요도로";
+      return "-";
+    }
+
+    function formatCameras(details) {
+      const count = Number(details.speed_camera_count);
+      const lookup = Number(details.route_camera_lookup_count);
+      if (Number.isFinite(count) && count > 0) {
+        const lookupText = Number.isFinite(lookup) && lookup > 0 ? ` / lookup ${lookup.toLocaleString()}` : "";
+        return `${count.toLocaleString()}${lookupText}`;
+      }
+      if (details.speed_cameras) return details.speed_cameras;
+      return "-";
+    }
+
+    function renderLog() {
+      if (!state) return;
+      const active = state.active_task || selectedTask;
+      const task = state.tasks[active] || state.tasks[selectedTask];
+      logTitle.textContent = `${task.label} 로그`;
+      logEl.textContent = task.log.join("\n");
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    async function pollState() {
+      try {
+        const res = await fetch(`${apiBase}/api/state`);
+        render(await res.json());
+      } catch (e) {
+        eventState.textContent = "상태 조회 실패";
+        summary.textContent = `서버 연결 실패: ${e.message}`;
+      }
+    }
+
+    function connectEvents() {
+      if (events) {
+        events.close();
+      }
+      events = new EventSource(`${apiBase}/api/events`);
+      events.onopen = () => {
+        eventState.textContent = "SSE 연결됨";
+      };
+      events.onmessage = (event) => {
+        render(JSON.parse(event.data));
+      };
+      events.onerror = () => {
+        eventState.textContent = "SSE 재연결 중";
+      };
+    }
+
+    pollState();
+    connectEvents();
+    refreshHealth();
+    setInterval(refreshHealth, 10000);
+  </script>
+</body>
+</html>

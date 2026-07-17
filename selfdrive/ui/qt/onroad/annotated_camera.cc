@@ -1,8 +1,10 @@
 
 #include "selfdrive/ui/qt/onroad/annotated_camera.h"
 
+#include <QMouseEvent>
 #include <QPainter>
 #include <algorithm>
+#include <cstdlib>
 #include <cmath>
 
 #include "common/swaglog.h"
@@ -25,6 +27,23 @@ void AnnotatedCameraWidget::updateState(const UIState &s) {
   // update engageability/experimental mode button
   experimental_btn->updateState(s);
   dmon.updateState(s);
+}
+
+void AnnotatedCameraWidget::mousePressEvent(QMouseEvent *event) {
+  if (hud.handleMousePress(event->pos(), rect())) {
+    event->accept();
+    return;
+  }
+  event->ignore();
+}
+
+void AnnotatedCameraWidget::mouseReleaseEvent(QMouseEvent *event) {
+  if (hud.handleMouseRelease(event->pos(), rect())) {
+    event->accept();
+    update();
+    return;
+  }
+  CameraWidget::mouseReleaseEvent(event);
 }
 
 void AnnotatedCameraWidget::initializeGL() {
@@ -141,7 +160,7 @@ void AnnotatedCameraWidget::paintGL() {
   double cur_draw_t = millis_since_boot();
   double dt = cur_draw_t - prev_draw_t;
   double fps = fps_filter.update(1. / dt * 1000);
-  if (fps < 15) {
+  if (fps < 15 && std::getenv("USE_WEBCAM") == nullptr) {
     LOGW("slow frame rate: %.2f fps", fps);
   }
   prev_draw_t = cur_draw_t;

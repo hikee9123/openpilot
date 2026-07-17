@@ -151,7 +151,8 @@ public:
   }
 
   void setActiveIcon(const QString &icon) {
-    active_icon_pixmap = QPixmap(icon).scaledToWidth(80, Qt::SmoothTransformation);
+    QPixmap pixmap(icon);
+    active_icon_pixmap = pixmap.isNull() ? QPixmap() : pixmap.scaledToWidth(80, Qt::SmoothTransformation);
   }
 
   void refresh() {

@@ -1,11 +1,14 @@
 #pragma once
 
+#include <cstdint>
+
 #include <QStackedLayout>
 #include <QWidget>
 
-
+#include "common/params.h"
 #include "selfdrive/ui/ui.h"
 #include "selfdrive/ui/qt/custom/widgetNetImg.h"
+#include "selfdrive/ui/qt/custom/osm_minimap.h"
 
 
 /*
@@ -42,7 +45,10 @@ public:
   explicit OnPaint();
   void    updateState(const UIState &s);
   void    drawHud(QPainter &p);
+  bool    handleMousePress(const QPoint &pt, const QRect &surface);
+  bool    handleMouseRelease(const QPoint &pt, const QRect &surface);
   void    drawSpeed(QPainter &p, int x, QString speedStr, QString speedUnit );
+  void    drawSpeedCameraAlert(QPainter &p, const QRect &set_speed_rect);
   void    drawLead(QPainter &p, const cereal::RadarState::LeadData::Reader &lead_data, const QPointF &vd, int w, int h );
 
 private:
@@ -52,6 +58,10 @@ private:
 
 private:
   void   ui_main_navi( QPainter &p );
+  bool   speedCameraAlert(int &cam_type, int &limit_speed, int &distance_m, bool &signal_camera);
+  QString cameraTypeLabel(int cam_type, bool signal_camera) const;
+  void   drawSpeedLimitSign(QPainter &p, const QPointF &center, int radius, int cam_type, int limit_speed, bool signal_camera) const;
+  void   drawSignalBadge(QPainter &p, double center_x, double top_y) const;
 
 private:
   inline QColor redColor(int alpha = 255) { return QColor(201, 34, 49, alpha); }
@@ -71,6 +81,16 @@ private:
   const int bdr_s = 30;
 
   int  touched_old = 0;
+  Params params;
+  bool osm_enabled = false;
+  int osm_minimap_position = 3;
+  int osm_debug_map_zoom = 0;
+  int osm_gps_sim_speed_kph = 60;
+  bool osm_debug_zoom_pressed = false;
+  bool osm_debug_speed_pressed = false;
+  bool osm_show_suspicious_cameras = true;
+  bool osm_debug_zoom_controls_enabled = false;
+  bool osm_debug_speed_controls_enabled = false;
 
   struct _PARAM_
   {
@@ -103,6 +123,7 @@ private:
 
     int   enabled, engaged;
     int   controlsAllowed;
+    float vEgo;
 
   } m_param;
 
@@ -121,11 +142,15 @@ private:
      int camLimitSpeed;
      int camLimitSpeedLeftDist;
      int cntIdx;
+     OsmMinimapData osmRoadOverlay;
   } m_nda;
+
+  uint64_t osm_active_camera_id = 0;
 
 
 private:
    NetworkImageWidget *icon_01;
+   OsmMinimapRenderer osm_minimap;
    //QPixmap img_tire_pressure;
    int  is_debug;
    int  is_carTracking;

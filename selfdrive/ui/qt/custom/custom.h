@@ -323,6 +323,12 @@ signals:
 private slots:
 
 private:
+  void deleteLocalRouteLogs();
+  void markCurrentRouteForUpload();
+  void refreshLogStatus();
+  void refreshLogStorageStats(bool force = false);
+  QString managerProcessStatus(const char *name) const;
+
   struct ValueDef {
     QString param;
     QString title;
@@ -334,11 +340,20 @@ private:
     double def;
   };
   // 기본 아이콘 경로
-  const QString kIcon = "../assets/offroad/icon_shell.png";
+  const QString kIcon = "../assets/icons/shell.png";
 
 private:
   CustomPanel *m_pCustom = nullptr;
   QJsonObject &m_jsonobj;
+  ButtonControl *m_deleteLogsButton = nullptr;
+  LabelControl *m_loggerStatus = nullptr;
+  LabelControl *m_uploaderStatus = nullptr;
+  LabelControl *m_deleterStatus = nullptr;
+  LabelControl *m_routeStatus = nullptr;
+  LabelControl *m_logPathStatus = nullptr;
+  LabelControl *m_savedLogsStatus = nullptr;
+  LabelControl *m_recordingSpaceStatus = nullptr;
+  qint64 m_lastLogStorageRefreshMs = 0;
 
 };
 
@@ -386,9 +401,11 @@ private:
   std::map<std::string, CValueControl*> m_valueCtrl;
   void refreshModelStatus();
   void setModelCompileProgress(const QString &stage, int percent, const QString &detail);
+  void runCommaModelUpdate(bool apply);
   bool isModelCompileActive() const;
   QString currentModel;
   ButtonControl *changeModelButton = nullptr;
+  ButtonControl *commaModelUpdateButton = nullptr;
   QFrame *modelStatusPanel = nullptr;
   QLabel *modelStatusTitle = nullptr;
   QLabel *modelDescriptionLabel = nullptr;
@@ -398,6 +415,9 @@ private:
   QProgressBar *modelProgressBar = nullptr;
   qint64 modelCompileStartedAt = 0;
   QProcess *modelProcess = nullptr;
+  QProcess *commaModelUpdateProcess = nullptr;
+  bool commaModelUpdateAvailable = false;
+  QString commaModelUpdateFolder;
   QString modelCompilingName;
   QString modelCompileStage;
   QString modelCompileDetail;
@@ -432,6 +452,25 @@ public:
 
 private:
   std::map<std::string, ParamControl*> toggles;
+  void refreshOsmRoadsStatus();
+  void refreshOsmSpeedCamerasStatus();
+  bool osmRoadsInstallRunning();
+  bool osmSpeedCamerasUpdateRunning();
+  void resetOsmRoadsLogReplay(bool fromBeginning = false);
+  void skipOsmRoadsExistingLog();
+  void emitOsmRoadsInstallLog();
+  ButtonControl *installOsmDbButton = nullptr;
+  ButtonControl *updateOsmSpeedCamerasButton = nullptr;
+  QLabel *osmRoadsStatusLabel = nullptr;
+  QLabel *osmRoadsDetailLabel = nullptr;
+  QProgressBar *osmRoadsProgressBar = nullptr;
+  QTimer *osmRoadsStatusTimer = nullptr;
+  QLabel *osmSpeedCamerasStatusLabel = nullptr;
+  QLabel *osmSpeedCamerasDetailLabel = nullptr;
+  QProgressBar *osmSpeedCamerasProgressBar = nullptr;
+  QTimer *osmSpeedCamerasStatusTimer = nullptr;
+  qint64 osmRoadsLogReadOffset = -1;
+  qint64 osmRoadsLastLoggedDownloadBytes = -1;
 
 
 protected:

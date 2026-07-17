@@ -2,12 +2,14 @@
 set -euo pipefail
 
 
-PY=python3
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../../.." && pwd)"
 MODELD_DIR="${REPO_ROOT}/selfdrive/modeld"
 WORKDIR="${WORKDIR:-${MODELD_DIR}}"
+PY="${PYTHON:-${REPO_ROOT}/.venv/bin/python}"
+if [[ ! -x "${PY}" ]]; then
+  PY=python3
+fi
 
 echo "[model_make] ===== START $(date) ====="
 echo "[model_make] [${WORKDIR}]"
@@ -20,7 +22,7 @@ export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 
 echo "[model_make] 실행"
 set +e
-${PY} model_make.py
+"${PY}" model_make.py
 RC=$?
 set -e
 

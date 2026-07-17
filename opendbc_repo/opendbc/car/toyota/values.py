@@ -359,6 +359,11 @@ class CAR(Platforms):
     [ToyotaCarDocs("Lexus LC 2024-25")],
     CarSpecs(mass=4500. * CV.LB_TO_KG, wheelbase=2.87, steerRatio=13.0, tireStiffnessFactor=0.444),
   )
+  LEXUS_LS = PlatformConfig(
+    [ToyotaCarDocs("Lexus LS 2018", "All except Lexus Safety System+ A")],
+    CarSpecs(mass=4905. * CV.LB_TO_KG, wheelbase=3.125, steerRatio=15.0, tireStiffnessFactor=0.444),
+    dbc_dict('toyota_nodsu_pt_generated', 'toyota_adas'),
+  )
   LEXUS_RC = PlatformConfig(
     [ToyotaCarDocs("Lexus RC 2018-20")],
     LEXUS_IS.specs,

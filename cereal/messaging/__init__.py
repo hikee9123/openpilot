@@ -2,7 +2,7 @@
 from msgq.ipc_pyx import Context, Poller, SubSocket, PubSocket, SocketEventHandle, toggle_fake_events, \
                                 set_fake_prefix, get_fake_prefix, delete_fake_prefix, wait_for_one_event
 from msgq.ipc_pyx import MultiplePublishersError, IpcError
-from msgq import fake_event_handle, pub_sock, sub_sock, drain_sock_raw
+from msgq import fake_event_handle, drain_sock_raw
 import msgq
 
 import os
@@ -18,6 +18,20 @@ from openpilot.common.util import MovingAverage
 NO_TRAVERSAL_LIMIT = 2**64-1
 
 
+def pub_sock(endpoint: str) -> PubSocket:
+  service = SERVICE_LIST.get(endpoint)
+  segment_size = service.queue_size if service else 0
+  return msgq.pub_sock(endpoint, segment_size)
+
+
+def sub_sock(endpoint: str, poller: Optional[Poller] = None, addr: str = "127.0.0.1",
+             conflate: bool = False, timeout: Optional[int] = None) -> SubSocket:
+  service = SERVICE_LIST.get(endpoint)
+  segment_size = service.queue_size if service else 0
+  return msgq.sub_sock(endpoint, poller=poller, addr=addr, conflate=conflate,
+                       timeout=timeout, segment_size=segment_size)
+
+
 def reset_context():
   msgq.context = Context()
 
@@ -28,12 +42,16 @@ def log_from_bytes(dat: bytes, struct: capnp.lib.capnp._StructModule = log.Event
 
 
 def new_message(service: Optional[str], size: Optional[int] = None, **kwargs) -> capnp.lib.capnp._DynamicStructBuilder:
-  args = {
-    'valid': False,
-    'logMonoTime': int(time.monotonic() * 1e9),
-    **kwargs
-  }
-  dat = log.Event.new_message(**args)
+  valid = kwargs.pop('valid', False)
+  log_mono_time = kwargs.pop('logMonoTime', int(time.monotonic() * 1e9))
+
+  # pycapnp 2.2.x's kwargs/from_dict path creates cyclic garbage here. Realtime processes disable GC.
+  dat = log.Event.new_message()
+  dat.valid = valid
+  dat.logMonoTime = log_mono_time
+  for field, value in kwargs.items():
+    setattr(dat, field, value)
+
   if service is not None:
     if size is None:
       dat.init(service)

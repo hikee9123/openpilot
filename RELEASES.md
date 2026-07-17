@@ -1,3 +1,33 @@
+Version drive_test1 (2026-05-23)
+========================
+* Backported driving stability updates from comma master
+  * Filter low-confidence radar lead probability
+  * Use safer acceleration selection for longitudinal planning
+  * Improve livePose timestamp handling in paramsd and torqued
+  * Add camera odometry delay compensation in locationd
+  * Tune lagd minimum lag, candidate selection, and lateral acceleration smoothing
+  * Refine longitudinal policy behavior
+  * Update HKG angle control saturation handling
+  * Reserve PandaState controlsAllowed fields for fork alternate experiences
+* Backported messaging queue memory improvements
+  * Add service-specific msgq queue sizes for high-bandwidth streams
+  * Use smaller default msgq ringbuffers while preserving large queues for CAN, model, and camera data
+* Backported modeld timing improvement
+  * Account for frame capture and action timing delay when computing model actions
+* Backported selected driver monitoring policy improvements
+  * Recover audible driver monitoring alerts when coming to a stop
+  * Reduce pose false positives during steering maneuvers
+* Backported selected opendbc vehicle support
+  * Add Kia K7 2017 platform metadata, firmware fingerprints, route, and torque data
+  * Add Lexus LS 2018 platform metadata, firmware fingerprints, route, and torque substitute data
+  * Add Rivian R1 2025 Gen2 support with harness split and route migration
+  * Add Acura MDX 2022-24 platform support and firmware fingerprints
+  * Add Lexus LS stop-and-go and dedicated torque data
+* Backported DriverMonitoringState v2 schema and policy plumbing on drive_test2
+* Backported driver monitoring uncertain-camera reset tuning, excluding comma four-specific changes
+* Backported non-UI test and process replay migration stability fixes
+* Backported onroad timing test stability updates without changing the Qt UI path
+
 Version 0.10.1 (2025-09-08)
 ========================
 * New driving model #36087
