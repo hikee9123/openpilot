@@ -25,7 +25,9 @@ from openpilot.selfdrive.modeld.runners.tinygrad_helpers import qcom_tensor_from
 MODEL_WIDTH, MODEL_HEIGHT = DM_INPUT_SIZE
 CALIB_LEN = 3
 FEATURE_LEN = 512
-OUTPUT_SIZE = 84 + FEATURE_LEN
+# The current model omits the legacy poor-vision logit before wheel-on-right.
+OUTPUT_SIZE = 83 + FEATURE_LEN
+LEGACY_OUTPUT_SIZE = 84 + FEATURE_LEN
 
 PROCESS_NAME = "selfdrive.modeld.dmonitoringmodeld"
 SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
@@ -55,6 +57,14 @@ class DMonitoringModelResult(ctypes.Structure):
   _fields_ = [
     ("driver_state_lhd", DriverStateResult),
     ("driver_state_rhd", DriverStateResult),
+    ("wheel_on_right_prob", ctypes.c_float),
+    ("features", ctypes.c_float*FEATURE_LEN)]
+
+
+class LegacyDMonitoringModelResult(ctypes.Structure):
+  _fields_ = [
+    ("driver_state_lhd", DriverStateResult),
+    ("driver_state_rhd", DriverStateResult),
     ("poor_vision_prob", ctypes.c_float),
     ("wheel_on_right_prob", ctypes.c_float),
     ("features", ctypes.c_float*FEATURE_LEN)]
@@ -66,6 +76,7 @@ class ModelState:
 
   def __init__(self, cl_ctx):
     assert ctypes.sizeof(DMonitoringModelResult) == OUTPUT_SIZE * ctypes.sizeof(ctypes.c_float)
+    assert ctypes.sizeof(LegacyDMonitoringModelResult) == LEGACY_OUTPUT_SIZE * ctypes.sizeof(ctypes.c_float)
 
     self.frame = MonitoringModelFrame(cl_ctx)
     self.numpy_inputs = {
@@ -111,14 +122,28 @@ def fill_driver_state(msg, ds_result: DriverStateResult):
   msg.phoneProb = 0.
 
 
+def parse_model_result(model_output: np.ndarray):
+  flat_output = np.ascontiguousarray(model_output, dtype=np.float32).reshape(-1)
+  if flat_output.size == OUTPUT_SIZE:
+    model_result = ctypes.cast(flat_output.ctypes.data, ctypes.POINTER(DMonitoringModelResult)).contents
+    poor_vision_prob = None
+  elif flat_output.size == LEGACY_OUTPUT_SIZE:
+    model_result = ctypes.cast(flat_output.ctypes.data, ctypes.POINTER(LegacyDMonitoringModelResult)).contents
+    poor_vision_prob = model_result.poor_vision_prob
+  else:
+    raise ValueError(f"unexpected driver monitoring output size: {flat_output.size}, expected {OUTPUT_SIZE} or {LEGACY_OUTPUT_SIZE}")
+
+  return flat_output, model_result, poor_vision_prob
+
+
 def get_driverstate_packet(model_output: np.ndarray, frame_id: int, location_ts: int, execution_time: float, gpu_execution_time: float):
-  model_result = ctypes.cast(model_output.ctypes.data, ctypes.POINTER(DMonitoringModelResult)).contents
+  model_output, model_result, poor_vision_prob = parse_model_result(model_output)
   msg = messaging.new_message('driverStateV2', valid=True)
   ds = msg.driverStateV2
   ds.frameId = frame_id
   ds.modelExecutionTime = execution_time
   ds.gpuExecutionTime = gpu_execution_time
-  ds.poorVisionProb = float(sigmoid(model_result.poor_vision_prob))
+  ds.poorVisionProb = float(sigmoid(poor_vision_prob)) if poor_vision_prob is not None else 0.
   ds.wheelOnRightProb = float(sigmoid(model_result.wheel_on_right_prob))
   ds.rawPredictions = model_output.tobytes() if SEND_RAW_PRED else b''
   fill_driver_state(ds.leftDriverData, model_result.driver_state_lhd)
