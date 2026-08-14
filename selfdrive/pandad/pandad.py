@@ -75,25 +75,18 @@ def main() -> None:
   signal.signal(signal.SIGINT, signal_handler)
 
   count = 0
-  first_run = True
   params = Params()
-  no_internal_panda_count = 0
 
   while not do_exit:
     try:
-      count += 1
       cloudlog.event("pandad.flash_and_connect", count=count)
-      params.remove("PandaSignatures")
+      if (count % 2) == 0:
+        HARDWARE.reset_internal_panda()
+      else:
+        HARDWARE.recover_internal_panda()
+      count += 1
 
-      # Handle missing internal panda
-      if no_internal_panda_count > 0:
-        if no_internal_panda_count == 3:
-          cloudlog.info("No pandas found, putting internal panda into DFU")
-          HARDWARE.recover_internal_panda()
-        else:
-          cloudlog.info("No pandas found, resetting internal panda")
-          HARDWARE.reset_internal_panda()
-        time.sleep(3)  # wait to come back up
+      params.remove("PandaSignatures")
 
       # Flash all Pandas in DFU mode
       dfu_serials = PandaDFU.list()
@@ -105,7 +98,6 @@ def main() -> None:
 
       panda_serials = Panda.list()
       if len(panda_serials) == 0:
-        no_internal_panda_count += 1
         continue
 
       cloudlog.info(f"{len(panda_serials)} panda(s) found, connecting - {panda_serials}")
@@ -119,9 +111,9 @@ def main() -> None:
       internal_pandas = [panda for panda in pandas if panda.is_internal()]
       if HARDWARE.has_internal_panda() and len(internal_pandas) == 0:
         cloudlog.error("Internal panda is missing, trying again")
-        no_internal_panda_count += 1
+        for panda in pandas:
+          panda.close()
         continue
-      no_internal_panda_count = 0
 
       # sort pandas to have deterministic order
       # * the internal one is always first
@@ -143,11 +135,6 @@ def main() -> None:
           params.put_bool("PandaSomResetTriggered", True)
           cloudlog.event("panda.som_reset_triggered", health=health, serial=panda.get_usb_serial())
 
-        if first_run:
-          # reset panda to ensure we're in a good state
-          cloudlog.info(f"Resetting panda {panda.get_usb_serial()}")
-          panda.reset(reconnect=True)
-
       for p in pandas:
         p.close()
     # TODO: wrap all panda exceptions in a base panda exception
@@ -161,8 +148,6 @@ def main() -> None:
     except Exception:
       cloudlog.exception("pandad.uncaught_exception")
       continue
-
-    first_run = False
 
     # run pandad with all connected serials as arguments
     os.environ['MANAGER_DAEMON'] = 'pandad'
