@@ -1713,6 +1713,27 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
       proc->deleteLater();
     });
 
+    connect(proc, &QProcess::errorOccurred, this, [=](QProcess::ProcessError error) {
+      if (error != QProcess::FailedToStart) return;
+
+      qWarning() << "model_make.sh failed to start:" << proc->errorString();
+      if (modelProcess == proc) modelProcess = nullptr;
+      Params().put("ActiveModelName", prev);
+      currentModel = QString::fromStdString(prev);
+      modelCompileStartedAt = 0;
+      modelCompilingName.clear();
+      modelCompileStage.clear();
+      modelCompileDetail.clear();
+      modelCompilePercent = 0;
+      changeModelButton->setTitle(tr("Failed to start"));
+      changeModelButton->setText(tr("RETRY"));
+      changeModelButton->setDescription(proc->errorString());
+      changeModelButton->setEnabled(true);
+      if (modelStatusTitle) modelStatusTitle->setText(tr("Compile failed to start"));
+      if (modelProgressBar) modelProgressBar->setVisible(false);
+      proc->deleteLater();
+    });
+
     connect(proc, &QObject::destroyed, this, [this, proc]() {
       if (modelProcess == proc) modelProcess = nullptr;
     });
@@ -1724,7 +1745,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
 
   commaModelUpdateButton = new ButtonControl(
       tr("Comma official model"), tr("CHECK"),
-      tr("Check commaai/openpilot for a new official driving model."));
+      tr("Check commaai/openpilot for the latest split driving model compatible with this fork."));
   QObject::connect(commaModelUpdateButton, &ButtonControl::clicked, this, [this]() {
     runCommaModelUpdate(commaModelUpdateAvailable);
   });
@@ -1805,26 +1826,28 @@ void ModelTab::runCommaModelUpdate(bool apply)
       const QString modelName = result.value("model_name").toString();
       const QString folder = result.value("new_model_folder").toString();
       const QString existing = result.value("existing_model").toString();
+      const QString compatibilityNote = result.value("compatibility_note").toString();
 
       if (resultStatus == "new") {
         commaModelUpdateAvailable = true;
         commaModelUpdateFolder = folder;
         commaModelUpdateButton->setTitle(modelName.isEmpty() ? tr("New comma model") : modelName);
         commaModelUpdateButton->setText(tr("INSTALL"));
-        commaModelUpdateButton->setDescription(folder);
+        commaModelUpdateButton->setDescription(compatibilityNote.isEmpty() ? folder : compatibilityNote + "\n" + folder);
       } else if (resultStatus == "registered") {
         commaModelUpdateAvailable = false;
         commaModelUpdateFolder.clear();
         commaModelUpdateButton->setTitle(modelName.isEmpty() ? tr("Model added") : modelName);
         commaModelUpdateButton->setText(tr("ADDED"));
-        commaModelUpdateButton->setDescription(folder);
+        commaModelUpdateButton->setDescription(compatibilityNote.isEmpty() ? folder : compatibilityNote + "\n" + folder);
         refreshModelStatus();
       } else {
         commaModelUpdateAvailable = false;
         commaModelUpdateFolder.clear();
         commaModelUpdateButton->setTitle(tr("Comma official model"));
         commaModelUpdateButton->setText(resultStatus == "updated" ? tr("UPDATED") : tr("LATEST"));
-        commaModelUpdateButton->setDescription(existing.isEmpty() ? modelName : existing);
+        const QString modelDetail = existing.isEmpty() ? modelName : existing;
+        commaModelUpdateButton->setDescription(compatibilityNote.isEmpty() ? modelDetail : compatibilityNote + "\n" + modelDetail);
       }
     } else {
       commaModelUpdateButton->setTitle(tr("Update check failed"));
@@ -1834,6 +1857,18 @@ void ModelTab::runCommaModelUpdate(bool apply)
       commaModelUpdateFolder.clear();
     }
 
+    commaModelUpdateButton->setEnabled(true);
+    proc->deleteLater();
+  });
+  connect(proc, &QProcess::errorOccurred, this, [this, proc](QProcess::ProcessError error) {
+    if (error != QProcess::FailedToStart) return;
+
+    if (commaModelUpdateProcess == proc) commaModelUpdateProcess = nullptr;
+    commaModelUpdateAvailable = false;
+    commaModelUpdateFolder.clear();
+    commaModelUpdateButton->setTitle(tr("Update check failed"));
+    commaModelUpdateButton->setText(tr("RETRY"));
+    commaModelUpdateButton->setDescription(proc->errorString());
     commaModelUpdateButton->setEnabled(true);
     proc->deleteLater();
   });

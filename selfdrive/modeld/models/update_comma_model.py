@@ -3,8 +3,10 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,6 +34,12 @@ def run_git(args: list[str]) -> str:
   return res.stdout.strip()
 
 
+def git_object_exists(ref: str, path: str) -> bool:
+  res = subprocess.run(["git", "cat-file", "-e", f"{ref}:{path}"], cwd=REPO_ROOT,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+  return res.returncode == 0
+
+
 def fetch_comma_ref(repo: str, branch: str) -> str:
   run_git(["fetch", "--no-tags", repo, branch])
   return run_git(["rev-parse", "FETCH_HEAD"])
@@ -51,12 +59,17 @@ def parse_lfs_pointer(ref: str, path: str) -> dict[str, Any]:
   return {"oid": oid, "size": size}
 
 
-def latest_model_commit(ref: str) -> tuple[str, str, str]:
+def latest_compatible_model_commit(ref: str) -> tuple[str, str, str]:
   paths = list(MODEL_FILES.values())
-  out = run_git(["log", "-1", "--format=%H%n%cI%n%s", ref, "--", *paths])
+  commits = run_git(["rev-list", ref, "--", *paths]).splitlines()
+  commit = next((candidate for candidate in commits if all(git_object_exists(candidate, path) for path in paths)), None)
+  if commit is None:
+    raise RuntimeError("Unable to find a commaai/openpilot commit containing the split driving model files")
+
+  out = run_git(["show", "-s", "--format=%H%n%cI%n%s", commit])
   lines = out.splitlines()
   if len(lines) < 3:
-    raise RuntimeError("Unable to find official model commit title")
+    raise RuntimeError("Unable to read the compatible official model commit")
   return lines[0], lines[1], lines[2]
 
 
@@ -68,7 +81,7 @@ def model_name_from_title(title: str, commit: str) -> str:
   title = strip_pr_refs(title)
   revert = re.match(r'^Revert\s+"(.+)"$', title)
   if revert:
-    title = strip_pr_refs(revert.group(1))
+    title = f"Revert {strip_pr_refs(revert.group(1))}"
   title = title.replace("_", " ").strip()
   if not title:
     return f"Comma Model {commit[:8]}"
@@ -119,6 +132,7 @@ def emit_result(data: dict[str, Any], json_output: bool) -> None:
   print(f"model date: {data['source_date']}")
   print(f"model title: {data['source_title']}")
   print(f"model name: {data['model_name']}")
+  print(f"compatibility: {data['compatibility_note']}")
   print(f"vision oid: {data['vision_oid']}")
   print(f"policy oid: {data['policy_oid']}")
   if data.get("existing_model"):
@@ -148,6 +162,13 @@ def find_existing_model(vision_oid: str, policy_oid: str) -> Path | None:
   return None
 
 
+def existing_model_display_name(bundle: Path) -> str:
+  name = read_json(bundle / "model.json").get("name")
+  if isinstance(name, str) and name.strip():
+    return name.strip()
+  return re.sub(r"^\d+\.", "", bundle.name).replace("_", " ").strip()
+
+
 def download_lfs_file(commit: str, source_path: str, dest: Path, oid: str, size: int) -> None:
   url = f"https://media.githubusercontent.com/media/commaai/openpilot/{commit}/{source_path}"
   tmp = dest.with_suffix(dest.suffix + ".tmp")
@@ -170,15 +191,18 @@ def download_lfs_file(commit: str, source_path: str, dest: Path, oid: str, size:
   tmp.replace(dest)
 
 
-def build_metadata(name: str, commit: str, commit_date: str, title: str, branch: str, vision: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
+def build_metadata(name: str, commit: str, commit_date: str, title: str, branch: str, upstream_ref: str,
+                   vision: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
   return {
     "name": name,
-    "description": "Comma official driving model from commaai/openpilot",
+    "description": "Latest split driving model compatible with this fork, sourced from commaai/openpilot",
     "source": "commaai/openpilot",
     "source_branch": branch,
     "source_commit": commit,
     "source_date": commit_date,
     "source_title": title,
+    "upstream_ref": upstream_ref,
+    "model_format": "split",
     "vision_oid": vision["oid"],
     "vision_size": vision["size"],
     "policy_oid": policy["oid"],
@@ -187,8 +211,21 @@ def build_metadata(name: str, commit: str, commit_date: str, title: str, branch:
   }
 
 
+def register_model_bundle(folder: Path, source_commit: str, vision: dict[str, Any], policy: dict[str, Any],
+                          metadata: dict[str, Any]) -> None:
+  staging = Path(tempfile.mkdtemp(prefix=f".{folder.name}.", dir=SUPERCOMBOS_DIR))
+  try:
+    download_lfs_file(source_commit, MODEL_FILES["vision"], staging / LOCAL_FILES["vision"], vision["oid"], vision["size"])
+    download_lfs_file(source_commit, MODEL_FILES["policy"], staging / LOCAL_FILES["policy"], policy["oid"], policy["size"])
+    write_json(staging / "model.json", metadata)
+    staging.replace(folder)
+  except Exception:
+    shutil.rmtree(staging, ignore_errors=True)
+    raise
+
+
 def main() -> int:
-  parser = argparse.ArgumentParser(description="Register the latest commaai/openpilot official driving model.")
+  parser = argparse.ArgumentParser(description="Register the latest commaai/openpilot split driving model compatible with this fork.")
   parser.add_argument("--apply", action="store_true", help="Create/update the local model folder. Without this, only report.")
   parser.add_argument("--json", action="store_true", help="Print a single JSON object for UI integration.")
   parser.add_argument("--repo", default=COMMA_REPO)
@@ -196,13 +233,15 @@ def main() -> int:
   args = parser.parse_args()
 
   commit = fetch_comma_ref(args.repo, args.branch)
-  source_commit, source_date, source_title = latest_model_commit("FETCH_HEAD")
-  vision = parse_lfs_pointer("FETCH_HEAD", MODEL_FILES["vision"])
-  policy = parse_lfs_pointer("FETCH_HEAD", MODEL_FILES["policy"])
+  source_commit, source_date, source_title = latest_compatible_model_commit("FETCH_HEAD")
+  vision = parse_lfs_pointer(source_commit, MODEL_FILES["vision"])
+  policy = parse_lfs_pointer(source_commit, MODEL_FILES["policy"])
   model_name = model_name_from_title(source_title, source_commit)
+  current_ref_is_compatible = all(git_object_exists("FETCH_HEAD", path) for path in MODEL_FILES.values())
+  compatibility_note = "Current upstream split model" if current_ref_is_compatible else "Latest split model compatible with this fork"
 
   existing = find_existing_model(vision["oid"], policy["oid"])
-  metadata = build_metadata(model_name, source_commit, source_date, source_title, args.branch, vision, policy)
+  metadata = build_metadata(model_name, source_commit, source_date, source_title, args.branch, commit, vision, policy)
   result = {
     "status": "existing",
     "comma_ref": commit,
@@ -212,15 +251,20 @@ def main() -> int:
     "model_name": model_name,
     "vision_oid": vision["oid"],
     "policy_oid": policy["oid"],
+    "compatibility_note": compatibility_note,
     "existing_model": "",
     "new_model_folder": "",
   }
 
   if existing:
     result["existing_model"] = str(existing.relative_to(SUPERCOMBOS_DIR))
+    result["model_name"] = existing_model_display_name(existing)
+    metadata["name"] = result["model_name"]
     if args.apply:
       current = read_json(existing / "model.json")
+      display_metadata = {key: current[key] for key in ("name", "description") if current.get(key)}
       current.update(metadata)
+      current.update(display_metadata)
       write_json(existing / "model.json", current)
       result["status"] = "updated"
     emit_result(result, args.json)
@@ -233,10 +277,7 @@ def main() -> int:
     emit_result(result, args.json)
     return 0
 
-  folder.mkdir(parents=True, exist_ok=False)
-  download_lfs_file(source_commit, MODEL_FILES["vision"], folder / LOCAL_FILES["vision"], vision["oid"], vision["size"])
-  download_lfs_file(source_commit, MODEL_FILES["policy"], folder / LOCAL_FILES["policy"], policy["oid"], policy["size"])
-  write_json(folder / "model.json", metadata)
+  register_model_bundle(folder, source_commit, vision, policy, metadata)
   result["status"] = "registered"
   emit_result(result, args.json)
   return 0

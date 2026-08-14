@@ -103,10 +103,12 @@ void drawDriverMonitoringPanel(QPainter &p, const QRect &surface_rect,
               .arg(yn(distracted_types.getEye()))
               .arg(yn(distracted_types.getPhone())),
             has_distracted_type ? warn_color : dim_color);
+  const float eyes_visible_prob = std::min(driver_data.getLeftEyeProb(), driver_data.getRightEyeProb());
+  const float eyes_closed_prob = std::max(driver_data.getLeftBlinkProb(), driver_data.getRightBlinkProb());
   draw_line(QString("FaceProb %1   EyesVisible %2   EyesClosed %3")
               .arg(prob(driver_data.getFaceProb()))
-              .arg(prob(driver_data.getEyesVisibleProb()))
-              .arg(prob(driver_data.getEyesClosedProb())),
+              .arg(prob(eyes_visible_prob))
+              .arg(prob(eyes_closed_prob)),
             normal_color);
   draw_line(QString("Pitch %1   Yaw %2   Uncertainty %3")
               .arg(prob(pose.getPitch()))
