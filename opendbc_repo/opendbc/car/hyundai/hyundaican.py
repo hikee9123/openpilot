@@ -118,13 +118,6 @@ def create_clu11(packer, frame, clu11, button, CP):
   return packer.make_can_msg("CLU11", bus, values)
 
 
-def create_lfahda_mfc(packer, enabled):
-  values = {
-    "LFA_Icon_State": 2 if enabled else 0,
-  }
-  return packer.make_can_msg("LFAHDA_MFC", 0, values)
-
-
 # 100 Hz  #custom
 def create_mdps12(packer, frame, mdps12):
   values = mdps12
