@@ -18,5 +18,6 @@
   <file>icons/wifi_strength_full.svg</file>
 
   <file alias="languages.json">../ui/translations/languages.json</file>
+  <file alias="hyundai_supported_cars.json">hyundai_supported_cars.json</file>
 </qresource>
 </RCC>

@@ -55,6 +55,28 @@ constexpr const char *kOsmRoadsInstallSession = "osm_db_install";
 constexpr const char *kOsmSpeedCamerasSession = "osm_speed_cameras_update";
 constexpr qint64 kLogStorageRefreshIntervalMs = 30000;
 
+static QStringList loadHyundaiSupportedCars() {
+  QFile file(":/hyundai_supported_cars.json");
+  if (!file.open(QIODevice::ReadOnly)) {
+    qWarning() << "Failed to open Hyundai supported cars resource:" << file.errorString();
+    return {};
+  }
+
+  QJsonParseError error;
+  const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
+  if (error.error != QJsonParseError::NoError || !document.isArray()) {
+    qWarning() << "Failed to parse Hyundai supported cars resource:" << error.errorString();
+    return {};
+  }
+
+  QStringList cars;
+  for (const QJsonValue &value : document.array()) {
+    const QString car = value.toString();
+    if (!car.isEmpty() && !cars.contains(car)) cars.append(car);
+  }
+  return cars;
+}
+
 struct LogStorageStats {
   qint64 saved_bytes = 0;
   qint64 available_bytes = -1;
@@ -680,8 +702,15 @@ void CValueControl2::refresh() {
 // ======================================================================================
 CustomPanel::CustomPanel(SettingsWindow *parent) : QWidget(parent) {
   pm.reset(new PubMaster({"uICustom"}));
-  sm.reset(new SubMaster({"carState"}));
   m_jsonobj = readJsonFile("CustomParam");
+  m_cars = loadHyundaiSupportedCars();
+  if (m_cars.isEmpty()) {
+    const QJsonArray supported_cars = m_jsonobj.value("SupportCars").toArray();
+    for (const QJsonValue &value : supported_cars) {
+      const QString car = value.toString();
+      if (!car.isEmpty() && !m_cars.contains(car)) m_cars.append(car);
+    }
+  }
 
   QList<QPair<QString, QWidget *>> panels = {
     {tr("UI"), new UITab(this, m_jsonobj)},
@@ -714,7 +743,6 @@ CustomPanel::CustomPanel(SettingsWindow *parent) : QWidget(parent) {
 }
 
 void CustomPanel::offroadTransition(bool offroad) {
-  sm->update(0);
   if (!timer->isActive()) m_cmdIdx = 0;
   updateToggles(false);
 }
@@ -724,7 +752,6 @@ void CustomPanel::OnTimer() {
   UIScene &scene = s->scene;
   SubMaster &sm2 = *(s->sm);
 
-  sm->update(0);
   if (scene.started) {
     m_time = 0;
     scene.custom.powerOffRemaining = 0;
@@ -843,26 +870,6 @@ void CustomPanel::closeEvent(QCloseEvent *event) {
 void CustomPanel::showEvent(QShowEvent *event) {
   QWidget::setContentsMargins(0, 0, 0, 0);
   QWidget::showEvent(event);
-
-  if (!m_cars.isEmpty()) return;
-
-  sm->update(0);
-  UIState *s = uiState();
-  SubMaster &sm2 = *(s->sm);
-
-  const auto car_state = sm2["carState"].getCarState();
-  const auto carState_custom = car_state.getCarSCustom();
-  const auto carSupport = carState_custom.getSupportedCars();
-
-  if (carSupport.size() <= 0) {
-    // JSON에서 후보 로드(SurportCars → SupportCars 정정)
-    const QJsonArray supportCar = m_jsonobj.value("SupportCars").toArray();
-    for (const auto &item : supportCar) m_cars.append(item.toString());
-  } else {
-    for (int i = 0; i < (int)carSupport.size(); ++i) {
-      m_cars.append(QString::fromStdString(carSupport[i]));
-    }
-  }
 }
 
 void CustomPanel::hideEvent(QHideEvent *event) {
@@ -1061,10 +1068,6 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
 
   QObject::connect(changeCar, &ButtonControl::clicked, this, [=] {
     const QStringList items = m_pCustom ? m_pCustom->m_cars : QStringList();
-
-    QJsonArray jsonArray;
-    for (const auto &item : items) jsonArray.append(item);
-    m_jsonobj["SupportCars"] = jsonArray; // SurportCars → SupportCars 수정 유지
 
     const QString current = QString::fromStdString(Params().get("SelectedCar"));
     const QString selection = MultiOptionDialog::getSelection(tr("Select a car"), items, current, this);

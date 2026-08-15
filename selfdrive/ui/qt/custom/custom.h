@@ -286,7 +286,6 @@ private:
 
 private:
   std::unique_ptr<PubMaster> pm;
-  std::unique_ptr<SubMaster> sm;
 
 public:
   int send(const char *name, MessageBuilder &msg);

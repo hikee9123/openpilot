@@ -7,7 +7,7 @@ import cereal.messaging as messaging
 from typing import  List, Tuple
 from cereal import car, log
 from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.hyundai.values import CAR, Buttons
+from opendbc.car.hyundai.values import Buttons
 from opendbc.custom.params_json import read_json_file
 from openpilot.common.params import Params
 
@@ -97,12 +97,6 @@ class CarStateCustom:
 
     # Custom menu (robust defaults)
     self.autoLaneChange, self.menu_debug, self.curveSpeedLimit, self.autoEngage = self._load_custom_params()
-
-
-
-    # 지원 차량 목록
-    self.cars = self._get_supported_cars(CP)
-
 
   # ----------------------------
   # Config / Params
@@ -195,13 +189,6 @@ class CarStateCustom:
   # ----------------------------
   # Public-ish helpers
   # ----------------------------
-  def _get_supported_cars(self, CP):
-    cars = []
-    for _, member in CAR.__members__.items():
-      cars.append(member.value)
-    return cars
-
-
   def _update_controls_allowed(self):
     """pandaStates 기반 제어 허용 플래그 업데이트"""
     self.controlsAllowed = 1 if any(ps.controlsAllowed for ps in self.sm['pandaStates']) else 0
@@ -529,7 +516,6 @@ class CarStateCustom:
   def _send_debug(self, ret, cp):
 
     carSCustom = car.CarState.CarSCustom.new_message()
-    carSCustom.supportedCars = self.cars
     carSCustom.breakPos = float(self.brakePos)
     carSCustom.leadDistance = float(self.lead_distance)
     carSCustom.gapSet = int(self.gapSet)
