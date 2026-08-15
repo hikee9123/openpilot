@@ -190,7 +190,7 @@ void Device::updateBrightness(const UIState &s) {
   constexpr float kDimEndPct       = 0.10f;   // 디밍 종료 상대 밝기
   constexpr int   kDeadbandEnter   = 1;       // 히스테리시스 진입
   constexpr int   kDeadbandExit    = 2;       // 히스테리시스 이탈
-  constexpr int   kFadeOnMs        = 1000;
+  constexpr int   kFadeOnMs        = 2000;
   constexpr int   kFadeOffMs       = 30000;
 
   // ==== 1) 센서 → 기준 밝기 (동일 소스 고정) ====
@@ -212,7 +212,6 @@ void Device::updateBrightness(const UIState &s) {
   if (s.scene.custom.touched != touched_old) {
     touched_old = s.scene.custom.touched;
     idle_ticks = 0;
-    awake = true;
     cmd_awake = true;
   } else {
     ++idle_ticks;
@@ -269,7 +268,7 @@ void Device::updateBrightness(const UIState &s) {
   }
   prev_awake = cmd_awake;
 
-  int to_apply = pui->scene.custom.target;
+  int to_apply = target;
   if (fade_active) {
     const auto now = std::chrono::steady_clock::now();
     const float t_ms = std::chrono::duration<float, std::milli>(now - fade_start).count();
@@ -293,15 +292,9 @@ void Device::updateBrightness(const UIState &s) {
     if (!brightness_future.isRunning() && can_push) {
       brightness_future = QtConcurrent::run(Hardware::set_brightness, to_apply);
       last_brightness = to_apply;
-      pending_brightness = -1;
       last_push = now;
-    } else {
-      pending_brightness = to_apply; // 최신 목표만 유지
     }
   }
-
-  // (선택) 외부 틱에서:
-  // if (!brightness_future.isRunning() && pending_brightness >= 0) { ... }
 }
 
 

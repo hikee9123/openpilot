@@ -8,6 +8,9 @@
 void OnroadAlerts::updateState(const UIState &s) {
   Alert a = getAlert(*(s.sm), s.scene.started_frame);
   if (!alert.equal(a)) {
+    if (a.size != cereal::SelfdriveState::AlertSize::NONE) {
+      uiState()->scene.custom.touched++;
+    }
     alert = a;
     update();
   }
@@ -75,7 +78,6 @@ void OnroadAlerts::paintEvent(QPaintEvent *event) {
 
   QPainter p(this);
 
-  uiState()->scene.custom.touched++;  // #custom
   // draw background + gradient
   p.setPen(Qt::NoPen);
   p.setCompositionMode(QPainter::CompositionMode_SourceOver);
