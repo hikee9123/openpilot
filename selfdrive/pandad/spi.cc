@@ -4,10 +4,12 @@
 #include <linux/spi/spidev.h>
 
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <iomanip>
 #include <sstream>
+#include <thread>
 
 #include "common/util.h"
 #include "common/timing.h"
@@ -32,9 +34,24 @@ const unsigned int SPI_ACK_TIMEOUT = 500; // milliseconds
 const std::string SPI_DEVICE = "/dev/spidev0.0";
 // TODO: fix SPI turnaround synchronization at the protocol level.
 static uint64_t spi_last_bus_activity_ns = 0;  // protected by hw_lock
+static constexpr uint64_t SPI_TURNAROUND_NS = 400000;
+static constexpr uint64_t SPI_TURNAROUND_SPIN_NS = 50000;
 
 static void wait_for_spi_turnaround(uint64_t start_ns) {
-  while ((nanos_since_boot() - start_ns) < 400000) {}
+  const uint64_t deadline_ns = start_ns + SPI_TURNAROUND_NS;
+  while (true) {
+    const uint64_t now_ns = nanos_since_boot();
+    if (now_ns >= deadline_ns) return;
+
+    const uint64_t remaining_ns = deadline_ns - now_ns;
+    if (remaining_ns > SPI_TURNAROUND_SPIN_NS) {
+      std::this_thread::sleep_for(std::chrono::nanoseconds(remaining_ns - SPI_TURNAROUND_SPIN_NS));
+    } else {
+      // Bound scheduler wake-up jitter while avoiding a full 400 us busy-spin.
+      while (nanos_since_boot() < deadline_ns) {}
+      return;
+    }
+  }
 }
 
 class LockEx {
