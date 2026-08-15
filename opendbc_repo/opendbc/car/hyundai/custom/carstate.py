@@ -74,6 +74,8 @@ class CarStateCustom:
     self.modelxDistance = 0.0
     self.modelyDistance = 0.0
     self.model_v2 = None
+    self.laneChangeState = LaneChangeState.off
+    self.laneLineProbs = []
     self.brakePos = 0.0
     self.clu_Main = 0
     self.mainMode_ACC = False
