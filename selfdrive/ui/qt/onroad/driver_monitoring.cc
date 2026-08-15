@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include <QString>
+
 #include "selfdrive/ui/qt/onroad/buttons.h"
 #include "selfdrive/ui/qt/util.h"
 
@@ -33,10 +35,15 @@ void DriverMonitorRenderer::updateState(const UIState &s) {
   auto dm_state = sm["driverMonitoringState"].getDriverMonitoringState();
   is_active = dm_state.getActivePolicy() == cereal::DriverMonitoringState::MonitoringPolicy::VISION;
   is_rhd = dm_state.getIsRHD();
+  const auto vision_state = dm_state.getVisionPolicyState();
+  face_detected = vision_state.getFaceDetected();
+  eye_distracted = vision_state.getDistractedTypes().getEye();
   dm_fade_state = std::clamp(dm_fade_state + 0.2f * (0.5f - is_active), 0.0f, 1.0f);
 
   const auto &driverstate = sm["driverStateV2"].getDriverStateV2();
-  const auto driver_orient = is_rhd ? driverstate.getRightDriverData().getFaceOrientation() : driverstate.getLeftDriverData().getFaceOrientation();
+  const auto driver_data = is_rhd ? driverstate.getRightDriverData() : driverstate.getLeftDriverData();
+  const auto driver_orient = driver_data.getFaceOrientation();
+  eye_closed_prob = std::clamp((driver_data.getLeftBlinkProb() + driver_data.getRightBlinkProb()) * 0.5f, 0.0f, 1.0f);
 
   for (int i = 0; i < 3; ++i) {
     float v_this = (i == 0 ? (driver_orient[i] < 0 ? 0.7 : 0.9) : 0.4) * driver_orient[i];
@@ -91,6 +98,17 @@ void DriverMonitorRenderer::draw(QPainter &painter, const QRect &surface_rect) {
   const float arc_t_extend = 12.0f;
   QColor arc_color = uiState()->engaged() ? DMON_ENGAGED_COLOR : DMON_DISENGAGED_COLOR;
   arc_color.setAlphaF(0.4 * (1.0f - dm_fade_state));
+
+  const QRectF eye_rect(x - 86, y - btn_size / 2 - 54, 172, 46);
+  painter.setPen(Qt::NoPen);
+  painter.setBrush(QColor(0, 0, 0, 140));
+  painter.drawRoundedRect(eye_rect, 12, 12);
+  painter.setFont(InterFont(30, QFont::DemiBold));
+  const bool show_eye_prob = is_active && face_detected;
+  painter.setPen(show_eye_prob && eye_distracted ? QColor(255, 95, 95) : QColor(255, 255, 255, 230));
+  const QString eye_text = show_eye_prob ?
+                             QString("EYE %1%").arg(static_cast<int>(std::lround(eye_closed_prob * 100.0f))) : "EYE --";
+  painter.drawText(eye_rect, Qt::AlignCenter, eye_text);
 
   float delta_x = -driver_pose_sins[1] * arc_l / 2.0f;
   float delta_y = -driver_pose_sins[0] * arc_l / 2.0f;

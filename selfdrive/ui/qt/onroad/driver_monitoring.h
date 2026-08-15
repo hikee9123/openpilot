@@ -18,6 +18,9 @@ private:
   bool is_visible = false;
   bool is_active = false;
   bool is_rhd = false;
+  bool face_detected = false;
+  bool eye_distracted = false;
+  float eye_closed_prob = 0.0f;
   float dm_fade_state = 1.0;
   QPixmap dm_img;
   std::vector<vec3> face_kpts_draw;
