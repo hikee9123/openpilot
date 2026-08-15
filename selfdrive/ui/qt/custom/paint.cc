@@ -300,10 +300,13 @@ void OnPaint::updateState(const UIState &s)
   auto cpu_temps = deviceState.getCpuTempC();
   auto gpu_temps = deviceState.getGpuTempC();
 
-  m_param.cpuPerc = 0;
+  int cpu_usage_sum = 0;
   for (auto usage : cpu_usage) {
-    m_param.cpuPerc = std::max(m_param.cpuPerc, static_cast<int>(usage));
+    cpu_usage_sum += static_cast<int>(usage);
   }
+  m_param.cpuPerc = cpu_usage.size() > 0
+      ? static_cast<int>(std::lround(static_cast<double>(cpu_usage_sum) / cpu_usage.size()))
+      : 0;
 
   m_param.cpuTemp = 0.0f;
   for (auto temp : cpu_temps) {
