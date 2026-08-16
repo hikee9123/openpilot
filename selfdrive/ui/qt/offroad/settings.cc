@@ -21,6 +21,7 @@
 #include "selfdrive/ui/qt/widgets/input.h"
 #include "selfdrive/ui/qt/widgets/prime.h"
 #include "selfdrive/ui/qt/widgets/scrollview.h"
+#include "selfdrive/ui/qt/widgets/swipeable_tab.h"
 #include "selfdrive/ui/qt/offroad/developer_panel.h"
 #include "selfdrive/ui/qt/offroad/firehose.h"
 
@@ -199,6 +200,7 @@ public:
     setStyleSheet(R"(
       QDialog { background-color: #101214; color: white; }
       QLabel { color: white; }
+      QTabWidget::pane { border: 0; background-color: transparent; }
       QPushButton#dialogButton, QPushButton#applyButton {
         min-width: 270px; min-height: 100px; padding: 0 32px;
         border: 0; border-radius: 50px;
@@ -221,46 +223,50 @@ public:
     notice->setStyleSheet("font-size: 38px; color: #e8bd64; padding-bottom: 8px;");
     main_layout->addWidget(notice);
 
-    auto *scroll_content = new QWidget(this);
-    auto *scroll_layout = new QVBoxLayout(scroll_content);
-    scroll_layout->setContentsMargins(0, 0, 24, 20);
-    scroll_layout->setSpacing(14);
+    auto *swipe_hint = new QLabel(tr("Swipe the tabs left or right to change the settings page."), this);
+    swipe_hint->setStyleSheet("font-size: 34px; color: #aeb5bc; padding-bottom: 4px;");
+    main_layout->addWidget(swipe_hint);
 
-    addSection(scroll_layout, tr("Display and warning"));
+    auto *tab_widget = new SwipeableTabWidget(this);
+    tab_widget->setStyleSheet(kSwipeableTabStyle);
+
+    auto *display_layout = createPage(tab_widget, tr("Display & Alert"));
     debug_enabled = new StagedToggleControl(
       tr("Show blink debug overlay"),
       tr("Display the 10-second blink and eye-closure diagnostics while driving."),
-      params.getBool("DmBlinkDebugOverlayEnabled"), scroll_content);
-    scroll_layout->addWidget(debug_enabled);
+      params.getBool("DmBlinkDebugOverlayEnabled"), display_layout->parentWidget());
+    display_layout->addWidget(debug_enabled);
 
     alert_mode = new StagedButtonControl(
       tr("Sleep Candidate warning"),
       tr("Choose whether a detected Sleep Candidate is added to the existing driver-distraction warning sequence."),
       {tr("NO ALERT (CURRENT)"), tr("USE DM ALERT")},
       params.getBool("DmBlinkAlertEnabled") ? 1 : 0);
-    scroll_layout->addWidget(alert_mode);
+    display_layout->addWidget(alert_mode);
+    display_layout->addStretch();
 
-    addSection(scroll_layout, tr("Eye closure detection"));
-    close_threshold = addTouchValue(scroll_layout, tr("Close threshold"),
+    auto *eye_layout = createPage(tab_widget, tr("Eye Closure"));
+    close_threshold = addTouchValue(eye_layout, tr("Close threshold"),
                                     tr("Start a closed-eye segment at or above this probability."),
                                     75, 95, 1, getIntParam(params, "DmBlinkCloseThresholdPct", kBlinkCloseDefault),
                                     TouchValueFormat::PERCENT);
-    open_threshold = addTouchValue(scroll_layout, tr("Open threshold"),
+    open_threshold = addTouchValue(eye_layout, tr("Open threshold"),
                                    tr("Finish the segment at least 5% below Close."),
                                    20, close_threshold->value() - 5, 1,
                                    getIntParam(params, "DmBlinkOpenThresholdPct", kBlinkOpenDefault),
                                    TouchValueFormat::PERCENT);
+    eye_layout->addStretch();
 
-    addSection(scroll_layout, tr("Blink and sleep candidate"));
-    min_duration = addTouchValue(scroll_layout, tr("Minimum blink"),
+    auto *blink_layout = createPage(tab_widget, tr("Blink & Sleep"));
+    min_duration = addTouchValue(blink_layout, tr("Minimum blink"),
                                  tr("Ignore shorter probability spikes."),
                                  50, 500, 50, getIntParam(params, "DmBlinkMinDurationMs", kBlinkMinDurationDefault),
                                  TouchValueFormat::MILLISECONDS);
-    long_closure = addTouchValue(scroll_layout, tr("Long eye closure"),
+    long_closure = addTouchValue(blink_layout, tr("Long eye closure"),
                                  tr("Set Sleep Candidate after continuous valid closure."),
                                  500, 5000, 100, getIntParam(params, "DmBlinkLongClosureMs", kBlinkLongClosureDefault),
                                  TouchValueFormat::SECONDS);
-    min_valid = addTouchValue(scroll_layout, tr("Minimum valid data"),
+    min_valid = addTouchValue(blink_layout, tr("Minimum valid data"),
                               tr("Required valid samples in the fixed 10-second window."),
                               50, 100, 5, getIntParam(params, "DmBlinkMinValidPct", kBlinkMinValidDefault),
                               TouchValueFormat::PERCENT);
@@ -274,14 +280,13 @@ public:
     long_closure->setMinimum(min_duration->value() + 50);
 
     auto *window_note = new QLabel(
-      tr("Measurement window: 10 seconds (fixed). Changes apply on the next DM start."), scroll_content);
+      tr("Measurement window: 10 seconds (fixed). Changes apply on the next DM start."), blink_layout->parentWidget());
     window_note->setWordWrap(true);
     window_note->setStyleSheet("font-size: 38px; color: #aeb5bc; padding: 18px 8px;");
-    scroll_layout->addWidget(window_note);
-    scroll_layout->addStretch();
+    blink_layout->addWidget(window_note);
+    blink_layout->addStretch();
 
-    auto *scroll_view = new ScrollView(scroll_content, this);
-    main_layout->addWidget(scroll_view, 1);
+    main_layout->addWidget(tab_widget, 1);
 
     auto *button_layout = new QHBoxLayout();
     button_layout->setSpacing(18);
@@ -305,13 +310,13 @@ public:
   }
 
 private:
-  void addSection(QVBoxLayout *layout, const QString &text) {
-    auto *label = new QLabel(text, layout->parentWidget());
-    label->setMinimumHeight(88);
-    label->setStyleSheet(
-      "font-size: 48px; font-weight: 600; color: #8de6aa; padding: 12px 24px; "
-      "background-color: #19241e; border-left: 8px solid #33ab4c;");
-    layout->addWidget(label);
+  QVBoxLayout *createPage(SwipeableTabWidget *tabs, const QString &name) {
+    auto *page = new QWidget(tabs);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(12, 16, 24, 20);
+    layout->setSpacing(14);
+    tabs->addTab(new ScrollView(page, tabs), name);
+    return layout;
   }
 
   TouchValueControl *addTouchValue(QVBoxLayout *layout, const QString &title, const QString &description,
