@@ -18,6 +18,7 @@
 #include "selfdrive/ui/qt/network/networking.h"
 #include "selfdrive/ui/qt/offroad/settings.h"
 #include "selfdrive/ui/qt/qt_window.h"
+#include "selfdrive/ui/qt/widgets/input.h"
 #include "selfdrive/ui/qt/widgets/prime.h"
 #include "selfdrive/ui/qt/widgets/scrollview.h"
 #include "selfdrive/ui/qt/offroad/developer_panel.h"
@@ -42,13 +43,11 @@ int getIntParam(Params &params, const std::string &key, int default_value) {
   }
 }
 
-class BlinkDebugSettingsDialog : public QDialog {
+class BlinkDebugSettingsDialog : public DialogBase {
 public:
-  explicit BlinkDebugSettingsDialog(QWidget *parent) : QDialog(parent) {
+  explicit BlinkDebugSettingsDialog(QWidget *parent) : DialogBase(parent) {
     setWindowTitle(tr("Driver Monitoring Blink Debug"));
     setModal(true);
-    const QSize available = parent->window()->size() - QSize(120, 100);
-    resize(std::clamp(available.width(), 900, 1400), std::clamp(available.height(), 700, 980));
     setStyleSheet(R"(
       QDialog { background-color: #101214; color: white; }
       QLabel { color: white; }
