@@ -65,20 +65,38 @@ public:
   }
 };
 
+class StagedButtonControl : public MultiButtonControl {
+public:
+  StagedButtonControl(const QString &title, const QString &description,
+                      const std::vector<QString> &button_texts, int value)
+      : MultiButtonControl(title, description, "", button_texts, 330) {
+    setValue(value);
+  }
+
+  int value() const {
+    return button_group->checkedId();
+  }
+
+  void setValue(int value) {
+    const int max_index = static_cast<int>(button_group->buttons().size()) - 1;
+    setCheckedButton(std::clamp(value, 0, max_index));
+  }
+};
+
 class TouchValueControl : public AbstractControl {
 public:
   TouchValueControl(const QString &title, const QString &description, int minimum, int maximum,
                     int step, int value, TouchValueFormat format, QWidget *parent)
       : AbstractControl(title, description, "", parent), minimum_(minimum), maximum_(maximum),
         step_(step), value_(std::clamp(value, minimum, maximum)), format_(format) {
-    title_label->setStyleSheet("font-size: 34px; font-weight: 400; text-align: left; border: none;");
+    title_label->setStyleSheet("font-size: 48px; font-weight: 400; text-align: left; border: none;");
 
     const QString button_style = R"(
       QPushButton {
         min-width: 0; min-height: 0; padding: 0;
         border: 0; border-radius: 45px;
         background-color: #393939; color: white;
-        font-size: 50px; font-weight: 500;
+        font-size: 60px; font-weight: 500;
       }
       QPushButton:pressed { background-color: #4a4a4a; }
       QPushButton:disabled { color: #666666; background-color: #242424; }
@@ -93,13 +111,13 @@ public:
       button->setAutoRepeatInterval(120);
     }
 
-    value_label.setFixedSize(220, 100);
+    value_label.setFixedSize(240, 100);
     value_label.setAlignment(Qt::AlignCenter);
     value_label.setStyleSheet(R"(
       QLabel {
         border: 2px solid #414850; border-radius: 18px;
         background-color: #252a30; color: white;
-        font-size: 31px; font-weight: 500;
+        font-size: 42px; font-weight: 500;
       }
     )");
 
@@ -181,65 +199,68 @@ public:
     setStyleSheet(R"(
       QDialog { background-color: #101214; color: white; }
       QLabel { color: white; }
-      QPushButton {
-        min-width: 230px; min-height: 78px; padding: 0 24px;
-        border: 0; border-radius: 38px;
-        background-color: #393939; color: white; font-size: 28px;
+      QPushButton#dialogButton, QPushButton#applyButton {
+        min-width: 270px; min-height: 100px; padding: 0 32px;
+        border: 0; border-radius: 50px;
+        background-color: #393939; color: white; font-size: 44px;
       }
       QPushButton#applyButton { background-color: #00c853; color: #07170d; font-weight: 600; }
     )");
 
     auto *main_layout = new QVBoxLayout(this);
-    main_layout->setContentsMargins(45, 35, 45, 35);
-    main_layout->setSpacing(18);
+    main_layout->setContentsMargins(55, 35, 55, 35);
+    main_layout->setSpacing(16);
 
     auto *title = new QLabel(tr("Driver Monitoring Blink Debug"), this);
-    title->setStyleSheet("font-size: 42px; font-weight: 600;");
+    title->setStyleSheet("font-size: 60px; font-weight: 600;");
     main_layout->addWidget(title);
 
-    auto *notice = new QLabel(tr("Diagnostic only. These values do not change the current driver-monitoring safety alert threshold."), this);
+    auto *notice = new QLabel(
+      tr("Existing driver-monitoring warnings remain active in both modes. Sleep Candidate joins that warning path only when USE DM ALERT is selected."), this);
     notice->setWordWrap(true);
-    notice->setStyleSheet("font-size: 24px; color: #e8bd64; padding-bottom: 12px;");
+    notice->setStyleSheet("font-size: 38px; color: #e8bd64; padding-bottom: 8px;");
     main_layout->addWidget(notice);
 
+    auto *scroll_content = new QWidget(this);
+    auto *scroll_layout = new QVBoxLayout(scroll_content);
+    scroll_layout->setContentsMargins(0, 0, 24, 20);
+    scroll_layout->setSpacing(14);
+
+    addSection(scroll_layout, tr("Display and warning"));
     debug_enabled = new StagedToggleControl(
       tr("Show blink debug overlay"),
       tr("Display the 10-second blink and eye-closure diagnostics while driving."),
-      params.getBool("DmBlinkDebugOverlayEnabled"), this);
-    main_layout->addWidget(debug_enabled);
+      params.getBool("DmBlinkDebugOverlayEnabled"), scroll_content);
+    scroll_layout->addWidget(debug_enabled);
 
-    auto *parameter_layout = new QHBoxLayout();
-    parameter_layout->setSpacing(42);
-    auto *eye_layout = new QVBoxLayout();
-    eye_layout->setSpacing(12);
-    auto *blink_layout = new QVBoxLayout();
-    blink_layout->setSpacing(12);
-    parameter_layout->addLayout(eye_layout, 1);
-    parameter_layout->addLayout(blink_layout, 1);
-    main_layout->addLayout(parameter_layout, 1);
+    alert_mode = new StagedButtonControl(
+      tr("Sleep Candidate warning"),
+      tr("Choose whether a detected Sleep Candidate is added to the existing driver-distraction warning sequence."),
+      {tr("NO ALERT (CURRENT)"), tr("USE DM ALERT")},
+      params.getBool("DmBlinkAlertEnabled") ? 1 : 0);
+    scroll_layout->addWidget(alert_mode);
 
-    addSection(eye_layout, tr("Eye closure detection"));
-    close_threshold = addTouchValue(eye_layout, tr("Close threshold"),
+    addSection(scroll_layout, tr("Eye closure detection"));
+    close_threshold = addTouchValue(scroll_layout, tr("Close threshold"),
                                     tr("Start a closed-eye segment at or above this probability."),
                                     75, 95, 1, getIntParam(params, "DmBlinkCloseThresholdPct", kBlinkCloseDefault),
                                     TouchValueFormat::PERCENT);
-    open_threshold = addTouchValue(eye_layout, tr("Open threshold"),
+    open_threshold = addTouchValue(scroll_layout, tr("Open threshold"),
                                    tr("Finish the segment at least 5% below Close."),
                                    20, close_threshold->value() - 5, 1,
                                    getIntParam(params, "DmBlinkOpenThresholdPct", kBlinkOpenDefault),
                                    TouchValueFormat::PERCENT);
-    eye_layout->addStretch();
 
-    addSection(blink_layout, tr("Blink and sleep candidate"));
-    min_duration = addTouchValue(blink_layout, tr("Minimum blink"),
+    addSection(scroll_layout, tr("Blink and sleep candidate"));
+    min_duration = addTouchValue(scroll_layout, tr("Minimum blink"),
                                  tr("Ignore shorter probability spikes."),
                                  50, 500, 50, getIntParam(params, "DmBlinkMinDurationMs", kBlinkMinDurationDefault),
                                  TouchValueFormat::MILLISECONDS);
-    long_closure = addTouchValue(blink_layout, tr("Long eye closure"),
+    long_closure = addTouchValue(scroll_layout, tr("Long eye closure"),
                                  tr("Set Sleep Candidate after continuous valid closure."),
                                  500, 5000, 100, getIntParam(params, "DmBlinkLongClosureMs", kBlinkLongClosureDefault),
                                  TouchValueFormat::SECONDS);
-    min_valid = addTouchValue(blink_layout, tr("Minimum valid data"),
+    min_valid = addTouchValue(scroll_layout, tr("Minimum valid data"),
                               tr("Required valid samples in the fixed 10-second window."),
                               50, 100, 5, getIntParam(params, "DmBlinkMinValidPct", kBlinkMinValidDefault),
                               TouchValueFormat::PERCENT);
@@ -252,16 +273,23 @@ public:
     });
     long_closure->setMinimum(min_duration->value() + 50);
 
-    auto *window_note = new QLabel(tr("Measurement window: 10 seconds (fixed) - Changes apply on the next DM start."), this);
-    window_note->setStyleSheet("font-size: 23px; color: #aeb5bc; padding-top: 8px;");
-    main_layout->addWidget(window_note);
-    main_layout->addStretch();
+    auto *window_note = new QLabel(
+      tr("Measurement window: 10 seconds (fixed). Changes apply on the next DM start."), scroll_content);
+    window_note->setWordWrap(true);
+    window_note->setStyleSheet("font-size: 38px; color: #aeb5bc; padding: 18px 8px;");
+    scroll_layout->addWidget(window_note);
+    scroll_layout->addStretch();
+
+    auto *scroll_view = new ScrollView(scroll_content, this);
+    main_layout->addWidget(scroll_view, 1);
 
     auto *button_layout = new QHBoxLayout();
     button_layout->setSpacing(18);
     auto *reset_button = new QPushButton(tr("Reset defaults"), this);
     auto *cancel_button = new QPushButton(tr("Cancel"), this);
     auto *apply_button = new QPushButton(tr("Apply"), this);
+    reset_button->setObjectName("dialogButton");
+    cancel_button->setObjectName("dialogButton");
     apply_button->setObjectName("applyButton");
     button_layout->addWidget(reset_button);
     button_layout->addStretch();
@@ -278,20 +306,24 @@ public:
 
 private:
   void addSection(QVBoxLayout *layout, const QString &text) {
-    auto *label = new QLabel(text, this);
-    label->setStyleSheet("font-size: 27px; font-weight: 600; color: #8de6aa; padding-top: 12px;");
+    auto *label = new QLabel(text, layout->parentWidget());
+    label->setMinimumHeight(88);
+    label->setStyleSheet(
+      "font-size: 48px; font-weight: 600; color: #8de6aa; padding: 12px 24px; "
+      "background-color: #19241e; border-left: 8px solid #33ab4c;");
     layout->addWidget(label);
   }
 
   TouchValueControl *addTouchValue(QVBoxLayout *layout, const QString &title, const QString &description,
                                    int minimum, int maximum, int step, int value, TouchValueFormat format) {
-    auto *control = new TouchValueControl(title, description, minimum, maximum, step, value, format, this);
+    auto *control = new TouchValueControl(title, description, minimum, maximum, step, value, format, layout->parentWidget());
     layout->addWidget(control);
     return control;
   }
 
   void setDefaults() {
     debug_enabled->setValue(false);
+    alert_mode->setValue(0);
     close_threshold->setValue(kBlinkCloseDefault);
     open_threshold->setValue(kBlinkOpenDefault);
     min_duration->setValue(kBlinkMinDurationDefault);
@@ -310,6 +342,7 @@ private:
     }
 
     params.putBool("DmBlinkDebugOverlayEnabled", debug_enabled->value());
+    params.putBool("DmBlinkAlertEnabled", alert_mode->value() == 1);
     params.put("DmBlinkCloseThresholdPct", std::to_string(close_threshold->value()));
     params.put("DmBlinkOpenThresholdPct", std::to_string(open_threshold->value()));
     params.put("DmBlinkMinDurationMs", std::to_string(min_duration->value()));
@@ -320,6 +353,7 @@ private:
 
   Params params;
   StagedToggleControl *debug_enabled;
+  StagedButtonControl *alert_mode;
   TouchValueControl *close_threshold;
   TouchValueControl *open_threshold;
   TouchValueControl *min_duration;
@@ -453,13 +487,15 @@ TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
 
 void TogglesPanel::updateBlinkDebugDescription() {
   const bool enabled = params.getBool("DmBlinkDebugOverlayEnabled");
+  const bool alert_enabled = params.getBool("DmBlinkAlertEnabled");
   const int close_pct = getIntParam(params, "DmBlinkCloseThresholdPct", kBlinkCloseDefault);
   const int min_duration_ms = getIntParam(params, "DmBlinkMinDurationMs", kBlinkMinDurationDefault);
   const int long_closure_ms = getIntParam(params, "DmBlinkLongClosureMs", kBlinkLongClosureDefault);
   blink_debug_settings_btn->setDescription(
-    tr("Diagnostic overlay: %1 · Close %2% · Blink %3 ms · Long closure %4 s. "
-       "The 10-second tracker does not change the current DM safety alert threshold.")
+    tr("Diagnostic overlay: %1 | Sleep Candidate alert: %2 | Close %3% | Blink %4 ms | Long closure %5 s. "
+       "Existing driver-monitoring warnings remain active in both modes.")
       .arg(enabled ? tr("ON") : tr("OFF"))
+      .arg(alert_enabled ? tr("ON") : tr("OFF (CURRENT)"))
       .arg(close_pct)
       .arg(min_duration_ms)
       .arg(long_closure_ms / 1000.0, 0, 'f', 1));

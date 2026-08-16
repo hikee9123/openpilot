@@ -32,6 +32,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"DisablePowerDown", {PERSISTENT, BOOL}},
     {"DisableUpdates", {PERSISTENT, BOOL}},
     {"DisengageOnAccelerator", {PERSISTENT, BOOL, "0"}},
+    {"DmBlinkAlertEnabled", {PERSISTENT, BOOL, "0"}},
     {"DmBlinkCloseThresholdPct", {PERSISTENT, INT, "87"}},
     {"DmBlinkDebugOverlayEnabled", {PERSISTENT, BOOL, "0"}},
     {"DmBlinkLongClosureMs", {PERSISTENT, INT, "1500"}},

@@ -278,3 +278,39 @@ class TestBlinkEventTracker:
     assert self.tracker.blink_count == 1
     self.update_for(10.05, 0.10)
     assert self.tracker.blink_count == 0
+
+
+class TestBlinkAlertLink:
+  def setup_method(self):
+    self.prefix = OpenpilotPrefix()
+    self.prefix.__enter__()
+
+  def teardown_method(self):
+    self.prefix.__exit__(None, None, None)
+
+  @staticmethod
+  def update_for(dm, seconds, probability):
+    msg = make_msg(True)
+    msg.leftDriverData.leftBlinkProb = probability
+    msg.leftDriverData.rightBlinkProb = probability
+    for _ in range(round(seconds / DT_DMON)):
+      dm._update_states(msg, [0, 0, 0], 0, True, False)
+
+  def test_sleep_candidate_warning_link_is_opt_in(self):
+    for alert_enabled in (False, True):
+      blink_settings = BlinkDebugSettings(alert_enabled=alert_enabled, close_threshold=0.75,
+                                          open_threshold=0.50, long_closure=0.10)
+      dm = DriverMonitoring(blink_debug_settings=blink_settings)
+      self.update_for(dm, 0.15, 0.80)
+
+      assert dm.blink_tracker.sleep_candidate
+      assert dm.distracted_types['eye'] is alert_enabled
+
+  def test_existing_blink_warning_remains_enabled(self):
+    blink_settings = BlinkDebugSettings(alert_enabled=False, close_threshold=0.95,
+                                        open_threshold=0.50, long_closure=0.10)
+    dm = DriverMonitoring(blink_debug_settings=blink_settings)
+    self.update_for(dm, DT_DMON, 0.90)
+
+    assert not dm.blink_tracker.sleep_candidate
+    assert dm.distracted_types['eye']

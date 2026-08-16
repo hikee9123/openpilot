@@ -29,6 +29,7 @@ def _read_int_param(params, key, default, minimum, maximum):
 @dataclass(frozen=True)
 class BlinkDebugSettings:
   enabled: bool = False
+  alert_enabled: bool = False
   close_threshold: float = 0.87
   open_threshold: float = 0.50
   min_duration: float = 0.10
@@ -47,6 +48,7 @@ class BlinkDebugSettings:
     min_valid_pct = _read_int_param(params, "DmBlinkMinValidPct", 80, 50, 100)
     return cls(
       enabled=params.get_bool("DmBlinkDebugOverlayEnabled"),
+      alert_enabled=params.get_bool("DmBlinkAlertEnabled"),
       close_threshold=close_pct / 100.,
       open_threshold=open_pct / 100.,
       min_duration=min_duration_ms / 1000.,
@@ -350,7 +352,9 @@ class DriverMonitoring:
     yaw_threshold = self.settings._POSE_YAW_THRESHOLD * self.pose.cfactor_yaw
 
     self.distracted_types['pose'] = bool((pitch_error > pitch_threshold) or (yaw_error > yaw_threshold))
-    self.distracted_types['eye'] = bool((self.blink.left + self.blink.right)*0.5 > self.settings._BLINK_THRESHOLD)
+    blink_distracted = (self.blink.left + self.blink.right) * 0.5 > self.settings._BLINK_THRESHOLD
+    sleep_candidate_distracted = self.blink_tracker.settings.alert_enabled and self.blink_tracker.sleep_candidate
+    self.distracted_types['eye'] = bool(blink_distracted or sleep_candidate_distracted)
     self.distracted_types['phone'] = bool(self.phone_prob > self.settings._PHONE_THRESH)
 
   def _update_states(self, driver_state, cal_rpy, car_speed, op_engaged, lowspeed, demo_mode=False, steering_angle_deg=0.):
