@@ -1,7 +1,7 @@
 from cereal import log
 from openpilot.common.realtime import DT_DMON
 from openpilot.common.prefix import OpenpilotPrefix
-from openpilot.selfdrive.monitoring.policy import DriverMonitoring, DRIVER_MONITOR_SETTINGS
+from openpilot.selfdrive.monitoring.policy import BlinkDebugSettings, BlinkEventTracker, DriverMonitoring, DRIVER_MONITOR_SETTINGS
 
 EventName = log.OnroadEvent.EventName
 dm_settings = DRIVER_MONITOR_SETTINGS()
@@ -28,7 +28,7 @@ def make_msg(face_detected, distracted=False, model_uncertain=False):
   return ds
 
 
-# driver state from neural net, 10Hz
+# driver state from neural net, 20Hz
 msg_NO_FACE_DETECTED = make_msg(False)
 msg_ATTENTIVE = make_msg(True)
 msg_DISTRACTED = make_msg(True, distracted=True)
@@ -233,3 +233,48 @@ class TestMonitoring:
     assert alert_lvls[int((INVISIBLE_SECONDS_TO_ORANGE-1+DT_DMON*s._HI_STD_FALLBACK_TIME-0.1)/DT_DMON)] == 1
     assert alert_lvls[int((INVISIBLE_SECONDS_TO_ORANGE-1+DT_DMON*s._HI_STD_FALLBACK_TIME+0.1)/DT_DMON)] == 2
     assert alert_lvls[int((INVISIBLE_SECONDS_TO_RED-1+DT_DMON*s._HI_STD_FALLBACK_TIME+0.1)/DT_DMON)] == 3
+
+
+class TestBlinkEventTracker:
+  def setup_method(self):
+    self.settings = BlinkDebugSettings(close_threshold=0.87, open_threshold=0.50,
+                                       min_duration=0.10, long_closure=1.50,
+                                       min_valid_ratio=0.80)
+    self.tracker = BlinkEventTracker(self.settings)
+
+  def update_for(self, seconds, probability, valid=True):
+    for _ in range(round(seconds / DT_DMON)):
+      self.tracker.update(valid, probability, probability, probability, 0.1)
+
+  def test_counts_one_blink_on_closed_to_open_transition(self):
+    self.update_for(0.20, 0.95)
+    self.update_for(0.05, 0.10)
+    assert self.tracker.blink_count == 1
+    assert not self.tracker.eye_closed
+
+  def test_ignores_short_probability_spike(self):
+    self.update_for(DT_DMON, 0.95)
+    self.update_for(DT_DMON, 0.10)
+    assert self.tracker.blink_count == 0
+
+  def test_long_closure_is_candidate_not_repeated_blinks(self):
+    self.update_for(1.60, 0.95)
+    assert self.tracker.sleep_candidate
+    self.update_for(DT_DMON, 0.10)
+    assert self.tracker.blink_count == 0
+    assert self.tracker.max_closure >= 1.50
+
+  def test_invalid_samples_do_not_end_or_extend_closure(self):
+    self.update_for(0.10, 0.95)
+    closed_duration = self.tracker.closed_duration
+    self.update_for(0.50, 0.0, valid=False)
+    assert self.tracker.eye_closed
+    assert self.tracker.closed_duration == closed_duration
+    assert not self.tracker.sleep_candidate
+
+  def test_blink_expires_from_ten_second_window(self):
+    self.update_for(0.20, 0.95)
+    self.update_for(0.05, 0.10)
+    assert self.tracker.blink_count == 1
+    self.update_for(10.05, 0.10)
+    assert self.tracker.blink_count == 0

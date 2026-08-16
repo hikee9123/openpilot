@@ -1,10 +1,17 @@
+#include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <exception>
 #include <string>
 #include <tuple>
 #include <vector>
 
 #include <QDebug>
+#include <QCheckBox>
+#include <QDialog>
+#include <QHBoxLayout>
+#include <QSpinBox>
+#include <QVBoxLayout>
 
 #include "common/watchdog.h"
 #include "common/util.h"
@@ -17,6 +24,188 @@
 #include "selfdrive/ui/qt/offroad/firehose.h"
 
 #include "selfdrive/ui/qt/custom/custom.h"   // #custom
+
+namespace {
+
+constexpr int kBlinkCloseDefault = 87;
+constexpr int kBlinkOpenDefault = 50;
+constexpr int kBlinkMinDurationDefault = 100;
+constexpr int kBlinkLongClosureDefault = 1500;
+constexpr int kBlinkMinValidDefault = 80;
+
+int getIntParam(Params &params, const std::string &key, int default_value) {
+  try {
+    const std::string value = params.get(key);
+    return value.empty() ? default_value : std::stoi(value);
+  } catch (const std::exception &) {
+    return default_value;
+  }
+}
+
+class BlinkDebugSettingsDialog : public QDialog {
+public:
+  explicit BlinkDebugSettingsDialog(QWidget *parent) : QDialog(parent) {
+    setWindowTitle(tr("Driver Monitoring Blink Debug"));
+    setModal(true);
+    const QSize available = parent->window()->size() - QSize(120, 100);
+    resize(std::clamp(available.width(), 900, 1400), std::clamp(available.height(), 700, 980));
+    setStyleSheet(R"(
+      QDialog { background-color: #101214; color: white; }
+      QLabel { color: white; }
+      QCheckBox { font-size: 30px; spacing: 24px; }
+      QCheckBox::indicator { width: 62px; height: 38px; }
+      QSpinBox {
+        min-width: 250px; min-height: 72px; padding: 0 24px;
+        border: 2px solid #414850; border-radius: 18px;
+        background-color: #252a30; color: white; font-size: 30px;
+      }
+      QPushButton {
+        min-width: 230px; min-height: 78px; padding: 0 24px;
+        border: 0; border-radius: 38px;
+        background-color: #393939; color: white; font-size: 28px;
+      }
+      QPushButton#applyButton { background-color: #00c853; color: #07170d; font-weight: 600; }
+    )");
+
+    auto *main_layout = new QVBoxLayout(this);
+    main_layout->setContentsMargins(45, 35, 45, 35);
+    main_layout->setSpacing(18);
+
+    auto *title = new QLabel(tr("Driver Monitoring Blink Debug"), this);
+    title->setStyleSheet("font-size: 42px; font-weight: 600;");
+    main_layout->addWidget(title);
+
+    auto *notice = new QLabel(tr("Diagnostic only. These values do not change the current driver-monitoring safety alert threshold."), this);
+    notice->setWordWrap(true);
+    notice->setStyleSheet("font-size: 24px; color: #e8bd64; padding-bottom: 12px;");
+    main_layout->addWidget(notice);
+
+    debug_enabled = new QCheckBox(tr("Show the blink debug overlay while driving"), this);
+    debug_enabled->setChecked(params.getBool("DmBlinkDebugOverlayEnabled"));
+    main_layout->addWidget(debug_enabled);
+
+    addSection(main_layout, tr("Eye closure detection"));
+    close_threshold = addSpin(main_layout, tr("Close threshold"),
+                              tr("Start a closed-eye segment at or above this probability."),
+                              75, 95, 1, getIntParam(params, "DmBlinkCloseThresholdPct", kBlinkCloseDefault), tr(" %"));
+    open_threshold = addSpin(main_layout, tr("Open threshold"),
+                             tr("Finish the segment below this probability. It must remain at least 5% below Close."),
+                             20, close_threshold->value() - 5, 1,
+                             getIntParam(params, "DmBlinkOpenThresholdPct", kBlinkOpenDefault), tr(" %"));
+
+    addSection(main_layout, tr("Blink and sleep-candidate detection"));
+    min_duration = addSpin(main_layout, tr("Minimum blink duration"),
+                           tr("Ignore shorter probability spikes."),
+                           50, 500, 50, getIntParam(params, "DmBlinkMinDurationMs", kBlinkMinDurationDefault), tr(" ms"));
+    long_closure = addSpin(main_layout, tr("Long eye closure"),
+                           tr("Set the diagnostic Sleep Candidate flag after continuous valid closure."),
+                           500, 5000, 100, getIntParam(params, "DmBlinkLongClosureMs", kBlinkLongClosureDefault), tr(" ms"));
+    min_valid = addSpin(main_layout, tr("Minimum valid data"),
+                        tr("Require this percentage of valid face and both-eye samples in the fixed 10-second window."),
+                        50, 100, 5, getIntParam(params, "DmBlinkMinValidPct", kBlinkMinValidDefault), tr(" %"));
+
+    QObject::connect(close_threshold, QOverload<int>::of(&QSpinBox::valueChanged), [this](int value) {
+      open_threshold->setMaximum(value - 5);
+    });
+    QObject::connect(min_duration, QOverload<int>::of(&QSpinBox::valueChanged), [this](int value) {
+      long_closure->setMinimum(value + 50);
+    });
+    long_closure->setMinimum(min_duration->value() + 50);
+
+    auto *window_note = new QLabel(tr("Measurement window: 10 seconds (fixed) · Changes apply on the next DM start."), this);
+    window_note->setStyleSheet("font-size: 23px; color: #aeb5bc; padding-top: 8px;");
+    main_layout->addWidget(window_note);
+    main_layout->addStretch();
+
+    auto *button_layout = new QHBoxLayout();
+    button_layout->setSpacing(18);
+    auto *reset_button = new QPushButton(tr("Reset defaults"), this);
+    auto *cancel_button = new QPushButton(tr("Cancel"), this);
+    auto *apply_button = new QPushButton(tr("Apply"), this);
+    apply_button->setObjectName("applyButton");
+    button_layout->addWidget(reset_button);
+    button_layout->addStretch();
+    button_layout->addWidget(cancel_button);
+    button_layout->addWidget(apply_button);
+    main_layout->addLayout(button_layout);
+
+    QObject::connect(reset_button, &QPushButton::clicked, [this]() { setDefaults(); });
+    QObject::connect(cancel_button, &QPushButton::clicked, this, &QDialog::reject);
+    QObject::connect(apply_button, &QPushButton::clicked, [this]() {
+      if (save()) accept();
+    });
+  }
+
+private:
+  void addSection(QVBoxLayout *layout, const QString &text) {
+    auto *label = new QLabel(text, this);
+    label->setStyleSheet("font-size: 27px; font-weight: 600; color: #8de6aa; padding-top: 12px;");
+    layout->addWidget(label);
+  }
+
+  QSpinBox *addSpin(QVBoxLayout *layout, const QString &title, const QString &description,
+                    int minimum, int maximum, int step, int value, const QString &suffix) {
+    auto *row = new QWidget(this);
+    auto *row_layout = new QHBoxLayout(row);
+    row_layout->setContentsMargins(0, 0, 0, 0);
+    row_layout->setSpacing(30);
+
+    auto *copy = new QLabel(QString("<b>%1</b><br><span style='color:#aeb5bc'>%2</span>").arg(title, description), row);
+    copy->setTextFormat(Qt::RichText);
+    copy->setWordWrap(true);
+    copy->setStyleSheet("font-size: 24px;");
+
+    auto *spin = new QSpinBox(row);
+    spin->setRange(minimum, maximum);
+    spin->setSingleStep(step);
+    spin->setSuffix(suffix);
+    spin->setValue(std::clamp(value, minimum, maximum));
+    spin->setAlignment(Qt::AlignCenter);
+
+    row_layout->addWidget(copy, 1);
+    row_layout->addWidget(spin);
+    layout->addWidget(row);
+    return spin;
+  }
+
+  void setDefaults() {
+    debug_enabled->setChecked(false);
+    close_threshold->setValue(kBlinkCloseDefault);
+    open_threshold->setValue(kBlinkOpenDefault);
+    min_duration->setValue(kBlinkMinDurationDefault);
+    long_closure->setValue(kBlinkLongClosureDefault);
+    min_valid->setValue(kBlinkMinValidDefault);
+  }
+
+  bool save() {
+    if (open_threshold->value() > close_threshold->value() - 5) {
+      ConfirmationDialog::alert(tr("Open threshold must be at least 5% below Close threshold."), this);
+      return false;
+    }
+    if (min_duration->value() >= long_closure->value()) {
+      ConfirmationDialog::alert(tr("Long eye closure must be greater than Minimum blink duration."), this);
+      return false;
+    }
+
+    params.putBool("DmBlinkDebugOverlayEnabled", debug_enabled->isChecked());
+    params.put("DmBlinkCloseThresholdPct", std::to_string(close_threshold->value()));
+    params.put("DmBlinkOpenThresholdPct", std::to_string(open_threshold->value()));
+    params.put("DmBlinkMinDurationMs", std::to_string(min_duration->value()));
+    params.put("DmBlinkLongClosureMs", std::to_string(long_closure->value()));
+    params.put("DmBlinkMinValidPct", std::to_string(min_valid->value()));
+    return true;
+  }
+
+  Params params;
+  QCheckBox *debug_enabled;
+  QSpinBox *close_threshold;
+  QSpinBox *open_threshold;
+  QSpinBox *min_duration;
+  QSpinBox *long_closure;
+  QSpinBox *min_valid;
+};
+
+}  // namespace
 
 TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
   // param, title, desc, icon, restart needed
@@ -112,6 +301,23 @@ TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
     addItem(toggle);
     toggles[param.toStdString()] = toggle;
 
+    if (param == "AlwaysOnDM") {
+      blink_debug_settings_btn = new ButtonControl(
+        tr("Driver Monitoring Blink Debug"), tr("SETTINGS"), "", this);
+      updateBlinkDebugDescription();
+      QObject::connect(blink_debug_settings_btn, &ButtonControl::clicked, [this]() {
+        BlinkDebugSettingsDialog dialog(this);
+        if (dialog.exec() == QDialog::Accepted) {
+          updateBlinkDebugDescription();
+        }
+      });
+      QObject::connect(uiState(), &UIState::offroadTransition, [this](bool offroad) {
+        blink_debug_settings_btn->setEnabled(offroad);
+      });
+      blink_debug_settings_btn->setEnabled(!uiState()->scene.started);
+      addItem(blink_debug_settings_btn);
+    }
+
     // insert longitudinal personality after NDOG toggle
     if (param == "DisengageOnAccelerator") {
       addItem(long_personality_setting);
@@ -121,6 +327,20 @@ TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
   // Toggles with confirmation dialogs
   toggles["ExperimentalMode"]->setActiveIcon("../assets/icons/experimental.svg");
   toggles["ExperimentalMode"]->setConfirmation(true, true);
+}
+
+void TogglesPanel::updateBlinkDebugDescription() {
+  const bool enabled = params.getBool("DmBlinkDebugOverlayEnabled");
+  const int close_pct = getIntParam(params, "DmBlinkCloseThresholdPct", kBlinkCloseDefault);
+  const int min_duration_ms = getIntParam(params, "DmBlinkMinDurationMs", kBlinkMinDurationDefault);
+  const int long_closure_ms = getIntParam(params, "DmBlinkLongClosureMs", kBlinkLongClosureDefault);
+  blink_debug_settings_btn->setDescription(
+    tr("Diagnostic overlay: %1 · Close %2% · Blink %3 ms · Long closure %4 s. "
+       "The 10-second tracker does not change the current DM safety alert threshold.")
+      .arg(enabled ? tr("ON") : tr("OFF"))
+      .arg(close_pct)
+      .arg(min_duration_ms)
+      .arg(long_closure_ms / 1000.0, 0, 'f', 1));
 }
 
 void TogglesPanel::updateState(const UIState &s) {
@@ -153,6 +373,7 @@ void TogglesPanel::showEvent(QShowEvent *event) {
 }
 
 void TogglesPanel::updateToggles() {
+  updateBlinkDebugDescription();
   auto experimental_mode_toggle = toggles["ExperimentalMode"];
   const QString e2e_description = QString("%1<br>"
                                           "<h4>%2</h4><br>"

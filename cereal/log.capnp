@@ -2288,6 +2288,27 @@ struct DriverMonitoringState {
     pose @5 :Pose;
     wheeltouchFallbackPercent @6 :Int8;
     uncertainOffroadAlertPercent @7 :Int8;
+    blinkDebugState @8 :BlinkDebugState;
+
+    struct BlinkDebugState {
+      enabled @0 :Bool;
+      valid @1 :Bool;
+      eyeClosed @2 :Bool;
+      sleepCandidate @3 :Bool;
+      blinkCount10s @4 :UInt16;
+      currentClosureMillis @5 :UInt16;
+      maxClosureMillis10s @6 :UInt16;
+      closedPercent10s @7 :UInt8;
+      validPercent10s @8 :UInt8;
+      rawLeftBlinkProb @9 :Float32;
+      rawRightBlinkProb @10 :Float32;
+      effectiveBlinkProb @11 :Float32;
+      sleepProb @12 :Float32;
+      closeThresholdPercent @13 :UInt8;
+      openThresholdPercent @14 :UInt8;
+      minDurationMillis @15 :UInt16;
+      longClosureMillis @16 :UInt16;
+    }
 
     struct DistractedTypes {
       pose @0: Bool;
