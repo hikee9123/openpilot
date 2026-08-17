@@ -9,8 +9,11 @@
 #include <vector>
 
 #include <QDebug>
+#include <QDateTime>
 #include <QDialog>
 #include <QHBoxLayout>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QVBoxLayout>
 
 #include "common/watchdog.h"
@@ -31,6 +34,8 @@ namespace {
 
 constexpr int kBlinkCloseDefault = 87;
 constexpr int kBlinkOpenDefault = 50;
+constexpr int kBlinkThresholdMin = 5;
+constexpr int kBlinkThresholdHysteresis = 5;
 constexpr int kBlinkMinDurationDefault = 100;
 constexpr int kBlinkLongClosureDefault = 1500;
 constexpr int kBlinkMinValidDefault = 80;
@@ -42,6 +47,66 @@ int getIntParam(Params &params, const std::string &key, int default_value) {
   } catch (const std::exception &) {
     return default_value;
   }
+}
+
+int maximumOpenThreshold(int close_threshold) {
+  return std::max(kBlinkThresholdMin, close_threshold - kBlinkThresholdHysteresis);
+}
+
+struct BlinkAutoTuneState {
+  bool ready = false;
+  int confidence_pct = 0;
+  int valid_percent = 0;
+  int closure_count = 0;
+  double valid_minutes = 0.0;
+  qint64 last_updated = 0;
+  int close_threshold_pct = kBlinkCloseDefault;
+  int open_threshold_pct = kBlinkOpenDefault;
+  int min_duration_ms = kBlinkMinDurationDefault;
+  int long_closure_ms = kBlinkLongClosureDefault;
+  int min_valid_pct = kBlinkMinValidDefault;
+};
+
+BlinkAutoTuneState getBlinkAutoTuneState(Params &params) {
+  BlinkAutoTuneState state;
+  state.close_threshold_pct = getIntParam(params, "DmBlinkCloseThresholdPct", kBlinkCloseDefault);
+  state.open_threshold_pct = getIntParam(params, "DmBlinkOpenThresholdPct", kBlinkOpenDefault);
+  state.min_duration_ms = getIntParam(params, "DmBlinkMinDurationMs", kBlinkMinDurationDefault);
+  state.long_closure_ms = getIntParam(params, "DmBlinkLongClosureMs", kBlinkLongClosureDefault);
+  state.min_valid_pct = getIntParam(params, "DmBlinkMinValidPct", kBlinkMinValidDefault);
+
+  const std::string raw_state = params.get("DmBlinkAutoTuneState");
+  if (raw_state.empty()) {
+    return state;
+  }
+
+  QJsonParseError error;
+  const QJsonDocument document = QJsonDocument::fromJson(QByteArray::fromStdString(raw_state), &error);
+  if (error.error != QJsonParseError::NoError || !document.isObject()) {
+    qWarning() << "Failed to parse DmBlinkAutoTuneState:" << error.errorString();
+    return state;
+  }
+
+  const QJsonObject root = document.object();
+  const QJsonObject recommendations = root.value("recommendations").toObject();
+  state.ready = root.value("ready").toBool(false) && !recommendations.isEmpty();
+  state.confidence_pct = std::clamp(root.value("confidencePct").toInt(0), 0, 100);
+  state.valid_percent = std::clamp(root.value("validPercent").toInt(0), 0, 100);
+  state.closure_count = std::max(root.value("closureCount").toInt(0), 0);
+  state.valid_minutes = std::max(root.value("validMinutes").toDouble(0.0), 0.0);
+  state.last_updated = std::max(static_cast<qint64>(root.value("lastUpdated").toDouble(0.0)), qint64{0});
+  state.close_threshold_pct = recommendations.value("closeThresholdPct").toInt(state.close_threshold_pct);
+  state.open_threshold_pct = recommendations.value("openThresholdPct").toInt(state.open_threshold_pct);
+  state.min_duration_ms = recommendations.value("minDurationMs").toInt(state.min_duration_ms);
+  state.long_closure_ms = recommendations.value("longClosureMs").toInt(state.long_closure_ms);
+  state.min_valid_pct = recommendations.value("minValidPct").toInt(state.min_valid_pct);
+  state.close_threshold_pct = std::clamp(state.close_threshold_pct, kBlinkThresholdMin, 95);
+  state.open_threshold_pct = std::clamp(state.open_threshold_pct, kBlinkThresholdMin,
+                                        maximumOpenThreshold(state.close_threshold_pct));
+  state.min_duration_ms = std::clamp(state.min_duration_ms, 50, 500);
+  state.long_closure_ms = std::clamp(state.long_closure_ms, state.min_duration_ms + 50, 5000);
+  state.min_valid_pct = std::clamp(state.min_valid_pct, 50, 100);
+  return state;
 }
 
 enum class TouchValueFormat {
@@ -105,7 +170,7 @@ public:
     minus_button.setText("-");
     plus_button.setText("+");
     for (QPushButton *button : {&minus_button, &plus_button}) {
-      button->setFixedSize(150, 100);
+      button->setFixedSize(300, 100);
       button->setStyleSheet(button_style);
       button->setAutoRepeat(true);
       button->setAutoRepeatDelay(500);
@@ -122,13 +187,42 @@ public:
       }
     )");
 
+    auto_value_label.setFixedSize(280, 100);
+    auto_value_label.setAlignment(Qt::AlignCenter);
+    auto_value_label.setStyleSheet(R"(
+      QLabel {
+        border: 2px solid #414850; border-radius: 18px;
+        background-color: #1f2522; color: #8de6aa;
+        font-size: 34px; font-weight: 500;
+      }
+    )");
+
+    use_auto_button.setText(tr("USE"));
+    use_auto_button.setFixedSize(160, 100);
+    use_auto_button.setStyleSheet(R"(
+      QPushButton {
+        min-width: 0; min-height: 0; padding: 0;
+        border: 0; border-radius: 45px;
+        background-color: #2d7040; color: white;
+        font-size: 34px; font-weight: 600;
+      }
+      QPushButton:pressed { background-color: #388c50; }
+      QPushButton:disabled { color: #666666; background-color: #242424; }
+    )");
+
     hlayout->addWidget(&minus_button);
     hlayout->addWidget(&value_label);
     hlayout->addWidget(&plus_button);
+    hlayout->addWidget(&auto_value_label);
+    hlayout->addWidget(&use_auto_button);
 
     QObject::connect(&minus_button, &QPushButton::clicked, [this]() { setValue(value_ - step_); });
     QObject::connect(&plus_button, &QPushButton::clicked, [this]() { setValue(value_ + step_); });
+    QObject::connect(&use_auto_button, &QPushButton::clicked, [this]() {
+      if (auto_value_available_) setValue(auto_value_);
+    });
     refresh();
+    refreshAutoValue();
   }
 
   int value() const {
@@ -151,45 +245,72 @@ public:
   void setMinimum(int minimum) {
     minimum_ = std::min(minimum, maximum_);
     setValue(value_);
+    refreshAutoValue();
   }
 
   void setMaximum(int maximum) {
     maximum_ = std::max(maximum, minimum_);
     setValue(value_);
+    refreshAutoValue();
   }
 
   void setValueChangedCallback(std::function<void(int)> callback) {
     value_changed_callback_ = std::move(callback);
   }
 
+  void setAutoValue(int value, bool available, int confidence_pct) {
+    auto_value_ = value;
+    auto_value_available_ = available;
+    auto_confidence_pct_ = std::clamp(confidence_pct, 0, 100);
+    refreshAutoValue();
+  }
+
+  void useAutoValue() {
+    if (auto_value_available_) setValue(auto_value_);
+  }
+
 private:
-  QString formattedValue() const {
+  QString formattedValue(int value) const {
     switch (format_) {
       case TouchValueFormat::PERCENT:
-        return QString("%1%").arg(value_);
+        return QString("%1%").arg(value);
       case TouchValueFormat::MILLISECONDS:
-        return QString("%1 ms").arg(value_);
+        return QString("%1 ms").arg(value);
       case TouchValueFormat::SECONDS:
-        return QString("%1 s").arg(value_ / 1000.0, 0, 'f', 1);
+        return QString("%1 s").arg(value / 1000.0, 0, 'f', 1);
     }
-    return QString::number(value_);
+    return QString::number(value);
   }
 
   void refresh() {
-    value_label.setText(formattedValue());
+    value_label.setText(tr("CUR %1").arg(formattedValue(value_)));
     minus_button.setEnabled(value_ > minimum_);
     plus_button.setEnabled(value_ < maximum_);
+  }
+
+  void refreshAutoValue() {
+    auto_value_label.setText(auto_value_available_ ?
+      tr("AUTO %1\n%2%").arg(formattedValue(auto_value_)).arg(auto_confidence_pct_) : tr("AUTO --"));
+    const bool value_in_range = auto_value_ >= minimum_ && auto_value_ <= maximum_;
+    use_auto_button.setEnabled(auto_value_available_ && value_in_range);
+    use_auto_button.setToolTip(auto_value_available_ && !value_in_range ?
+      tr("Apply the related recommendation first, or use all recommendations.") : QString());
   }
 
   int minimum_;
   int maximum_;
   int step_;
   int value_;
+  int auto_value_ = 0;
+  int auto_confidence_pct_ = 0;
+  bool auto_value_available_ = false;
   TouchValueFormat format_;
   std::function<void(int)> value_changed_callback_;
   QPushButton minus_button;
   QPushButton plus_button;
   QLabel value_label;
+  QLabel auto_value_label;
+  QPushButton use_auto_button;
 };
 
 class BlinkDebugSettingsDialog : public DialogBase {
@@ -197,6 +318,7 @@ public:
   explicit BlinkDebugSettingsDialog(QWidget *parent) : DialogBase(parent) {
     setWindowTitle(tr("Driver Monitoring Blink Debug"));
     setModal(true);
+    auto_tune_state = getBlinkAutoTuneState(params);
     setStyleSheet(R"(
       QDialog { background-color: #101214; color: white; }
       QLabel { color: white; }
@@ -248,11 +370,11 @@ public:
     auto *eye_layout = createPage(tab_widget, tr("Eye Closure"));
     close_threshold = addTouchValue(eye_layout, tr("Close threshold"),
                                     tr("Start a closed-eye segment at or above this probability."),
-                                    75, 95, 1, getIntParam(params, "DmBlinkCloseThresholdPct", kBlinkCloseDefault),
+                                    kBlinkThresholdMin, 95, 1, getIntParam(params, "DmBlinkCloseThresholdPct", kBlinkCloseDefault),
                                     TouchValueFormat::PERCENT);
     open_threshold = addTouchValue(eye_layout, tr("Open threshold"),
-                                   tr("Finish the segment at least 5% below Close."),
-                                   20, close_threshold->value() - 5, 1,
+                                   tr("Finish the segment below Close, using a 5% gap whenever the selected range allows."),
+                                   kBlinkThresholdMin, maximumOpenThreshold(close_threshold->value()), 1,
                                    getIntParam(params, "DmBlinkOpenThresholdPct", kBlinkOpenDefault),
                                    TouchValueFormat::PERCENT);
     eye_layout->addStretch();
@@ -272,7 +394,7 @@ public:
                               TouchValueFormat::PERCENT);
 
     close_threshold->setValueChangedCallback([this](int value) {
-      open_threshold->setMaximum(value - 5);
+      open_threshold->setMaximum(maximumOpenThreshold(value));
     });
     min_duration->setValueChangedCallback([this](int value) {
       long_closure->setMinimum(value + 50);
@@ -285,6 +407,41 @@ public:
     window_note->setStyleSheet("font-size: 38px; color: #aeb5bc; padding: 18px 8px;");
     blink_layout->addWidget(window_note);
     blink_layout->addStretch();
+
+    auto *auto_tune_layout = createPage(tab_widget, tr("Auto Tune"));
+    auto_tune_enabled = new StagedToggleControl(
+      tr("Enable Auto Tune"),
+      tr("Collect numeric driver-monitoring data while openpilot is enabled above 10 km/h and calculate recommendations. "
+         "Active DM values are never changed automatically."),
+      params.getBool("DmBlinkAutoTuneEnabled"), auto_tune_layout->parentWidget());
+    auto_tune_layout->addWidget(auto_tune_enabled);
+
+    auto_tune_status = new QLabel(auto_tune_layout->parentWidget());
+    auto_tune_status->setWordWrap(true);
+    auto_tune_status->setStyleSheet(
+      "font-size: 42px; color: white; padding: 24px; background-color: #20262b; border-radius: 20px;");
+    auto_tune_layout->addWidget(auto_tune_status);
+
+    auto *auto_tune_note = new QLabel(
+      tr("Recommendations require at least 10 valid driving minutes and 10 eye-closure events. "
+         "Long eye closure remains unchanged until confirmed drowsiness labels are available."), auto_tune_layout->parentWidget());
+    auto_tune_note->setWordWrap(true);
+    auto_tune_note->setStyleSheet("font-size: 36px; color: #aeb5bc; padding: 16px 8px;");
+    auto_tune_layout->addWidget(auto_tune_note);
+
+    auto *auto_button_layout = new QHBoxLayout();
+    auto_button_layout->setSpacing(24);
+    apply_all_auto_button = new QPushButton(tr("Use all recommendations"), auto_tune_layout->parentWidget());
+    reset_auto_data_button = new QPushButton(tr("Reset learned data"), auto_tune_layout->parentWidget());
+    apply_all_auto_button->setObjectName("dialogButton");
+    reset_auto_data_button->setObjectName("dialogButton");
+    auto_button_layout->addWidget(apply_all_auto_button);
+    auto_button_layout->addWidget(reset_auto_data_button);
+    auto_button_layout->addStretch();
+    auto_tune_layout->addLayout(auto_button_layout);
+    auto_tune_layout->addStretch();
+
+    refreshAutoTuneUi();
 
     main_layout->addWidget(tab_widget, 1);
 
@@ -304,6 +461,15 @@ public:
 
     QObject::connect(reset_button, &QPushButton::clicked, [this]() { setDefaults(); });
     QObject::connect(cancel_button, &QPushButton::clicked, this, &QDialog::reject);
+    QObject::connect(auto_tune_enabled, &ToggleControl::toggleFlipped, [this](bool) { refreshAutoTuneUi(); });
+    QObject::connect(apply_all_auto_button, &QPushButton::clicked, [this]() { useAllAutoRecommendations(); });
+    QObject::connect(reset_auto_data_button, &QPushButton::clicked, [this]() {
+      if (ConfirmationDialog::confirm(tr("Reset all learned Blink Auto Tune data?"), tr("Reset"), this)) {
+        params.remove("DmBlinkAutoTuneState");
+        auto_tune_state = getBlinkAutoTuneState(params);
+        refreshAutoTuneUi();
+      }
+    });
     QObject::connect(apply_button, &QPushButton::clicked, [this]() {
       if (save()) accept();
     });
@@ -326,19 +492,62 @@ private:
     return control;
   }
 
+  void refreshAutoTuneUi() {
+    const bool ready = auto_tune_state.ready;
+    close_threshold->setAutoValue(auto_tune_state.close_threshold_pct, ready, auto_tune_state.confidence_pct);
+    open_threshold->setAutoValue(auto_tune_state.open_threshold_pct, ready, auto_tune_state.confidence_pct);
+    min_duration->setAutoValue(auto_tune_state.min_duration_ms, ready, auto_tune_state.confidence_pct);
+    long_closure->setAutoValue(auto_tune_state.long_closure_ms, ready, auto_tune_state.confidence_pct);
+    min_valid->setAutoValue(auto_tune_state.min_valid_pct, ready, auto_tune_state.confidence_pct);
+    apply_all_auto_button->setEnabled(ready);
+
+    QString status;
+    if (!auto_tune_enabled->value()) {
+      status = tr("AUTO TUNE OFF - Learned recommendations are preserved.");
+    } else if (!ready) {
+      status = tr("LEARNING - More valid driving data is required.");
+    } else {
+      status = tr("READY - Review the AUTO values beside each current value before applying.");
+    }
+
+    QString updated = tr("Never");
+    if (auto_tune_state.last_updated > 0) {
+      updated = QDateTime::fromSecsSinceEpoch(auto_tune_state.last_updated).toString("yyyy-MM-dd HH:mm");
+    }
+    auto_tune_status->setText(
+      tr("%1\nValid driving: %2 min | Valid data: %3% | Closures: %4 | Confidence: %5%\nLast update: %6")
+        .arg(status)
+        .arg(auto_tune_state.valid_minutes, 0, 'f', 1)
+        .arg(auto_tune_state.valid_percent)
+        .arg(auto_tune_state.closure_count)
+        .arg(auto_tune_state.confidence_pct)
+        .arg(updated));
+  }
+
+  void useAllAutoRecommendations() {
+    if (!auto_tune_state.ready) return;
+    close_threshold->useAutoValue();
+    open_threshold->useAutoValue();
+    min_duration->useAutoValue();
+    long_closure->useAutoValue();
+    min_valid->useAutoValue();
+  }
+
   void setDefaults() {
     debug_enabled->setValue(false);
     alert_mode->setValue(0);
+    auto_tune_enabled->setValue(false);
     close_threshold->setValue(kBlinkCloseDefault);
     open_threshold->setValue(kBlinkOpenDefault);
     min_duration->setValue(kBlinkMinDurationDefault);
     long_closure->setValue(kBlinkLongClosureDefault);
     min_valid->setValue(kBlinkMinValidDefault);
+    refreshAutoTuneUi();
   }
 
   bool save() {
-    if (open_threshold->value() > close_threshold->value() - 5) {
-      ConfirmationDialog::alert(tr("Open threshold must be at least 5% below Close threshold."), this);
+    if (open_threshold->value() > maximumOpenThreshold(close_threshold->value())) {
+      ConfirmationDialog::alert(tr("Open threshold exceeds the allowed value for the selected Close threshold."), this);
       return false;
     }
     if (min_duration->value() >= long_closure->value()) {
@@ -348,6 +557,7 @@ private:
 
     params.putBool("DmBlinkDebugOverlayEnabled", debug_enabled->value());
     params.putBool("DmBlinkAlertEnabled", alert_mode->value() == 1);
+    params.putBool("DmBlinkAutoTuneEnabled", auto_tune_enabled->value());
     params.put("DmBlinkCloseThresholdPct", std::to_string(close_threshold->value()));
     params.put("DmBlinkOpenThresholdPct", std::to_string(open_threshold->value()));
     params.put("DmBlinkMinDurationMs", std::to_string(min_duration->value()));
@@ -357,8 +567,13 @@ private:
   }
 
   Params params;
+  BlinkAutoTuneState auto_tune_state;
   StagedToggleControl *debug_enabled;
   StagedButtonControl *alert_mode;
+  StagedToggleControl *auto_tune_enabled;
+  QLabel *auto_tune_status;
+  QPushButton *apply_all_auto_button;
+  QPushButton *reset_auto_data_button;
   TouchValueControl *close_threshold;
   TouchValueControl *open_threshold;
   TouchValueControl *min_duration;
@@ -493,14 +708,16 @@ TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
 void TogglesPanel::updateBlinkDebugDescription() {
   const bool enabled = params.getBool("DmBlinkDebugOverlayEnabled");
   const bool alert_enabled = params.getBool("DmBlinkAlertEnabled");
+  const bool auto_tune_enabled = params.getBool("DmBlinkAutoTuneEnabled");
   const int close_pct = getIntParam(params, "DmBlinkCloseThresholdPct", kBlinkCloseDefault);
   const int min_duration_ms = getIntParam(params, "DmBlinkMinDurationMs", kBlinkMinDurationDefault);
   const int long_closure_ms = getIntParam(params, "DmBlinkLongClosureMs", kBlinkLongClosureDefault);
   blink_debug_settings_btn->setDescription(
-    tr("Diagnostic overlay: %1 | Sleep Candidate alert: %2 | Close %3% | Blink %4 ms | Long closure %5 s. "
+    tr("Diagnostic overlay: %1 | Sleep Candidate alert: %2 | Auto Tune: %3 | Close %4% | Blink %5 ms | Long closure %6 s. "
        "Existing driver-monitoring warnings remain active in both modes.")
       .arg(enabled ? tr("ON") : tr("OFF"))
       .arg(alert_enabled ? tr("ON") : tr("OFF (CURRENT)"))
+      .arg(auto_tune_enabled ? tr("ON") : tr("OFF"))
       .arg(close_pct)
       .arg(min_duration_ms)
       .arg(long_closure_ms / 1000.0, 0, 'f', 1));

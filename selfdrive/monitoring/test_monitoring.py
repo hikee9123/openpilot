@@ -279,6 +279,32 @@ class TestBlinkEventTracker:
     self.update_for(10.05, 0.10)
     assert self.tracker.blink_count == 0
 
+  def test_threshold_param_bounds_and_hysteresis(self):
+    class ParamsStub:
+      def __init__(self, close_pct, open_pct):
+        self.values = {
+          "DmBlinkCloseThresholdPct": str(close_pct),
+          "DmBlinkOpenThresholdPct": str(open_pct),
+        }
+
+      def get(self, key):
+        return self.values.get(key)
+
+      def get_bool(self, key):
+        return False
+
+    cases = (
+      (0, 0, 0.05, 0.05),
+      (5, 5, 0.05, 0.05),
+      (9, 9, 0.09, 0.05),
+      (10, 10, 0.10, 0.05),
+      (95, 99, 0.95, 0.90),
+    )
+    for close_pct, open_pct, expected_close, expected_open in cases:
+      settings = BlinkDebugSettings.from_params(ParamsStub(close_pct, open_pct))
+      assert settings.close_threshold == expected_close
+      assert settings.open_threshold == expected_open
+
 
 class TestBlinkAlertLink:
   def setup_method(self):

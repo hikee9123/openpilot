@@ -26,6 +26,10 @@ def _read_int_param(params, key, default, minimum, maximum):
   return min(max(value, minimum), maximum)
 
 
+def _maximum_open_threshold_pct(close_threshold_pct):
+  return max(5, close_threshold_pct - 5)
+
+
 @dataclass(frozen=True)
 class BlinkDebugSettings:
   enabled: bool = False
@@ -39,9 +43,9 @@ class BlinkDebugSettings:
 
   @classmethod
   def from_params(cls, params):
-    close_pct = _read_int_param(params, "DmBlinkCloseThresholdPct", 87, 75, 95)
-    open_pct = _read_int_param(params, "DmBlinkOpenThresholdPct", 50, 20, 82)
-    open_pct = min(open_pct, close_pct - 5)
+    close_pct = _read_int_param(params, "DmBlinkCloseThresholdPct", 87, 5, 95)
+    open_pct = _read_int_param(params, "DmBlinkOpenThresholdPct", 50, 5, 90)
+    open_pct = min(open_pct, _maximum_open_threshold_pct(close_pct))
     min_duration_ms = _read_int_param(params, "DmBlinkMinDurationMs", 100, 50, 500)
     long_closure_ms = _read_int_param(params, "DmBlinkLongClosureMs", 1500, 500, 5000)
     long_closure_ms = max(long_closure_ms, min_duration_ms + 50)

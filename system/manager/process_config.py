@@ -61,6 +61,9 @@ def always_run(started: bool, params: Params, CP: car.CarParams) -> bool:
 def only_onroad(started: bool, params: Params, CP: car.CarParams) -> bool:
   return started
 
+def dm_auto_tune(started: bool, params: Params, CP: car.CarParams) -> bool:
+  return started and params.get_bool("DmBlinkAutoTuneEnabled")
+
 def osm_enabled(started: bool, params: Params, CP: car.CarParams) -> bool:
   return params.get_bool("OSMEnable") and (started or WEBCAM)
 
@@ -114,6 +117,7 @@ procs = [
   PythonProcess("card", "selfdrive.car.card", only_onroad),
   PythonProcess("deleter", "system.loggerd.deleter", log_cleanup),
   PythonProcess("dmonitoringd", "selfdrive.monitoring.dmonitoringd", driverview, enabled=(WEBCAM or not PC)),
+  PythonProcess("dm_auto_tuned", "selfdrive.monitoring.dm_auto_tuned", dm_auto_tune, enabled=(WEBCAM or not PC)),
   PythonProcess("qcomgpsd", "system.qcomgpsd.qcomgpsd", qcomgps, enabled=TICI),
   PythonProcess("pandad", "selfdrive.pandad.pandad", always_run),
   PythonProcess("paramsd", "selfdrive.locationd.paramsd", only_onroad),
