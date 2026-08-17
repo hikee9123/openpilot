@@ -2119,14 +2119,54 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
 
   osmRoadsStatusTimer = new QTimer(this);
   connect(osmRoadsStatusTimer, &QTimer::timeout, this, &NavigationTab::refreshOsmRoadsStatus);
-  osmRoadsStatusTimer->start(1000);
+  osmRoadsStatusTimer->setInterval(1000);
   skipOsmRoadsExistingLog();
-  refreshOsmRoadsStatus();
 
   osmSpeedCamerasStatusTimer = new QTimer(this);
   connect(osmSpeedCamerasStatusTimer, &QTimer::timeout, this, &NavigationTab::refreshOsmSpeedCamerasStatus);
-  osmSpeedCamerasStatusTimer->start(1000);
-  refreshOsmSpeedCamerasStatus();
+  osmSpeedCamerasStatusTimer->setInterval(1000);
+
+  connect(osmEnable, &ToggleControl::toggleFlipped, this, [this](bool) {
+    QTimer::singleShot(0, this, &NavigationTab::updateOsmMonitoring);
+  });
+  updateOsmMonitoring();
+}
+
+void NavigationTab::updateOsmMonitoring()
+{
+  const bool osmEnabled = params.getBool("OSMEnable");
+  const bool monitorRoads = isVisible() && (osmEnabled || osmRoadsInstallRunning());
+  const bool monitorSpeedCameras = isVisible() && (osmEnabled || osmSpeedCamerasUpdateRunning());
+
+  installOsmDbButton->setEnabled(osmEnabled || osmRoadsInstallRunning());
+  updateOsmSpeedCamerasButton->setEnabled(osmEnabled || osmSpeedCamerasUpdateRunning());
+
+  if (monitorRoads) {
+    osmRoadsStatusTimer->start();
+    refreshOsmRoadsStatus();
+  } else {
+    osmRoadsStatusTimer->stop();
+  }
+
+  if (monitorSpeedCameras) {
+    osmSpeedCamerasStatusTimer->start();
+    refreshOsmSpeedCamerasStatus();
+  } else {
+    osmSpeedCamerasStatusTimer->stop();
+  }
+}
+
+void NavigationTab::showEvent(QShowEvent *event)
+{
+  QWidget::showEvent(event);
+  updateOsmMonitoring();
+}
+
+void NavigationTab::hideEvent(QHideEvent *event)
+{
+  osmRoadsStatusTimer->stop();
+  osmSpeedCamerasStatusTimer->stop();
+  QWidget::hideEvent(event);
 }
 
 bool NavigationTab::osmRoadsInstallRunning()
@@ -2238,9 +2278,11 @@ void NavigationTab::refreshOsmSpeedCamerasStatus()
     staleParams.put("OsmSpeedCamerasUpdateError", error.toStdString());
   }
 
+  const bool osmEnabled = params.getBool("OSMEnable");
   osmSpeedCamerasProgressBar->setValue(ok ? progress : 0);
   osmSpeedCamerasProgressBar->setVisible(running || progress > 0);
-  updateOsmSpeedCamerasButton->setEnabled(true);
+  updateOsmSpeedCamerasButton->setEnabled(osmEnabled || running);
+  if (!osmEnabled && !running) osmSpeedCamerasStatusTimer->stop();
 
   auto appendCounts = [&](QStringList &details) {
     if (rowsOk && downloadRows > 0) {
@@ -2341,9 +2383,11 @@ void NavigationTab::refreshOsmRoadsStatus()
     staleParams.put("OsmRoadsUpdateError", error.toStdString());
   }
 
+  const bool osmEnabled = params.getBool("OSMEnable");
   osmRoadsProgressBar->setValue(ok ? progress : 0);
   osmRoadsProgressBar->setVisible(running || progress > 0);
-  installOsmDbButton->setEnabled(true);
+  installOsmDbButton->setEnabled(osmEnabled || running);
+  if (!osmEnabled && !running) osmRoadsStatusTimer->stop();
 
   if (running) {
     emitOsmRoadsInstallLog();

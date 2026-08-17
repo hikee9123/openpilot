@@ -52,6 +52,7 @@ public:
   void    drawLead(QPainter &p, const cereal::RadarState::LeadData::Reader &lead_data, const QPointF &vd, int w, int h );
 
 private:
+  void    resetOsmState();
   void    drawText1(QPainter &p, int x, int y, const QString &text, QColor qColor = QColor(255,255,255,255), int nAlign = Qt::AlignCenter  );
   void    drawText2(QPainter &p, int x, int y, int flags, const QString &text, const QColor color = QColor(255, 255, 255, 220) );
   void    drawText3(QPainter &p, int x, int y, const QString &text, QColor color);
@@ -73,6 +74,7 @@ private:
   UIScene  *scene;
 
   std::unique_ptr<SubMaster> m_sm;
+  std::unique_ptr<SubMaster> m_osm_sm;
 
   int m_width;
   int m_height;
@@ -136,12 +138,12 @@ private:
 
   struct _NDA
   {
-     int activeNDA;
-     int camType;
-     int roadLimitSpeed;
-     int camLimitSpeed;
-     int camLimitSpeedLeftDist;
-     int cntIdx;
+     int activeNDA = 0;
+     int camType = 0;
+     int roadLimitSpeed = 0;
+     int camLimitSpeed = 0;
+     int camLimitSpeedLeftDist = 0;
+     int cntIdx = 0;
      OsmMinimapData osmRoadOverlay;
   } m_nda;
 

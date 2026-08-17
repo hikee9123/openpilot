@@ -451,6 +451,7 @@ public:
 
 private:
   std::map<std::string, ParamControl*> toggles;
+  void updateOsmMonitoring();
   void refreshOsmRoadsStatus();
   void refreshOsmSpeedCamerasStatus();
   bool osmRoadsInstallRunning();
@@ -473,9 +474,8 @@ private:
 
 
 protected:
-
-
-protected:
+  void showEvent(QShowEvent *event) override;
+  void hideEvent(QHideEvent *event) override;
 
 signals:
 

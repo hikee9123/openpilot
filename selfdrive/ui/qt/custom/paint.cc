@@ -38,7 +38,7 @@ OnPaint::OnPaint()
 {
   m_sm = std::make_unique<SubMaster, const std::initializer_list<const char *>>({
     "peripheralState", "gpsLocation", "gpsLocationExternal", "liveParameters",
-    "naviCustom",  "uICustom",  //"carControlCustom",
+    "uICustom",  //"carControlCustom",
   });
 
 
@@ -50,6 +50,23 @@ OnPaint::OnPaint()
 
   is_debug = 0;//Params().getBool("ShowDebugMessage");
   //img_tire_pressure = QPixmap("qt/custom/images/img_tire_pressure.png");
+}
+
+
+void OnPaint::resetOsmState()
+{
+  m_nda.activeNDA = 0;
+  m_nda.camType = 0;
+  m_nda.roadLimitSpeed = 0;
+  m_nda.camLimitSpeed = 0;
+  m_nda.camLimitSpeedLeftDist = 0;
+  m_nda.cntIdx = 0;
+  m_nda.osmRoadOverlay.clear();
+  osm_active_camera_id = 0;
+  osm_debug_zoom_pressed = false;
+  osm_debug_speed_pressed = false;
+  osm_debug_zoom_controls_enabled = false;
+  osm_debug_speed_controls_enabled = false;
 }
 
 
@@ -164,15 +181,26 @@ void OnPaint::updateState(const UIState &s)
   if ( (sm1.frame % UI_FREQ) != 0 )
       sm2.update(0);
   if ((sm1.frame % UI_FREQ) == 0) {
+    const bool osm_was_enabled = osm_enabled;
     osm_enabled = params.getBool("OSMEnable");
-    const std::string show_suspicious_param = params.get("OsmShowSuspiciousCameras");
-    osm_show_suspicious_cameras = show_suspicious_param.empty() || params.getBool("OsmShowSuspiciousCameras");
-    osm_minimap_position = std::clamp(get_param("OsmMinimapPosition"), 0, 4);
-    osm_debug_map_zoom = std::clamp(get_param("OsmDebugMapZoom"), 0, 4);
-    osm_gps_sim_speed_kph = std::clamp(get_param("OsmGpsSimSpeedKph"), 0, 250);
-    const bool webcam_or_cam_sim = std::getenv("USE_WEBCAM") != nullptr || util::getenv("CAM_SIM", "") == "webcam";
-    osm_debug_zoom_controls_enabled = true;
-    osm_debug_speed_controls_enabled = webcam_or_cam_sim || params.getBool("OsmGpsSimulation");
+    if (!osm_enabled) {
+      if (osm_was_enabled) {
+        resetOsmState();
+        m_osm_sm.reset();
+      }
+    } else {
+      if (!osm_was_enabled || !m_osm_sm) {
+        m_osm_sm = std::make_unique<SubMaster, const std::initializer_list<const char *>>({"naviCustom"});
+      }
+      const std::string show_suspicious_param = params.get("OsmShowSuspiciousCameras");
+      osm_show_suspicious_cameras = show_suspicious_param.empty() || params.getBool("OsmShowSuspiciousCameras");
+      osm_minimap_position = std::clamp(get_param("OsmMinimapPosition"), 0, 4);
+      osm_debug_map_zoom = std::clamp(get_param("OsmDebugMapZoom"), 0, 4);
+      osm_gps_sim_speed_kph = std::clamp(get_param("OsmGpsSimSpeedKph"), 0, 250);
+      const bool webcam_or_cam_sim = std::getenv("USE_WEBCAM") != nullptr || util::getenv("CAM_SIM", "") == "webcam";
+      osm_debug_zoom_controls_enabled = true;
+      osm_debug_speed_controls_enabled = webcam_or_cam_sim || params.getBool("OsmGpsSimulation");
+    }
   }
 
   // 1.
@@ -214,62 +242,66 @@ void OnPaint::updateState(const UIState &s)
     scene->custom.touched++;
   }
 
-  // Navigation overlay data is used by the OSM mini map even when debug/kegman overlays are off.
-  auto navi_custom = sm2["naviCustom"].getNaviCustom();
-  auto naviData = navi_custom.getNaviData();
-  m_nda.activeNDA = naviData.getActive();
-  m_nda.camType = naviData.getCamType();
-  m_nda.roadLimitSpeed = naviData.getRoadLimitSpeed();
-  m_nda.camLimitSpeed = naviData.getCamLimitSpeed();
-  m_nda.camLimitSpeedLeftDist = naviData.getCamLimitSpeedLeftDist();
-  m_nda.cntIdx = naviData.getCntIdx();
-  m_nda.osmRoadOverlay.clear();
-  if (osm_enabled) {
-    m_nda.osmRoadOverlay.status = QString::fromUtf8(naviData.getOsmRoadOverlayText().cStr());
-  }
-  if (osm_enabled && naviData.getActive()) {
-    auto overlay = naviData.getOsmRoadOverlay();
-    auto roads = overlay.getRoads();
-    auto cameras = overlay.getCameras();
-    m_nda.osmRoadOverlay.available = true;
-    m_nda.osmRoadOverlay.road = QString::fromUtf8(overlay.getRoad().cStr());
-    m_nda.osmRoadOverlay.bearing = overlay.getBearing();
-    m_nda.osmRoadOverlay.prediction_distance_m = overlay.getPredictionDistanceM();
-    m_nda.osmRoadOverlay.roads.reserve(roads.size());
-    for (auto road : roads) {
-      m_nda.osmRoadOverlay.roads.push_back({
-        road.getRoadId(),
-        QString::fromUtf8(road.getName().cStr()),
-        QString::fromUtf8(road.getHighway().cStr()),
-        road.getX1(),
-        road.getY1(),
-        road.getX2(),
-        road.getY2(),
-        road.getCurrent(),
-        road.getPredicted(),
-        road.getHistory(),
-        road.getFallback(),
-        road.getAssist(),
-      });
-    }
-    m_nda.osmRoadOverlay.cameras.reserve(cameras.size());
-    for (auto camera : cameras) {
-      m_nda.osmRoadOverlay.cameras.push_back({
-        camera.getCameraId(),
-        camera.getRoadId(),
-        QString::fromUtf8(camera.getCameraType().cStr()),
-        camera.getSpeedLimitKph(),
-        camera.getX(),
-        camera.getY(),
-        camera.getMatchDistanceM(),
-        camera.getMatchConfidence(),
-        camera.getPrimaryMatch(),
-        camera.getBearingDeg(),
-        QString::fromUtf8(camera.getDisplayClass().cStr()),
-        QString::fromUtf8(camera.getDirectionVerdict().cStr()),
-        QString::fromUtf8(camera.getRejectReason().cStr()),
-        camera.getSignalCamera(),
-      });
+  // OSM has its own subscription so the disabled path does not poll or decode naviCustom.
+  if (osm_enabled && m_osm_sm) {
+    SubMaster &osm_sm = *(m_osm_sm);
+    osm_sm.update(0);
+    if (osm_sm.updated("naviCustom")) {
+      auto navi_custom = osm_sm["naviCustom"].getNaviCustom();
+      auto naviData = navi_custom.getNaviData();
+      m_nda.activeNDA = naviData.getActive();
+      m_nda.camType = naviData.getCamType();
+      m_nda.roadLimitSpeed = naviData.getRoadLimitSpeed();
+      m_nda.camLimitSpeed = naviData.getCamLimitSpeed();
+      m_nda.camLimitSpeedLeftDist = naviData.getCamLimitSpeedLeftDist();
+      m_nda.cntIdx = naviData.getCntIdx();
+      m_nda.osmRoadOverlay.clear();
+      m_nda.osmRoadOverlay.status = QString::fromUtf8(naviData.getOsmRoadOverlayText().cStr());
+      if (naviData.getActive()) {
+        auto overlay = naviData.getOsmRoadOverlay();
+        auto roads = overlay.getRoads();
+        auto cameras = overlay.getCameras();
+        m_nda.osmRoadOverlay.available = true;
+        m_nda.osmRoadOverlay.road = QString::fromUtf8(overlay.getRoad().cStr());
+        m_nda.osmRoadOverlay.bearing = overlay.getBearing();
+        m_nda.osmRoadOverlay.prediction_distance_m = overlay.getPredictionDistanceM();
+        m_nda.osmRoadOverlay.roads.reserve(roads.size());
+        for (auto road : roads) {
+          m_nda.osmRoadOverlay.roads.push_back({
+            road.getRoadId(),
+            QString::fromUtf8(road.getName().cStr()),
+            QString::fromUtf8(road.getHighway().cStr()),
+            road.getX1(),
+            road.getY1(),
+            road.getX2(),
+            road.getY2(),
+            road.getCurrent(),
+            road.getPredicted(),
+            road.getHistory(),
+            road.getFallback(),
+            road.getAssist(),
+          });
+        }
+        m_nda.osmRoadOverlay.cameras.reserve(cameras.size());
+        for (auto camera : cameras) {
+          m_nda.osmRoadOverlay.cameras.push_back({
+            camera.getCameraId(),
+            camera.getRoadId(),
+            QString::fromUtf8(camera.getCameraType().cStr()),
+            camera.getSpeedLimitKph(),
+            camera.getX(),
+            camera.getY(),
+            camera.getMatchDistanceM(),
+            camera.getMatchConfidence(),
+            camera.getPrimaryMatch(),
+            camera.getBearingDeg(),
+            QString::fromUtf8(camera.getDisplayClass().cStr()),
+            QString::fromUtf8(camera.getDirectionVerdict().cStr()),
+            QString::fromUtf8(camera.getRejectReason().cStr()),
+            camera.getSignalCamera(),
+          });
+        }
+      }
     }
   }
 
@@ -427,9 +459,11 @@ void OnPaint::drawLead(QPainter &p, const cereal::RadarState::LeadData::Reader &
 
 void OnPaint::drawHud(QPainter &p)
 {
-  osm_minimap.draw(p, QRect(0, 0, state->fb_w, state->fb_h), m_nda.osmRoadOverlay, osm_enabled,
-                   osm_minimap_position, m_param.vEgo, osm_debug_map_zoom, osm_gps_sim_speed_kph,
-                   osm_show_suspicious_cameras, osm_debug_zoom_controls_enabled, osm_debug_speed_controls_enabled);
+  if (osm_enabled) {
+    osm_minimap.draw(p, QRect(0, 0, state->fb_w, state->fb_h), m_nda.osmRoadOverlay, true,
+                     osm_minimap_position, m_param.vEgo, osm_debug_map_zoom, osm_gps_sim_speed_kph,
+                     osm_show_suspicious_cameras, osm_debug_zoom_controls_enabled, osm_debug_speed_controls_enabled);
+  }
 
   if( !is_debug && !m_param.ui.getKegman() ) return;
 
@@ -460,6 +494,8 @@ void OnPaint::drawHud(QPainter &p)
 
 bool OnPaint::handleMousePress(const QPoint &pt, const QRect &surface)
 {
+  if (!osm_enabled) return false;
+
   int delta = 0;
   osm_debug_zoom_pressed = osm_minimap.debugZoomControlAt(surface, osm_minimap_position, pt,
                                                          osm_debug_zoom_controls_enabled, delta);
@@ -471,6 +507,12 @@ bool OnPaint::handleMousePress(const QPoint &pt, const QRect &surface)
 
 bool OnPaint::handleMouseRelease(const QPoint &pt, const QRect &surface)
 {
+  if (!osm_enabled) {
+    osm_debug_zoom_pressed = false;
+    osm_debug_speed_pressed = false;
+    return false;
+  }
+
   int delta = 0;
   const bool zoom_hit = osm_minimap.debugZoomControlAt(surface, osm_minimap_position, pt,
                                                       osm_debug_zoom_controls_enabled, delta);
@@ -599,6 +641,11 @@ void OnPaint::drawSpeed(QPainter &p, int x, QString speedStr, QString speedUnit 
 
 bool OnPaint::speedCameraAlert(int &cam_type, int &limit_speed, int &distance_m, bool &signal_camera)
 {
+  if (!osm_enabled) {
+    osm_active_camera_id = 0;
+    return false;
+  }
+
   if (m_nda.camType != 0 && m_nda.camLimitSpeedLeftDist > 0) {
     osm_active_camera_id = 0;
     cam_type = m_nda.camType;
@@ -709,6 +756,8 @@ void OnPaint::drawSpeedLimitSign(QPainter &p, const QPointF &center, int radius,
 
 void OnPaint::drawSpeedCameraAlert(QPainter &p, const QRect &set_speed_rect)
 {
+  if (!osm_enabled) return;
+
   int cam_type = 0;
   int limit_speed = 0;
   int distance_m = 0;
