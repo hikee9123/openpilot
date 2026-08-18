@@ -137,7 +137,7 @@ void DriverMonitorRenderer::draw(QPainter &painter, const QRect &surface_rect) {
     const QRectF panel_rect(panel_x, panel_y, panel_width, panel_height);
 
     painter.setPen(QPen(QColor(160, 170, 180, 150), 2));
-    painter.setBrush(QColor(0, 0, 0, 205));
+    painter.setBrush(sleep_candidate ? QColor(205, 100, 0, 230) : QColor(0, 0, 0, 205));
     painter.drawRoundedRect(panel_rect, 18, 18);
 
     const int text_x = panel_x + 22;
