@@ -21,6 +21,7 @@ static constexpr vec3 DEFAULT_FACE_KPTS_3D[] = {
 // Colors used for drawing based on monitoring state
 static const QColor DMON_ENGAGED_COLOR = QColor::fromRgbF(0.1, 0.945, 0.26);
 static const QColor DMON_DISENGAGED_COLOR = QColor::fromRgbF(0.545, 0.545, 0.545);
+static constexpr int DROWSY_BACKGROUND_MIN_CLOSURE_MS = 2000;
 
 DriverMonitorRenderer::DriverMonitorRenderer() : face_kpts_draw(std::size(DEFAULT_FACE_KPTS_3D)) {
   dm_img = loadPixmap("../assets/icons/driver_face.png", {img_size + 5, img_size + 5});
@@ -135,9 +136,10 @@ void DriverMonitorRenderer::draw(QPainter &painter, const QRect &surface_rect) {
     const int panel_y = std::max(surface_rect.top() + UI_BORDER_SIZE,
                                  static_cast<int>(eye_rect.top()) - panel_height - 18);
     const QRectF panel_rect(panel_x, panel_y, panel_width, panel_height);
+    const bool show_drowsy_background = sleep_candidate && current_closure_ms > DROWSY_BACKGROUND_MIN_CLOSURE_MS;
 
     painter.setPen(QPen(QColor(160, 170, 180, 150), 2));
-    painter.setBrush(sleep_candidate ? QColor(205, 100, 0, 230) : QColor(0, 0, 0, 205));
+    painter.setBrush(show_drowsy_background ? QColor(205, 100, 0, 230) : QColor(0, 0, 0, 205));
     painter.drawRoundedRect(panel_rect, 18, 18);
 
     const int text_x = panel_x + 22;
