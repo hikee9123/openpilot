@@ -8,5 +8,6 @@ UNUSED(heartbeat_engaged);
 UNUSED(safety_rx_hook);
 UNUSED(safety_tx_hook);
 UNUSED(safety_fwd_hook);
+UNUSED(safety_fwd_transform);
 UNUSED(safety_tick);
 UNUSED(set_safety_hooks);
