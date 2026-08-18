@@ -422,9 +422,9 @@ static void hyundai_community_fwd_transform(CANPacket_t *msg, int destination_bu
   if (stock_lfahda && !hyundai_longitudinal && heartbeat_engaged && acc_active && scc12_fresh) {
     const uint8_t hda_icon_state = (msg->data[0] >> 3) & 0x3U;
     if (hda_icon_state == 1U) {
-      // Reproduce the proven 2025-11-01 behavior without replacing the stock
-      // frame: only set LFA_Icon_State to green and preserve every other bit.
-      msg->data[3] = (msg->data[3] & 0xFCU) | 0x02U;
+      // Reproduce the proven behavior without replacing the stock frame.
+      // Force HDA wheel icon state bit only.
+      msg->data[2] |= 0x10U;
     }
   }
 }

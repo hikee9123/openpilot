@@ -52,7 +52,12 @@ class TestHyundaiCommunityHdaTransform(unittest.TestCase):
         original = self._data(msg)
         self.safety.safety_fwd_transform(msg, 0)
 
-        expected = original[:3] + bytes([(original[3] & 0xFC) | 0x02])
+        expected = bytes([
+          original[0],
+          original[1],
+          original[2] | 0x10,
+          original[3],
+        ])
         self.assertEqual(expected, self._data(msg))
 
   def test_requires_openpilot_engagement(self):
@@ -79,9 +84,11 @@ class TestHyundaiCommunityHdaTransform(unittest.TestCase):
     self._set_acc_state(1)
 
     fresh_msg = self._lfahda_msg()
+    fresh_original = self._data(fresh_msg)
     self.safety.set_timer(1_000 + self.SCC12_TIMEOUT - 1)
     self.safety.safety_fwd_transform(fresh_msg, 0)
-    self.assertEqual(2, fresh_msg[0].data[3] & 0x3)
+    self.assertEqual(fresh_original[0] & 0x18, fresh_msg[0].data[0] & 0x18)
+    self.assertEqual(0x10, fresh_msg[0].data[2] & 0x10)
 
     stale_msg = self._lfahda_msg()
     original = self._data(stale_msg)
@@ -119,7 +126,7 @@ class TestHyundaiCommunityHdaTransform(unittest.TestCase):
 
     msg = self._lfahda_msg()
     self.safety.safety_fwd_transform(msg, 0)
-    self.assertEqual(2, msg[0].data[3] & 0x3)
+    self.assertEqual(0x10, msg[0].data[2] & 0x10)
 
   def test_other_safety_modes_leave_forwarded_data_unchanged(self):
     self.safety.set_safety_hooks(CarParams.SafetyModel.hyundai, 0)
