@@ -25,9 +25,9 @@ class TestHyundaiCommunityHdaTransform(unittest.TestCase):
     return self.packer.make_can_msg_panda("SCC12", bus, values, fix_checksum=checksum)
 
   @staticmethod
-  def _lfahda_msg(hda_icon_state=1, lfa_icon_state=1, bus=2):
+  def _lfahda_msg(hda_active=1, hda_icon_state=1, lfa_icon_state=1, bus=2):
     data = bytes([
-      0x85 | (hda_icon_state << 3),
+      0x81 | (hda_active << 2) | (hda_icon_state << 3),
       0x57,
       0xB5,
       0xB0 | lfa_icon_state,
@@ -85,16 +85,24 @@ class TestHyundaiCommunityHdaTransform(unittest.TestCase):
     self.safety.safety_fwd_transform(stale_msg, 0)
     self.assertEqual(original, self._data(stale_msg))
 
-  def test_requires_white_highway_hda_state(self):
+  def test_vehicle_hda_active_and_icon_states_are_preserved(self):
     self.safety.set_heartbeat_engaged(True)
     self._set_acc_state(1)
 
-    for hda_icon_state in (0, 2, 3):
-      with self.subTest(hda_icon_state=hda_icon_state):
-        msg = self._lfahda_msg(hda_icon_state=hda_icon_state)
-        original = self._data(msg)
-        self.safety.safety_fwd_transform(msg, 0)
-        self.assertEqual(original, self._data(msg))
+    for hda_active in (0, 1):
+      for hda_icon_state in range(4):
+        with self.subTest(hda_active=hda_active, hda_icon_state=hda_icon_state):
+          msg = self._lfahda_msg(hda_active=hda_active, hda_icon_state=hda_icon_state)
+          original = self._data(msg)
+          self.safety.safety_fwd_transform(msg, 0)
+
+          expected = bytes([
+            original[0],
+            original[1],
+            original[2] | 0x10,
+            original[3],
+          ])
+          self.assertEqual(expected, self._data(msg))
 
   def test_requires_stock_camera_route(self):
     self.safety.set_heartbeat_engaged(True)

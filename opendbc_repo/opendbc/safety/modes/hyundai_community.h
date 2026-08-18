@@ -415,12 +415,8 @@ static void hyundai_community_fwd_transform(CANPacket_t *msg, int destination_bu
                            (get_ts_elapsed(microsecond_timer_get(), hyundai_community_scc12_ts) < HYUNDAI_COMMUNITY_SCC12_TIMEOUT);
 
   if (stock_lfahda && !hyundai_longitudinal && heartbeat_engaged && scc12_fresh) {
-    const uint8_t hda_icon_state = (msg->data[0] >> 3) & 0x3U;
-    if (hda_icon_state == 1U) {
-      // Reproduce the proven behavior without replacing the stock frame.
-      // Force HDA wheel icon state bit only.
-      msg->data[2] |= 0x10U;
-    }
+    // Preserve the stock HDA active and icon states, and force only the wheel bit.
+    msg->data[2] |= 0x10U;
   }
 }
 
