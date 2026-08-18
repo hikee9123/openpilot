@@ -64,7 +64,6 @@ static const CanMsg HYUNDAI_COMMUNITY_TX_MSGS[] = {
 
 static bool hyundai_stock_passthrough = true;
 static bool hyundai_community_scc12_seen = false;
-static uint8_t hyundai_community_scc12_acc_mode = 0U;
 static uint32_t hyundai_community_scc12_ts = 0U;
 
 static bool hyundai_community_is_generated_msg(const CANPacket_t *msg) {
@@ -145,11 +144,10 @@ static uint32_t hyundai_community_compute_checksum(const CANPacket_t *msg) {
 
 static void hyundai_community_rx_hook(const CANPacket_t *msg) {
 
-  // Track actual stock SCC engagement separately from ACC Main. The display
-  // transform below must fail open to the unmodified stock frame if SCC12 is stale.
+  // Track SCC12 freshness on its configured bus. The display transform below
+  // must fail open to the unmodified stock frame if SCC12 is stale.
   const bool scc12_bus = ((msg->bus == 0U) && !hyundai_camera_scc) || ((msg->bus == 2U) && hyundai_camera_scc);
   if ((msg->addr == 0x421U) && scc12_bus) {
-    hyundai_community_scc12_acc_mode = (GET_BYTES(msg, 0, 4) >> 13) & 0x3U;
     hyundai_community_scc12_ts = microsecond_timer_get();
     hyundai_community_scc12_seen = true;
   }
@@ -331,7 +329,6 @@ static safety_config hyundai_community_init(uint16_t param) {
 
   hyundai_stock_passthrough = !hyundai_longitudinal;
   hyundai_community_scc12_seen = false;
-  hyundai_community_scc12_acc_mode = 0U;
   hyundai_community_scc12_ts = 0U;
 
   safety_config ret;
@@ -414,12 +411,10 @@ static bool hyundai_community_fwd_hook(int bus_num, int addr) {
 static void hyundai_community_fwd_transform(CANPacket_t *msg, int destination_bus) {
   const bool stock_lfahda = (msg->bus == 2U) && (destination_bus == 0) &&
                             (msg->addr == 0x485U) && (GET_LEN(msg) == 4U);
-  const bool acc_active = (hyundai_community_scc12_acc_mode == 1U) ||
-                          (hyundai_community_scc12_acc_mode == 2U);
   const bool scc12_fresh = hyundai_community_scc12_seen &&
                            (get_ts_elapsed(microsecond_timer_get(), hyundai_community_scc12_ts) < HYUNDAI_COMMUNITY_SCC12_TIMEOUT);
 
-  if (stock_lfahda && !hyundai_longitudinal && heartbeat_engaged && acc_active && scc12_fresh) {
+  if (stock_lfahda && !hyundai_longitudinal && heartbeat_engaged && scc12_fresh) {
     const uint8_t hda_icon_state = (msg->data[0] >> 3) & 0x3U;
     if (hda_icon_state == 1U) {
       // Reproduce the proven behavior without replacing the stock frame.

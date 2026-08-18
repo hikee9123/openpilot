@@ -42,10 +42,10 @@ class TestHyundaiCommunityHdaTransform(unittest.TestCase):
     self.safety.set_timer(timestamp)
     self.assertTrue(self.safety.safety_rx_hook(self._scc12_msg(acc_mode, bus)))
 
-  def test_green_lfa_for_active_acc_modes(self):
+  def test_hda_wheel_for_all_fresh_acc_modes(self):
     self.safety.set_heartbeat_engaged(True)
 
-    for acc_mode in (1, 2):
+    for acc_mode in range(4):
       with self.subTest(acc_mode=acc_mode):
         self._set_acc_state(acc_mode)
         msg = self._lfahda_msg()
@@ -67,17 +67,6 @@ class TestHyundaiCommunityHdaTransform(unittest.TestCase):
 
     self.safety.safety_fwd_transform(msg, 0)
     self.assertEqual(original, self._data(msg))
-
-  def test_requires_active_acc(self):
-    self.safety.set_heartbeat_engaged(True)
-
-    for acc_mode in (0, 3):
-      with self.subTest(acc_mode=acc_mode):
-        self._set_acc_state(acc_mode)
-        msg = self._lfahda_msg()
-        original = self._data(msg)
-        self.safety.safety_fwd_transform(msg, 0)
-        self.assertEqual(original, self._data(msg))
 
   def test_scc12_timeout_fails_open(self):
     self.safety.set_heartbeat_engaged(True)
@@ -118,7 +107,7 @@ class TestHyundaiCommunityHdaTransform(unittest.TestCase):
         self.safety.safety_fwd_transform(msg, destination_bus)
         self.assertEqual(original, self._data(msg))
 
-  def test_camera_scc_uses_bus_two_acc_state(self):
+  def test_camera_scc_uses_bus_two_scc12_state(self):
     self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCommunity, HyundaiSafetyFlags.CAMERA_SCC)
     self.safety.init_tests()
     self.safety.set_heartbeat_engaged(True)
@@ -140,7 +129,7 @@ class TestHyundaiCommunityHdaTransform(unittest.TestCase):
     self.assertEqual(0, self.safety.safety_fwd_hook(2, 0x485))
     self.assertFalse(self.safety.safety_tx_hook(self._lfahda_msg(bus=0)))
 
-  def test_safety_reinitialization_clears_acc_state(self):
+  def test_safety_reinitialization_clears_scc12_state(self):
     self.safety.set_heartbeat_engaged(True)
     self._set_acc_state(1)
     self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCommunity, 0)
