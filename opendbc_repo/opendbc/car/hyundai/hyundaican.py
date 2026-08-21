@@ -4,6 +4,12 @@ from opendbc.car.hyundai.values import CAR, HyundaiFlags
 hyundai_checksum = crcmod.mkCrcFun(0x11D, initCrc=0xFD, rev=False, xorOut=0xdf)
 
 
+def create_avm_button(packer, avm_switch, pressed):
+  values = avm_switch.copy()
+  values["AVM_Button"] = int(pressed)
+  return packer.make_can_msg("AVM_SWITCH", 0, values)
+
+
 def create_lkas11(packer, frame, CP, apply_torque, steer_req,
                   torque_fault, lkas11, sys_warning, sys_state, enabled,
                   left_lane, right_lane,
