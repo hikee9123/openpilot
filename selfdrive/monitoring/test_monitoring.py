@@ -279,6 +279,33 @@ class TestBlinkEventTracker:
     self.update_for(10.05, 0.10)
     assert self.tracker.blink_count == 0
 
+  def test_no_blink_candidate_requires_full_ten_second_window(self):
+    self.update_for(9.95, 0.10)
+    assert not self.tracker.no_blink_candidate
+    self.update_for(0.05, 0.10)
+    assert self.tracker.no_blink_candidate
+    assert self.tracker.no_blink_candidate_started
+
+  def test_valid_blink_restarts_no_blink_window(self):
+    self.update_for(9.90, 0.10)
+    self.update_for(0.20, 0.95)
+    self.update_for(0.05, 0.10)
+    assert not self.tracker.no_blink_candidate
+    self.update_for(9.95, 0.10)
+    assert not self.tracker.no_blink_candidate
+    self.update_for(0.05, 0.10)
+    assert self.tracker.no_blink_candidate
+
+  def test_driver_interaction_restarts_no_blink_window(self):
+    self.update_for(10.0, 0.10)
+    assert self.tracker.no_blink_candidate
+    self.tracker.acknowledge_driver_interaction()
+    assert not self.tracker.no_blink_candidate
+    self.update_for(9.95, 0.10)
+    assert not self.tracker.no_blink_candidate
+    self.update_for(0.05, 0.10)
+    assert self.tracker.no_blink_candidate
+
   def test_threshold_param_bounds_and_hysteresis(self):
     class ParamsStub:
       def __init__(self, close_pct, open_pct):
@@ -315,22 +342,56 @@ class TestBlinkAlertLink:
     self.prefix.__exit__(None, None, None)
 
   @staticmethod
-  def update_for(dm, seconds, probability):
+  def update_for(dm, seconds, probability, update_events=False, driver_interacting=False,
+                 op_engaged=True, lowspeed=False):
     msg = make_msg(True)
     msg.leftDriverData.leftBlinkProb = probability
     msg.leftDriverData.rightBlinkProb = probability
     for _ in range(round(seconds / DT_DMON)):
-      dm._update_states(msg, [0, 0, 0], 0, True, False)
+      dm._update_states(msg, [0, 0, 0], 0, op_engaged, lowspeed)
+      if update_events:
+        dm._update_events(driver_interacting, op_engaged, lowspeed, False)
 
-  def test_sleep_candidate_warning_link_is_opt_in(self):
-    for alert_enabled in (False, True):
-      blink_settings = BlinkDebugSettings(alert_enabled=alert_enabled, close_threshold=0.75,
-                                          open_threshold=0.50, long_closure=0.10)
-      dm = DriverMonitoring(blink_debug_settings=blink_settings)
-      self.update_for(dm, 0.15, 0.80)
+  def test_no_blink_mode_replaces_instantaneous_blink_warning(self):
+    blink_settings = BlinkDebugSettings(alert_enabled=True, close_threshold=0.75,
+                                        open_threshold=0.50, long_closure=0.10)
+    dm = DriverMonitoring(blink_debug_settings=blink_settings)
+    self.update_for(dm, 0.15, 0.80)
 
-      assert dm.blink_tracker.sleep_candidate
-      assert dm.distracted_types['eye'] is alert_enabled
+    assert dm.blink_tracker.sleep_candidate
+    assert not dm.blink_tracker.no_blink_candidate
+    assert not dm.distracted_types['eye']
+
+  def test_no_blink_mode_starts_first_warning_at_ten_seconds(self):
+    dm = DriverMonitoring(blink_debug_settings=BlinkDebugSettings(alert_enabled=True))
+    self.update_for(dm, 9.95, 0.10, update_events=True)
+    assert dm.alert_level == 0
+    self.update_for(dm, 0.05, 0.10, update_events=True)
+
+    assert dm.blink_tracker.no_blink_candidate
+    assert dm.distracted_types['eye']
+    assert dm.alert_level == log.DriverMonitoringState.AlertLevel.one
+
+  def test_no_blink_observation_starts_only_while_monitoring_is_active(self):
+    dm = DriverMonitoring(blink_debug_settings=BlinkDebugSettings(alert_enabled=True))
+    self.update_for(dm, 20.0, 0.10, op_engaged=False)
+    assert dm.blink_tracker.no_blink_duration == 0.0
+    assert not dm.blink_tracker.no_blink_candidate
+
+    self.update_for(dm, 10.0, 0.10, update_events=True)
+    assert dm.blink_tracker.no_blink_candidate
+    assert dm.alert_level == log.DriverMonitoringState.AlertLevel.one
+
+  def test_driver_interaction_immediately_clears_no_blink_warning(self):
+    dm = DriverMonitoring(blink_debug_settings=BlinkDebugSettings(alert_enabled=True, dismiss_on_driver_input=True))
+    self.update_for(dm, 10.0, 0.10, update_events=True)
+    assert dm.alert_level == log.DriverMonitoringState.AlertLevel.one
+
+    self.update_for(dm, DT_DMON, 0.10, update_events=True, driver_interacting=True)
+    assert dm.alert_level == log.DriverMonitoringState.AlertLevel.none
+    assert dm.awareness == 1.0
+    assert not dm.blink_tracker.no_blink_candidate
+    assert not dm.distracted_types['eye']
 
   def test_existing_blink_warning_remains_enabled(self):
     blink_settings = BlinkDebugSettings(alert_enabled=False, close_threshold=0.95,

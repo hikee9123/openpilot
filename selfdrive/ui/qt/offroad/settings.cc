@@ -340,7 +340,7 @@ public:
     main_layout->addWidget(title);
 
     auto *notice = new QLabel(
-      tr("Existing driver-monitoring warnings remain active in both modes. Sleep Candidate joins that warning path only when USE DM ALERT is selected."), this);
+      tr("NO BLINK 10s replaces the instantaneous eye-blink warning with a full 10-second valid observation. Pose, phone, and no-face warnings remain active."), this);
     notice->setWordWrap(true);
     notice->setStyleSheet("font-size: 38px; color: #e8bd64; padding-bottom: 8px;");
     main_layout->addWidget(notice);
@@ -360,11 +360,17 @@ public:
     display_layout->addWidget(debug_enabled);
 
     alert_mode = new StagedButtonControl(
-      tr("Sleep Candidate warning"),
-      tr("Choose whether a detected Sleep Candidate is added to the existing driver-distraction warning sequence."),
-      {tr("NO ALERT (CURRENT)"), tr("USE DM ALERT")},
+      tr("Eye warning mode"),
+      tr("EXISTING uses the model's instantaneous eye state. NO BLINK warns only after no valid blink is detected for 10 seconds."),
+      {tr("EXISTING"), tr("NO BLINK 10s")},
       params.getBool("DmBlinkAlertEnabled") ? 1 : 0);
     display_layout->addWidget(alert_mode);
+
+    dismiss_on_driver_input = new StagedToggleControl(
+      tr("Dismiss No-blink warning on driver input"),
+      tr("A new steering, accelerator, or brake input clears level 1/2 No-blink warnings and restarts the 10-second observation. Level 3 remains protected."),
+      params.getBool("DmBlinkDismissOnDriverInput"), display_layout->parentWidget());
+    display_layout->addWidget(dismiss_on_driver_input);
     display_layout->addStretch();
 
     auto *eye_layout = createPage(tab_widget, tr("Eye Closure"));
@@ -536,6 +542,7 @@ private:
   void setDefaults() {
     debug_enabled->setValue(false);
     alert_mode->setValue(0);
+    dismiss_on_driver_input->setValue(true);
     auto_tune_enabled->setValue(false);
     close_threshold->setValue(kBlinkCloseDefault);
     open_threshold->setValue(kBlinkOpenDefault);
@@ -557,6 +564,7 @@ private:
 
     params.putBool("DmBlinkDebugOverlayEnabled", debug_enabled->value());
     params.putBool("DmBlinkAlertEnabled", alert_mode->value() == 1);
+    params.putBool("DmBlinkDismissOnDriverInput", dismiss_on_driver_input->value());
     params.putBool("DmBlinkAutoTuneEnabled", auto_tune_enabled->value());
     params.put("DmBlinkCloseThresholdPct", std::to_string(close_threshold->value()));
     params.put("DmBlinkOpenThresholdPct", std::to_string(open_threshold->value()));
@@ -570,6 +578,7 @@ private:
   BlinkAutoTuneState auto_tune_state;
   StagedToggleControl *debug_enabled;
   StagedButtonControl *alert_mode;
+  StagedToggleControl *dismiss_on_driver_input;
   StagedToggleControl *auto_tune_enabled;
   QLabel *auto_tune_status;
   QPushButton *apply_all_auto_button;
@@ -708,15 +717,17 @@ TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
 void TogglesPanel::updateBlinkDebugDescription() {
   const bool enabled = params.getBool("DmBlinkDebugOverlayEnabled");
   const bool alert_enabled = params.getBool("DmBlinkAlertEnabled");
+  const bool dismiss_on_driver_input = params.getBool("DmBlinkDismissOnDriverInput");
   const bool auto_tune_enabled = params.getBool("DmBlinkAutoTuneEnabled");
   const int close_pct = getIntParam(params, "DmBlinkCloseThresholdPct", kBlinkCloseDefault);
   const int min_duration_ms = getIntParam(params, "DmBlinkMinDurationMs", kBlinkMinDurationDefault);
   const int long_closure_ms = getIntParam(params, "DmBlinkLongClosureMs", kBlinkLongClosureDefault);
   blink_debug_settings_btn->setDescription(
-    tr("Diagnostic overlay: %1 | Sleep Candidate alert: %2 | Auto Tune: %3 | Close %4% | Blink %5 ms | Long closure %6 s. "
-       "Existing driver-monitoring warnings remain active in both modes.")
+    tr("Diagnostic overlay: %1 | Eye warning: %2 | Driver input dismiss: %3 | Auto Tune: %4 | Close %5% | Blink %6 ms | Long closure %7 s. "
+       "NO BLINK mode requires a full 10-second valid observation; pose, phone, and no-face warnings remain active.")
       .arg(enabled ? tr("ON") : tr("OFF"))
-      .arg(alert_enabled ? tr("ON") : tr("OFF (CURRENT)"))
+      .arg(alert_enabled ? tr("NO BLINK 10s") : tr("EXISTING"))
+      .arg(dismiss_on_driver_input ? tr("ON") : tr("OFF"))
       .arg(auto_tune_enabled ? tr("ON") : tr("OFF"))
       .arg(close_pct)
       .arg(min_duration_ms)

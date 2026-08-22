@@ -33,7 +33,8 @@ def _maximum_open_threshold_pct(close_threshold_pct):
 @dataclass(frozen=True)
 class BlinkDebugSettings:
   enabled: bool = False
-  alert_enabled: bool = False
+  alert_enabled: bool = False  # selects the 10-second no-blink eye warning mode
+  dismiss_on_driver_input: bool = True
   close_threshold: float = 0.87
   open_threshold: float = 0.50
   min_duration: float = 0.10
@@ -53,6 +54,7 @@ class BlinkDebugSettings:
     return cls(
       enabled=params.get_bool("DmBlinkDebugOverlayEnabled"),
       alert_enabled=params.get_bool("DmBlinkAlertEnabled"),
+      dismiss_on_driver_input=params.get_bool("DmBlinkDismissOnDriverInput"),
       close_threshold=close_pct / 100.,
       open_threshold=open_pct / 100.,
       min_duration=min_duration_ms / 1000.,
@@ -72,6 +74,9 @@ class BlinkEventTracker:
     self.closed_duration = 0.
     self.valid = False
     self.sleep_candidate = False
+    self.no_blink_candidate = False
+    self.no_blink_candidate_started = False
+    self.last_blink_elapsed = 0.
     self.raw_left = 0.
     self.raw_right = 0.
     self.effective = 0.
@@ -87,6 +92,7 @@ class BlinkEventTracker:
       self.closure_events.popleft()
 
   def update(self, valid, effective, raw_left=0., raw_right=0., sleep_prob=0.):
+    previous_no_blink_candidate = self.no_blink_candidate
     self.elapsed += DT_DMON
     self.valid = bool(valid)
     self.raw_left = min(max(raw_left, 0.), 1.)
@@ -102,6 +108,7 @@ class BlinkEventTracker:
           self.closure_events.append((self.elapsed, duration))
           if self.settings.min_duration <= duration < self.settings.long_closure:
             self.blink_events.append(self.elapsed)
+            self.last_blink_elapsed = self.elapsed
           self.eye_closed = False
           self.closed_duration = 0.
         else:
@@ -115,10 +122,32 @@ class BlinkEventTracker:
     self._prune()
     self.sleep_candidate = self.valid and self.eye_closed and self.closed_duration >= self.settings.long_closure and \
                            self.valid_ratio >= self.settings.min_valid_ratio
+    blink_in_progress = self.eye_closed and self.closed_duration < self.settings.long_closure
+    self.no_blink_candidate = self.valid and not blink_in_progress and \
+                              self.no_blink_window_ready and self.blink_count == 0
+    self.no_blink_candidate_started = self.no_blink_candidate and not previous_no_blink_candidate
+
+  def acknowledge_driver_interaction(self):
+    self.reset_no_blink_observation()
+
+  def reset_no_blink_observation(self):
+    self.last_blink_elapsed = self.elapsed
+    self.no_blink_candidate = False
+    self.no_blink_candidate_started = False
+    self.blink_events.clear()
 
   @property
   def blink_count(self):
     return len(self.blink_events)
+
+  @property
+  def no_blink_duration(self):
+    return max(self.elapsed - self.last_blink_elapsed, 0.)
+
+  @property
+  def no_blink_window_ready(self):
+    return self.no_blink_duration >= self.settings.window_seconds and \
+           self.valid_ratio >= self.settings.min_valid_ratio
 
   @property
   def valid_ratio(self):
@@ -357,8 +386,10 @@ class DriverMonitoring:
 
     self.distracted_types['pose'] = bool((pitch_error > pitch_threshold) or (yaw_error > yaw_threshold))
     blink_distracted = (self.blink.left + self.blink.right) * 0.5 > self.settings._BLINK_THRESHOLD
-    sleep_candidate_distracted = self.blink_tracker.settings.alert_enabled and self.blink_tracker.sleep_candidate
-    self.distracted_types['eye'] = bool(blink_distracted or sleep_candidate_distracted)
+    if self.blink_tracker.settings.alert_enabled:
+      self.distracted_types['eye'] = bool(self.blink_tracker.no_blink_candidate)
+    else:
+      self.distracted_types['eye'] = bool(blink_distracted)
     self.distracted_types['phone'] = bool(self.phone_prob > self.settings._PHONE_THRESH)
 
   def _update_states(self, driver_state, cal_rpy, car_speed, op_engaged, lowspeed, demo_mode=False, steering_angle_deg=0.):
@@ -384,6 +415,8 @@ class DriverMonitoring:
     if not all(len(x) > 0 for x in (driver_data.faceOrientation, driver_data.facePosition,
                                     driver_data.faceOrientationStd, driver_data.facePositionStd)):
       self.blink_tracker.update(False, 0., raw_left_blink, raw_right_blink, sleep_prob)
+      if self.blink_tracker.settings.alert_enabled and (not (op_engaged or self.always_on) or lowspeed):
+        self.blink_tracker.reset_no_blink_observation()
       return
 
     self.face_detected = driver_data.faceProb > self.settings._FACE_THRESHOLD
@@ -406,6 +439,8 @@ class DriverMonitoring:
                   driver_data.sunglassesProb < self.settings._SG_THRESHOLD
     effective_blink = (self.blink.left + self.blink.right) * 0.5
     self.blink_tracker.update(blink_valid, effective_blink, raw_left_blink, raw_right_blink, sleep_prob)
+    if self.blink_tracker.settings.alert_enabled and (not (op_engaged or self.always_on) or lowspeed):
+      self.blink_tracker.reset_no_blink_observation()
     self.phone_prob = driver_data.phoneProb
 
     self._get_distracted_types()
@@ -438,8 +473,27 @@ class DriverMonitoring:
       self.hi_stds = 0
 
   def _update_events(self, driver_engaged, op_engaged, lowspeed, wrong_gear):
+    interaction_started = driver_engaged and not self.driver_interacting
     self.alert_level = AlertLevel.none
     self.driver_interacting = driver_engaged
+
+    no_blink_mode = self.blink_tracker.settings.alert_enabled
+    no_blink_only = self.blink_tracker.no_blink_candidate and \
+                    not (self.distracted_types['pose'] or self.distracted_types['phone'])
+    if no_blink_mode and self.blink_tracker.settings.dismiss_on_driver_input and interaction_started:
+      self.blink_tracker.acknowledge_driver_interaction()
+      self._get_distracted_types()
+      self.driver_distracted = any(self.distracted_types.values()) and self.face_detected and self.pose.low_std
+      if no_blink_only and self.awareness > 0.:
+        self.driver_distraction_filter.x = 0.
+        self._reset_awareness()
+        return
+
+    # The 10-second observation period is the first warning stage in no-blink mode.
+    # Start the existing escalation sequence immediately instead of waiting another five seconds.
+    if no_blink_mode and self.blink_tracker.no_blink_candidate_started and self.awareness > 0.:
+      self.awareness = min(self.awareness, self.threshold_alert_1)
+      self.driver_distraction_filter.x = max(self.driver_distraction_filter.x, 0.64)
 
     if self.alert_3_cnt >= self.settings._MAX_ALERT_3 or self.no_response_cnt >= self.settings._MAX_NO_RESPONSE:
       if not self.lockout_active:
@@ -552,6 +606,10 @@ class DriverMonitoring:
     blink_debug.valid = self.blink_tracker.valid
     blink_debug.eyeClosed = self.blink_tracker.eye_closed
     blink_debug.sleepCandidate = self.blink_tracker.sleep_candidate
+    blink_debug.noBlinkCandidate = self.blink_tracker.no_blink_candidate
+    blink_debug.noBlinkMillis = min(round(self.blink_tracker.no_blink_duration * 1000.), 65535)
+    blink_debug.noBlinkWindowReady = self.blink_tracker.no_blink_window_ready
+    blink_debug.noBlinkAlertEnabled = self.blink_tracker.settings.alert_enabled
     blink_debug.blinkCount10s = self.blink_tracker.blink_count
     blink_debug.currentClosureMillis = min(round(self.blink_tracker.closed_duration * 1000.), 65535)
     blink_debug.maxClosureMillis10s = min(round(self.blink_tracker.max_closure * 1000.), 65535)
@@ -586,7 +644,7 @@ class DriverMonitoring:
       enabled = sm['selfdriveState'].enabled
       wrong_gear = sm['carState'].gearShifter not in (car.CarState.GearShifter.drive, car.CarState.GearShifter.low)
       lowspeed = car_speed < self.settings._ALERT_MIN_SPEED
-      driver_engaged = sm['carState'].steeringPressed or sm['carState'].gasPressed
+      driver_engaged = sm['carState'].steeringPressed or sm['carState'].gasPressed or sm['carState'].brakePressed
       brake_disengage_prob = sm['modelV2'].meta.disengagePredictions.brakeDisengageProbs[0] # brake disengage prob in next 2s
       steering_angle_deg = sm['carState'].steeringAngleDeg
       rpyCalib = sm['liveCalibration'].rpyCalib
