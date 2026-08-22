@@ -368,7 +368,7 @@ public:
 
     dismiss_on_driver_input = new StagedToggleControl(
       tr("Dismiss No-blink warning on driver input"),
-      tr("A new steering, accelerator, or brake input clears level 1/2 No-blink warnings and restarts the 10-second observation. Level 3 remains protected."),
+      tr("A new steering, accelerator, or brake input clears level 1/2 No-blink warnings. CANCEL resets all warning levels, including emergency, and restarts the 10-second observation."),
       params.getBool("DmBlinkDismissOnDriverInput"), display_layout->parentWidget());
     display_layout->addWidget(dismiss_on_driver_input);
     display_layout->addStretch();

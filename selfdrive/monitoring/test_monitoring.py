@@ -343,14 +343,14 @@ class TestBlinkAlertLink:
 
   @staticmethod
   def update_for(dm, seconds, probability, update_events=False, driver_interacting=False,
-                 op_engaged=True, lowspeed=False):
+                 op_engaged=True, lowspeed=False, cancel_pressed=False):
     msg = make_msg(True)
     msg.leftDriverData.leftBlinkProb = probability
     msg.leftDriverData.rightBlinkProb = probability
     for _ in range(round(seconds / DT_DMON)):
       dm._update_states(msg, [0, 0, 0], 0, op_engaged, lowspeed)
       if update_events:
-        dm._update_events(driver_interacting, op_engaged, lowspeed, False)
+        dm._update_events(driver_interacting, op_engaged, lowspeed, False, cancel_pressed)
 
   def test_no_blink_mode_replaces_instantaneous_blink_warning(self):
     blink_settings = BlinkDebugSettings(alert_enabled=True, close_threshold=0.75,
@@ -392,6 +392,31 @@ class TestBlinkAlertLink:
     assert dm.awareness == 1.0
     assert not dm.blink_tracker.no_blink_candidate
     assert not dm.distracted_types['eye']
+
+  def test_cancel_immediately_resets_warning_even_when_driver_input_dismiss_is_off(self):
+    dm = DriverMonitoring(blink_debug_settings=BlinkDebugSettings(alert_enabled=True, dismiss_on_driver_input=False))
+    self.update_for(dm, 10.0, 0.10, update_events=True)
+    assert dm.alert_level == log.DriverMonitoringState.AlertLevel.one
+
+    self.update_for(dm, DT_DMON, 0.10, update_events=True, cancel_pressed=True)
+    assert dm.alert_level == log.DriverMonitoringState.AlertLevel.none
+    assert dm.awareness == 1.0
+    assert dm.driver_distraction_filter.x == 0.0
+    assert not dm.blink_tracker.no_blink_candidate
+    assert not dm.distracted_types['eye']
+
+  def test_cancel_immediately_resets_emergency_warning(self):
+    dm = DriverMonitoring(blink_debug_settings=BlinkDebugSettings(alert_enabled=True, dismiss_on_driver_input=False))
+    self.update_for(dm, 18.2, 0.10, update_events=True)
+    assert dm.alert_level == log.DriverMonitoringState.AlertLevel.three
+    assert dm.awareness <= 0.0
+    alert_3_count = dm.alert_3_cnt
+
+    self.update_for(dm, DT_DMON, 0.10, update_events=True, cancel_pressed=True)
+    assert dm.alert_level == log.DriverMonitoringState.AlertLevel.none
+    assert dm.awareness == 1.0
+    assert dm.alert_3_cnt == alert_3_count
+    assert not dm.blink_tracker.no_blink_candidate
 
   def test_existing_blink_warning_remains_enabled(self):
     blink_settings = BlinkDebugSettings(alert_enabled=False, close_threshold=0.95,

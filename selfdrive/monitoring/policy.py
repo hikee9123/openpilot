@@ -13,6 +13,7 @@ from openpilot.common.transformations.camera import DEVICE_CAMERAS
 
 AlertLevel = log.DriverMonitoringState.AlertLevel
 MonitoringPolicy = log.DriverMonitoringState.MonitoringPolicy
+ButtonType = car.CarState.ButtonEvent.Type
 
 def to_percent(v):
   return int(min(max(v * 100., 0.), 100.))
@@ -472,12 +473,22 @@ class DriverMonitoring:
     elif self.face_detected and self.pose.low_std:
       self.hi_stds = 0
 
-  def _update_events(self, driver_engaged, op_engaged, lowspeed, wrong_gear):
+  def _update_events(self, driver_engaged, op_engaged, lowspeed, wrong_gear, cancel_pressed=False):
     interaction_started = driver_engaged and not self.driver_interacting
     self.alert_level = AlertLevel.none
     self.driver_interacting = driver_engaged
 
     no_blink_mode = self.blink_tracker.settings.alert_enabled
+    if cancel_pressed:
+      # CANCEL is an explicit disengagement request, so it acknowledges every DM alert level.
+      # Keep alert/no-response counters intact so the existing lockout policy still applies.
+      self.blink_tracker.acknowledge_driver_interaction()
+      self._get_distracted_types()
+      self.driver_distracted = any(self.distracted_types.values()) and self.face_detected and self.pose.low_std
+      self.driver_distraction_filter.x = 0.
+      self._reset_awareness()
+      return
+
     no_blink_only = self.blink_tracker.no_blink_candidate and \
                     not (self.distracted_types['pose'] or self.distracted_types['phone'])
     if no_blink_mode and self.blink_tracker.settings.dismiss_on_driver_input and interaction_started:
@@ -636,6 +647,7 @@ class DriverMonitoring:
       wrong_gear = False
       lowspeed = False
       driver_engaged = False
+      cancel_pressed = False
       brake_disengage_prob = 1.0
       steering_angle_deg = 0.0
       rpyCalib = [0., 0., 0.]
@@ -645,6 +657,7 @@ class DriverMonitoring:
       wrong_gear = sm['carState'].gearShifter not in (car.CarState.GearShifter.drive, car.CarState.GearShifter.low)
       lowspeed = car_speed < self.settings._ALERT_MIN_SPEED
       driver_engaged = sm['carState'].steeringPressed or sm['carState'].gasPressed or sm['carState'].brakePressed
+      cancel_pressed = any(event.pressed and event.type == ButtonType.cancel for event in sm['carState'].buttonEvents)
       brake_disengage_prob = sm['modelV2'].meta.disengagePredictions.brakeDisengageProbs[0] # brake disengage prob in next 2s
       steering_angle_deg = sm['carState'].steeringAngleDeg
       rpyCalib = sm['liveCalibration'].rpyCalib
@@ -671,4 +684,5 @@ class DriverMonitoring:
       op_engaged=enabled,
       lowspeed=lowspeed,
       wrong_gear=wrong_gear,
+      cancel_pressed=cancel_pressed,
     )
