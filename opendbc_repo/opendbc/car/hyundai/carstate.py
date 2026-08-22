@@ -59,9 +59,6 @@ class CarState(CarStateBase):
 
     self.cruise_info = {}
 
-    self.avm_switch = {}
-    self.avm_view = 0
-    self.avm_view_ts_nanos = 0
     self.clu11_ts_nanos = 0
 
     # On some cars, CLU15->CF_Clu_VehicleSpeed can oscillate faster than the dash updates. Sample at 5 Hz
@@ -197,10 +194,6 @@ class CarState(CarStateBase):
     self.lkas11 = copy.copy(cp_cam.vl["LKAS11"])
     self.clu11 = copy.copy(cp.vl["CLU11"])
     self.clu11_ts_nanos = cp.ts_nanos["CLU11"]["CF_Clu_AliveCnt1"]
-    if self.CP.flags & HyundaiFlags.AVM_BUTTON:
-      self.avm_switch = copy.copy(cp.vl["AVM_SWITCH"])
-      self.avm_view = int(cp.vl["AVM_HU_PE_00"]["AVM_View"])
-      self.avm_view_ts_nanos = cp.ts_nanos["AVM_HU_PE_00"]["AVM_View"]
     self.steer_state = cp.vl["MDPS12"]["CF_Mdps_ToiActive"]  # 0 NOT ACTIVE, 1 ACTIVE
     self.prev_cruise_buttons = self.cruise_buttons[-1]
     prev_main_buttons = self.main_buttons[-1]
@@ -337,12 +330,7 @@ class CarState(CarStateBase):
     if CP.flags & HyundaiFlags.CANFD:
       return self.get_can_parsers_canfd(CP)
 
-    msgs = []
-    if CP.flags & HyundaiFlags.AVM_BUTTON:
-      # AVM availability must not make the main CAN validity depend on optional display traffic.
-      msgs += [("AVM_SWITCH", math.nan), ("AVM_HU_PE_00", math.nan)]
-
     return {
-      Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], msgs, 0),
+      Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], [], 0),
       Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [], 2),
     }

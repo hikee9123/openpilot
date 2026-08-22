@@ -15,8 +15,6 @@ struct CustomReserved0 @0x81c2f05a394cf4af {
 }
 
 struct CarControlCustom @0xaedffd8f31e7b55d {
-    cmdIdx @0 :UInt32;
-    avmOnRequest @1 :Bool;
 }
 
 struct NaviCustom @0xf35cc4560bbf6ec2 {

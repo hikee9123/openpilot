@@ -246,7 +246,6 @@ class CarController(CarControllerBase):
     else:
       can_sends.extend(self.create_can_msgs(apply_steer_req, apply_torque, torque_fault, set_speed_in_units, accel,
                                             stopping, hud_control, actuators, CS, CC, now_nanos))
-      can_sends.extend(self.customCC.create_avm_messages(self.packer, CS, now_nanos))
 
     new_actuators = actuators.as_builder()
     new_actuators.torque = apply_torque / self.params.STEER_MAX
