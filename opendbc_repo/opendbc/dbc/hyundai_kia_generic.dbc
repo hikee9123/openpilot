@@ -634,6 +634,9 @@ BO_ 608 EMS16: 8 EMS
  SG_ AliveCounter : 60|2@1+ (1.0,0.0) [0.0|3.0] ""  IBOX,LDWS_LKAS,MDPS,SCC
  SG_ CF_Ems_AclAct : 62|2@1+ (1.0,0.0) [0.0|3.0] ""  IBOX,SCC
 
+BO_ 1185 AVM_SWITCH: 8 XXX
+ SG_ AVM_Button : 24|1@1+ (1.0,0.0) [0.0|1.0] "" XXX
+
 BO_ 1371 AVM_HU_PE_00: 8 AVM
  SG_ AVM_View : 0|5@1+ (1.0,0.0) [0.0|31.0] ""  CLU
  SG_ AVM_ParkingAssist_BtnSts : 5|3@1+ (1.0,0.0) [0.0|7.0] ""  CLU

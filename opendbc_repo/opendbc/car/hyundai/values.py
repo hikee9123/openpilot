@@ -66,6 +66,7 @@ class HyundaiSafetyFlags(IntFlag):
   CANFD_LKA_STEERING_ALT = 128
   FCEV_GAS = 256
   ALT_LIMITS_2 = 512
+  AVM_BUTTON = 1024
 
 
 class HyundaiFlags(IntFlag):
@@ -125,6 +126,7 @@ class HyundaiFlags(IntFlag):
   FCEV = 2 ** 25
 
   ALT_LIMITS_2 = 2 ** 26
+  AVM_BUTTON = 2 ** 27
 
 
 class Footnote(Enum):
@@ -175,7 +177,7 @@ class CAR(Platforms):
       HyundaiCarDocs("Hyundai Azera Hybrid 2020", "All", car_parts=CarParts.common([CarHarness.hyundai_k])),
     ],
     CarSpecs(mass=1675, wheelbase=2.885, steerRatio=14.5),
-    flags=HyundaiFlags.HYBRID | HyundaiFlags.MANDO_RADAR,   #custom
+    flags=HyundaiFlags.HYBRID | HyundaiFlags.MANDO_RADAR | HyundaiFlags.AVM_BUTTON,   #custom
   )
   HYUNDAI_ELANTRA = HyundaiPlatformConfig(
     [

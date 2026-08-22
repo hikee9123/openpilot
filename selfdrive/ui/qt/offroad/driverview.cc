@@ -57,7 +57,7 @@ void drawDriverMonitoringPanel(QPainter &p, const QRect &surface_rect,
 
   const int panel_margin = 30;
   const int panel_width = std::clamp(surface_rect.width() - panel_margin * 2, 320, 720);
-  const int panel_height = 420;
+  const int panel_height = 456;
   const QRect panel_rect(surface_rect.x() + panel_margin, surface_rect.y() + panel_margin, panel_width, panel_height);
   const QColor normal_color(235, 235, 235, 235);
   const QColor dim_color(190, 190, 190, 225);
@@ -121,6 +121,12 @@ void drawDriverMonitoringPanel(QPainter &p, const QRect &surface_rect,
               .arg(blink_debug.getBlinkCount10s())
               .arg(yn(blink_debug.getSleepCandidate())),
             blink_debug.getSleepCandidate() ? bad_color : normal_color);
+  draw_line(QString("NoBlink %1s   %2   Cand %3   Alert %4")
+              .arg(blink_debug.getNoBlinkMillis() / 1000.0, 0, 'f', 1)
+              .arg(blink_debug.getNoBlinkWindowReady() ? "READY" : "WAIT")
+              .arg(yn(blink_debug.getNoBlinkCandidate()))
+              .arg(blink_debug.getNoBlinkAlertEnabled() ? "ON" : "OFF"),
+            blink_debug.getNoBlinkCandidate() ? bad_color : normal_color);
   draw_line(QString("Closed %1s   Max/10s %2s   PERCLOS %3%")
               .arg(blink_debug.getCurrentClosureMillis() / 1000.0, 0, 'f', 2)
               .arg(blink_debug.getMaxClosureMillis10s() / 1000.0, 0, 'f', 2)

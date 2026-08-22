@@ -24,7 +24,11 @@ private:
   bool blink_debug_valid = false;
   bool blink_eye_closed = false;
   bool sleep_candidate = false;
+  bool no_blink_candidate = false;
+  bool no_blink_window_ready = false;
+  bool no_blink_alert_enabled = false;
   int blink_count_10s = 0;
+  int no_blink_ms = 0;
   int current_closure_ms = 0;
   int max_closure_ms_10s = 0;
   int closed_percent_10s = 0;

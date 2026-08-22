@@ -2308,6 +2308,10 @@ struct DriverMonitoringState {
       openThresholdPercent @14 :UInt8;
       minDurationMillis @15 :UInt16;
       longClosureMillis @16 :UInt16;
+      noBlinkCandidate @17 :Bool;
+      noBlinkMillis @18 :UInt16;
+      noBlinkWindowReady @19 :Bool;
+      noBlinkAlertEnabled @20 :Bool;
     }
 
     struct DistractedTypes {

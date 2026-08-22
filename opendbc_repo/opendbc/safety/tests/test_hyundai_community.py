@@ -8,6 +8,115 @@ from opendbc.safety.tests.libsafety import libsafety_py
 from opendbc.safety.tests.test_hyundai import checksum
 
 
+class TestHyundaiCommunityAvmButton(unittest.TestCase):
+  AVM_PRESS_MAX = 300_000
+  AVM_COOLDOWN = 1_000_000
+
+  def setUp(self):
+    self.packer = CANPackerPanda("hyundai_kia_generic")
+    self.safety = libsafety_py.libsafety
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCommunity, HyundaiSafetyFlags.AVM_BUTTON)
+    self.safety.init_tests()
+    self.speed_counter = 0
+    self.brake_counter = 0
+
+  @staticmethod
+  def _avm_msg(pressed=False, bus=0, length=8, data=None):
+    if data is None:
+      payload = bytearray(8)
+      payload[3] = int(pressed)
+      data = bytes(payload)
+    return make_msg(bus, 0x4A1, length, data)
+
+  def _speed_msg(self, speed):
+    values = {f"WHL_SPD_{wheel}": speed * 0.03125 for wheel in ("FL", "FR", "RL", "RR")}
+    values["WHL_SPD_AliveCounter_LSB"] = (self.speed_counter % 16) & 0x3
+    values["WHL_SPD_AliveCounter_MSB"] = (self.speed_counter % 16) >> 2
+    self.speed_counter += 1
+    return self.packer.make_can_msg_panda("WHL_SPD11", 0, values, fix_checksum=checksum)
+
+  def _brake_msg(self, pressed):
+    values = {"DriverOverride": 2 if pressed else 0, "AliveCounterTCS": self.brake_counter % 8}
+    self.brake_counter += 1
+    return self.packer.make_can_msg_panda("TCS13", 0, values, fix_checksum=checksum)
+
+  def _set_vehicle_state(self, moving=False, brake_pressed=True):
+    self.assertTrue(self.safety.safety_rx_hook(self._speed_msg(13 if moving else 0)))
+    self.assertTrue(self.safety.safety_rx_hook(self._brake_msg(brake_pressed)))
+
+  def test_requires_avm_safety_flag(self):
+    self._set_vehicle_state()
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCommunity, 0)
+    self.safety.init_tests()
+    self.assertFalse(self.safety.safety_tx_hook(self._avm_msg(False)))
+    self.assertFalse(self.safety.safety_tx_hook(self._avm_msg(True)))
+
+  def test_avm_not_allowed_with_unsupported_safety_routes(self):
+    for extra_flag in (HyundaiSafetyFlags.LONG, HyundaiSafetyFlags.CAMERA_SCC):
+      with self.subTest(extra_flag=extra_flag):
+        self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCommunity,
+                                     HyundaiSafetyFlags.AVM_BUTTON | extra_flag)
+        self.safety.init_tests()
+        self.assertFalse(self.safety.safety_tx_hook(self._avm_msg(False)))
+        self.assertFalse(self.safety.safety_tx_hook(self._avm_msg(True)))
+
+  def test_exact_press_and_release_payloads(self):
+    self._set_vehicle_state()
+    self.assertTrue(self.safety.safety_tx_hook(self._avm_msg(False)))
+    self.assertTrue(self.safety.safety_tx_hook(self._avm_msg(True)))
+    self.assertTrue(self.safety.safety_tx_hook(self._avm_msg(False)))
+
+    for bit in range(64):
+      if bit == 24:
+        continue
+      payload = bytearray(8)
+      payload[bit // 8] = 1 << (bit % 8)
+      with self.subTest(bit=bit):
+        self.assertFalse(self.safety.safety_tx_hook(self._avm_msg(data=bytes(payload))))
+
+  def test_wrong_bus_and_length_rejected(self):
+    self._set_vehicle_state()
+    self.assertFalse(self.safety.safety_tx_hook(self._avm_msg(True, bus=2)))
+    self.assertFalse(self.safety.safety_tx_hook(self._avm_msg(True, length=7, data=b"\x00\x00\x00\x01\x00\x00\x00")))
+
+  def test_press_requires_standstill_and_brake(self):
+    for moving, brake_pressed in ((True, True), (False, False), (True, False)):
+      with self.subTest(moving=moving, brake_pressed=brake_pressed):
+        self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCommunity, HyundaiSafetyFlags.AVM_BUTTON)
+        self.safety.init_tests()
+        self.speed_counter = 0
+        self.brake_counter = 0
+        self._set_vehicle_state(moving, brake_pressed)
+        self.assertFalse(self.safety.safety_tx_hook(self._avm_msg(True)))
+        self.assertTrue(self.safety.safety_tx_hook(self._avm_msg(False)))
+
+  def test_press_duration_and_cooldown(self):
+    self._set_vehicle_state()
+    self.safety.set_timer(1)
+    self.assertTrue(self.safety.safety_tx_hook(self._avm_msg(True)))
+    self.safety.set_timer(1 + self.AVM_PRESS_MAX)
+    self.assertTrue(self.safety.safety_tx_hook(self._avm_msg(True)))
+    self.safety.set_timer(2 + self.AVM_PRESS_MAX)
+    self.assertFalse(self.safety.safety_tx_hook(self._avm_msg(True)))
+    self.assertTrue(self.safety.safety_tx_hook(self._avm_msg(False)))
+
+    self.safety.set_timer(1 + self.AVM_PRESS_MAX + self.AVM_COOLDOWN)
+    self.assertFalse(self.safety.safety_tx_hook(self._avm_msg(True)))
+    self.safety.set_timer(2 + self.AVM_PRESS_MAX + self.AVM_COOLDOWN)
+    self.assertTrue(self.safety.safety_tx_hook(self._avm_msg(True)))
+
+  def test_reinitialization_clears_avm_timing(self):
+    self._set_vehicle_state()
+    self.assertTrue(self.safety.safety_tx_hook(self._avm_msg(True)))
+
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCommunity, HyundaiSafetyFlags.AVM_BUTTON)
+    self.safety.init_tests()
+    self.speed_counter = 0
+    self.brake_counter = 0
+    self._set_vehicle_state()
+    self.assertTrue(self.safety.safety_tx_hook(self._avm_msg(True)))
+
+
 class TestHyundaiCommunityHdaTransform(unittest.TestCase):
   TX_MSGS = None
   SCC12_TIMEOUT = 100_000
