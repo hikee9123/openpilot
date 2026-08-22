@@ -22,7 +22,8 @@ class CruiseButtonCtrl:
 
   WAIT_PRESS_FRAMES = 5
   WAIT_NONE_FRAMES = 6
-  STANDSTILL_RESUME_PRESS = 5
+  # Keep the request active long enough to cover five bounded scheduler slots.
+  STANDSTILL_RESUME_PRESS = 50
   IDLE_COOLDOWN_FRAMES = 100
 
   ACC_SAFETY_INIT = 200

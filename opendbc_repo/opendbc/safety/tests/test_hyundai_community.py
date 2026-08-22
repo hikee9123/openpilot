@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import unittest
 
-from opendbc.car.hyundai.values import HyundaiSafetyFlags
+from opendbc.car.hyundai.values import Buttons, HyundaiSafetyFlags
 from opendbc.car.structs import CarParams
 from opendbc.safety.tests.common import CANPackerPanda, make_msg
 from opendbc.safety.tests.libsafety import libsafety_py
@@ -115,6 +115,168 @@ class TestHyundaiCommunityAvmButton(unittest.TestCase):
     self.brake_counter = 0
     self._set_vehicle_state()
     self.assertTrue(self.safety.safety_tx_hook(self._avm_msg(True)))
+
+
+class TestHyundaiCommunityClu11Guard(unittest.TestCase):
+  STOCK_TIMEOUT = 50_000
+  TX_MIN_INTERVAL = 100_000
+
+  def setUp(self):
+    self.safety = libsafety_py.libsafety
+    self._init_safety()
+
+  def _init_safety(self, safety_param=0):
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCommunity, safety_param)
+    self.safety.init_tests()
+    self.stock_counter = 0
+    self.last_stock_counter = None
+
+  @staticmethod
+  def _scc11_msg(bus=0):
+    data = bytearray(8)
+    data[0] = 1  # MainMode_ACC
+    return make_msg(bus, 0x420, 8, bytes(data))
+
+  @staticmethod
+  def _clu11_msg(button=Buttons.NONE, counter=0, bus=0, main_button=False, sld_main_button=False):
+    data = bytearray(4)
+    data[0] = int(button) | (int(main_button) << 3) | (int(sld_main_button) << 4)
+    data[3] = (counter & 0xF) << 4
+    return make_msg(bus, 0x4F1, 4, bytes(data))
+
+  def _enable_generated_messages(self, bus=0):
+    self.assertTrue(self.safety.safety_rx_hook(self._scc11_msg(bus)))
+
+  def _stock_clu11(self, timestamp, bus=0, button=Buttons.NONE, main_button=False, sld_main_button=False):
+    self.safety.set_timer(timestamp)
+    msg = self._clu11_msg(button=button, counter=self.stock_counter, bus=bus,
+                          main_button=main_button, sld_main_button=sld_main_button)
+    accepted = self.safety.safety_rx_hook(msg)
+    if accepted:
+      self.last_stock_counter = self.stock_counter
+      self.stock_counter = (self.stock_counter + 1) & 0xF
+    return accepted
+
+  def _host_clu11(self, timestamp, button=Buttons.CANCEL, bus=0, counter=None):
+    self.safety.set_timer(timestamp)
+    self.safety.set_controls_allowed(True)
+    self.safety.set_cruise_engaged_prev(True)
+    if counter is None:
+      counter = 0 if self.last_stock_counter is None else (self.last_stock_counter + 1) & 0xF
+    return self.safety.safety_tx_hook(self._clu11_msg(button=button, counter=counter, bus=bus))
+
+  def test_stock_clu11_is_required(self):
+    self._enable_generated_messages()
+    self.assertFalse(self._host_clu11(1_000))
+
+  def test_rate_limit_uses_last_accepted_transmission(self):
+    self._enable_generated_messages()
+    self.assertTrue(self._stock_clu11(1_000))
+    self.assertTrue(self._host_clu11(1_000))
+
+    self.assertTrue(self._stock_clu11(10_000))
+    self.assertFalse(self._host_clu11(10_000))
+    self.assertTrue(self._stock_clu11(1_000 + self.TX_MIN_INTERVAL - 1))
+    self.assertFalse(self._host_clu11(1_000 + self.TX_MIN_INTERVAL - 1))
+
+    self.assertTrue(self._stock_clu11(1_000 + self.TX_MIN_INTERVAL))
+    self.assertTrue(self._host_clu11(1_000 + self.TX_MIN_INTERVAL))
+
+  def test_stock_timeout_boundary_and_recovery(self):
+    self._enable_generated_messages()
+    self.assertTrue(self._stock_clu11(1_000))
+    self.assertFalse(self._host_clu11(1_000 + self.STOCK_TIMEOUT))
+
+    self.assertTrue(self._stock_clu11(1_000 + self.STOCK_TIMEOUT))
+    self.assertTrue(self._host_clu11(1_000 + self.STOCK_TIMEOUT))
+
+  def test_fresh_stock_boundary_is_allowed(self):
+    self._enable_generated_messages()
+    self.assertTrue(self._stock_clu11(1_000))
+    self.assertTrue(self._host_clu11(1_000 + self.STOCK_TIMEOUT - 1))
+
+  def test_host_counter_must_follow_stock_counter(self):
+    self._enable_generated_messages()
+    self.assertTrue(self._stock_clu11(1_000))
+    self.assertFalse(self._host_clu11(1_000, counter=self.last_stock_counter))
+    self.assertTrue(self._host_clu11(1_000))
+
+  def test_newer_stock_frame_invalidates_old_host_counter(self):
+    self._enable_generated_messages()
+    self.assertTrue(self._stock_clu11(1_000))
+    old_host_counter = (self.last_stock_counter + 1) & 0xF
+
+    self.assertTrue(self._stock_clu11(20_000))
+    self.assertFalse(self._host_clu11(21_000, counter=old_host_counter))
+    self.assertTrue(self._host_clu11(21_000))
+
+  def test_physical_driver_button_blocks_host_button(self):
+    self._enable_generated_messages()
+    self.assertTrue(self._stock_clu11(1_000, button=Buttons.SET_DECEL))
+    self.assertFalse(self._host_clu11(1_000))
+
+    self.assertTrue(self._stock_clu11(2_000))
+    self.assertTrue(self._host_clu11(2_000))
+
+  def test_physical_main_buttons_block_host_button(self):
+    for field in ("main_button", "sld_main_button"):
+      with self.subTest(field=field):
+        self._init_safety()
+        self._enable_generated_messages()
+        self.assertTrue(self._stock_clu11(1_000, **{field: True}))
+        self.assertFalse(self._host_clu11(1_000))
+        self.assertTrue(self._stock_clu11(2_000))
+        self.assertTrue(self._host_clu11(2_000))
+
+  def test_changing_button_does_not_bypass_rate_limit(self):
+    self._enable_generated_messages()
+    self.assertTrue(self._stock_clu11(1_000))
+    self.assertTrue(self._host_clu11(1_000, Buttons.CANCEL))
+
+    self.assertTrue(self._stock_clu11(10_000))
+    self.assertFalse(self._host_clu11(10_000, Buttons.RES_ACCEL))
+
+    self.assertTrue(self._stock_clu11(1_000 + self.TX_MIN_INTERVAL))
+    self.assertTrue(self._host_clu11(1_000 + self.TX_MIN_INTERVAL, Buttons.SET_DECEL))
+
+  def test_camera_scc_uses_bus_zero_stock_and_bus_two_host(self):
+    self._init_safety(HyundaiSafetyFlags.CAMERA_SCC)
+    self._enable_generated_messages(bus=2)
+
+    self.assertFalse(self._stock_clu11(1_000, bus=2))
+    self.assertFalse(self._host_clu11(1_000, bus=2))
+
+    self.assertTrue(self._stock_clu11(2_000, bus=0))
+    self.assertTrue(self._host_clu11(2_000, bus=2))
+
+  def test_reinitialization_clears_rx_and_tx_timing(self):
+    self._enable_generated_messages()
+    self.assertTrue(self._stock_clu11(1_000))
+    self.assertTrue(self._host_clu11(1_000))
+
+    self._init_safety()
+    self._enable_generated_messages()
+    self.assertFalse(self._host_clu11(1_000))
+    self.assertTrue(self._stock_clu11(1_000))
+    self.assertTrue(self._host_clu11(1_000))
+
+  def test_timer_wrap_preserves_rate_limit(self):
+    self._enable_generated_messages()
+    start = 0xFFFFFF00
+    after_interval = (start + self.TX_MIN_INTERVAL) & 0xFFFFFFFF
+
+    self.assertTrue(self._stock_clu11(start))
+    self.assertTrue(self._host_clu11(start))
+    self.assertTrue(self._stock_clu11(after_interval))
+    self.assertTrue(self._host_clu11(after_interval))
+
+  def test_rejected_button_does_not_consume_interval(self):
+    self._enable_generated_messages()
+    self.assertTrue(self._stock_clu11(1_000))
+    self.assertFalse(self._host_clu11(1_000, Buttons.GAP_DIST))
+
+    self.assertTrue(self._stock_clu11(1_001))
+    self.assertTrue(self._host_clu11(1_001, Buttons.CANCEL))
 
 
 class TestHyundaiCommunityHdaTransform(unittest.TestCase):

@@ -1,7 +1,7 @@
 from cereal import car
 import cereal.messaging as messaging
 
-from opendbc.car.hyundai.values import Buttons, HyundaiFlags, HyundaiSafetyFlags
+from opendbc.car.hyundai.values import HyundaiFlags, HyundaiSafetyFlags
 from opendbc.car.hyundai    import hyundaican
 from opendbc.car.hyundai.custom.avmcontroller import AvmButtonController
 from opendbc.car.hyundai.custom.cruisebuttonctrl  import CruiseButtonCtrl
@@ -28,8 +28,11 @@ class CarControllerCustom:
     self.last_avm_cmd_idx = 0
 
 
+  def get_button_request(self, CC: car.CarControl, CS: car.CarState, frame: int):
+    # The main controller owns all CLU11 timing and transmission.
+    return self.NC.update(CC, CS, frame)
+
   def create_button_messages(self, packer, can_sends, CC: car.CarControl, CS: car.CarState, frame: int):
-    #custom
     btn_signal = self.NC.update(CC, CS, frame)
     if btn_signal is not None:
       can_sends.append(hyundaican.create_clu11(packer, self.resume_cnt, CS.clu11, btn_signal, self.CP))

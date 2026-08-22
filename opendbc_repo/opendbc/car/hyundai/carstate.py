@@ -62,6 +62,7 @@ class CarState(CarStateBase):
     self.avm_switch = {}
     self.avm_view = 0
     self.avm_view_ts_nanos = 0
+    self.clu11_ts_nanos = 0
 
     # On some cars, CLU15->CF_Clu_VehicleSpeed can oscillate faster than the dash updates. Sample at 5 Hz
     self.cluster_speed = 0
@@ -195,6 +196,7 @@ class CarState(CarStateBase):
     # save the entire LKAS11 and CLU11
     self.lkas11 = copy.copy(cp_cam.vl["LKAS11"])
     self.clu11 = copy.copy(cp.vl["CLU11"])
+    self.clu11_ts_nanos = cp.ts_nanos["CLU11"]["CF_Clu_AliveCnt1"]
     if self.CP.flags & HyundaiFlags.AVM_BUTTON:
       self.avm_switch = copy.copy(cp.vl["AVM_SWITCH"])
       self.avm_view = int(cp.vl["AVM_HU_PE_00"]["AVM_View"])

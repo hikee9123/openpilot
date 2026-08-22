@@ -66,6 +66,8 @@ static const CanMsg HYUNDAI_COMMUNITY_AVM_TX_MSGS[] = {
 };
 
 #define HYUNDAI_COMMUNITY_SCC12_TIMEOUT 100000U
+#define HYUNDAI_COMMUNITY_CLU11_STOCK_TIMEOUT 50000U
+#define HYUNDAI_COMMUNITY_CLU11_TX_MIN_INTERVAL 100000U
 #define HYUNDAI_COMMUNITY_AVM_PRESS_MAX 300000U
 #define HYUNDAI_COMMUNITY_AVM_COOLDOWN 1000000U
 #define HYUNDAI_COMMUNITY_PARAM_AVM_BUTTON 1024U
@@ -73,6 +75,14 @@ static const CanMsg HYUNDAI_COMMUNITY_AVM_TX_MSGS[] = {
 static bool hyundai_stock_passthrough = true;
 static bool hyundai_community_scc12_seen = false;
 static uint32_t hyundai_community_scc12_ts = 0U;
+static bool hyundai_community_clu11_seen = false;
+static uint32_t hyundai_community_clu11_rx_ts = 0U;
+static uint8_t hyundai_community_clu11_counter = 0U;
+static uint8_t hyundai_community_clu11_button = 0U;
+static bool hyundai_community_clu11_main_button = false;
+static bool hyundai_community_clu11_sld_main_button = false;
+static bool hyundai_community_clu11_tx_seen = false;
+static uint32_t hyundai_community_clu11_tx_ts = 0U;
 static bool hyundai_community_avm_button = false;
 static bool hyundai_community_avm_press_active = false;
 static bool hyundai_community_avm_pressed_once = false;
@@ -202,6 +212,13 @@ static void hyundai_community_rx_hook(const CANPacket_t *msg) {
 
     // ACC steering wheel buttons
     if (msg->addr == 0x4F1U) {
+      hyundai_community_clu11_seen = true;
+      hyundai_community_clu11_rx_ts = microsecond_timer_get();
+      hyundai_community_clu11_counter = (msg->data[3] >> 4) & 0xFU;
+      hyundai_community_clu11_button = msg->data[0] & 0x7U;
+      hyundai_community_clu11_main_button = GET_BIT(msg, 3U);
+      hyundai_community_clu11_sld_main_button = GET_BIT(msg, 4U);
+
       int cruise_button = msg->data[0] & 0x7U;
       bool main_button = GET_BIT(msg, 3U);
       hyundai_common_cruise_buttons_check(cruise_button, main_button);
@@ -351,7 +368,7 @@ static bool hyundai_community_tx_hook(const CANPacket_t *msg) {
     }
   }
 
-  // BUTTONS: used for resume spamming and cruise cancellation
+  // BUTTONS: allow only fresh stock-synchronized requests at a bounded rate.
   if ((msg->addr == 0x4F1U) && !hyundai_longitudinal) {
     int button = msg->data[0] & 0x7U;
 
@@ -359,8 +376,27 @@ static bool hyundai_community_tx_hook(const CANPacket_t *msg) {
     bool allowed_set = (button == 2) && cruise_engaged_prev;
     bool allowed_cancel = (button == 4) && cruise_engaged_prev;
 
-    if (!(allowed_resume || allowed_set||  allowed_cancel)) {
+    if (!(allowed_resume || allowed_set || allowed_cancel)) {
       tx = false;
+    }
+
+    if (tx) {
+      const uint32_t now = microsecond_timer_get();
+      const bool stock_fresh = hyundai_community_clu11_seen &&
+                               (get_ts_elapsed(now, hyundai_community_clu11_rx_ts) < HYUNDAI_COMMUNITY_CLU11_STOCK_TIMEOUT);
+      const bool interval_elapsed = !hyundai_community_clu11_tx_seen ||
+                                    (get_ts_elapsed(now, hyundai_community_clu11_tx_ts) >= HYUNDAI_COMMUNITY_CLU11_TX_MIN_INTERVAL);
+      const uint8_t counter = (msg->data[3] >> 4) & 0xFU;
+      const bool counter_valid = counter == ((hyundai_community_clu11_counter + 1U) & 0xFU);
+      const bool driver_button_idle = (hyundai_community_clu11_button == HYUNDAI_BTN_NONE) &&
+                                      !hyundai_community_clu11_main_button && !hyundai_community_clu11_sld_main_button;
+
+      if (!stock_fresh || !interval_elapsed || !counter_valid || !driver_button_idle) {
+        tx = false;
+      } else {
+        hyundai_community_clu11_tx_seen = true;
+        hyundai_community_clu11_tx_ts = now;
+      }
     }
   }
 
@@ -388,6 +424,14 @@ static safety_config hyundai_community_init(uint16_t param) {
   hyundai_stock_passthrough = !hyundai_longitudinal;
   hyundai_community_scc12_seen = false;
   hyundai_community_scc12_ts = 0U;
+  hyundai_community_clu11_seen = false;
+  hyundai_community_clu11_rx_ts = 0U;
+  hyundai_community_clu11_counter = 0U;
+  hyundai_community_clu11_button = 0U;
+  hyundai_community_clu11_main_button = false;
+  hyundai_community_clu11_sld_main_button = false;
+  hyundai_community_clu11_tx_seen = false;
+  hyundai_community_clu11_tx_ts = 0U;
   hyundai_community_avm_button = GET_FLAG(param, HYUNDAI_COMMUNITY_PARAM_AVM_BUTTON);
   hyundai_community_avm_press_active = false;
   hyundai_community_avm_pressed_once = false;
