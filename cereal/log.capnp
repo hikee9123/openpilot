@@ -2151,13 +2151,10 @@ struct Joystick {
 struct DriverStateV2 {
   frameId @0 :UInt32;
   modelExecutionTime @1 :Float32;
-  dspExecutionTimeDEPRECATED @2 :Float32;
   gpuExecutionTime @8 :Float32;
   rawPredictions @3 :Data;
 
-  poorVisionProb @4 :Float32;
   wheelOnRightProb @5 :Float32;
-
   leftDriverData @6 :DriverData;
   rightDriverData @7 :DriverData;
 
@@ -2167,20 +2164,24 @@ struct DriverStateV2 {
     facePosition @2 :List(Float32);
     facePositionStd @3 :List(Float32);
     faceProb @4 :Float32;
-    eyesVisibleProb @14 :Float32;
-    eyesClosedProb @15 :Float32;
+    leftEyeProb @5 :Float32;
+    rightEyeProb @6 :Float32;
+    leftBlinkProb @7 :Float32;
+    rightBlinkProb @8 :Float32;
+    sunglassesProb @9 :Float32;
     phoneProb @13 :Float32;
+    sleepProb @14 :Float32;
 
     deprecated :group {
-      leftEyeProb @5 :Float32;
-      rightEyeProb @6 :Float32;
-      leftBlinkProb @7 :Float32;
-      rightBlinkProb @8 :Float32;
-      sunglassesProb @9 :Float32;
       notReadyProb @12 :List(Float32);
       occludedProb @10 :Float32;
       readyProb @11 :List(Float32);
     }
+  }
+
+  deprecated :group {
+    dspExecutionTime @2 :Float32;
+    poorVisionProb @4 :Float32;
   }
 }
 
@@ -2246,8 +2247,11 @@ struct DriverMonitoringStateDEPRECATED @0xb83cda094a1da284 {
 
 struct DriverMonitoringState {
   lockout @0 :Bool;
-  alertCountLockoutPercent @1 :Int8;
-  alertTimeLockoutPercent @2 :Int8;
+  lockoutCount @15 :Int8;
+  lockoutMinutesRemaining @11 :Int8;
+  alert3Count @12 :Int8;
+  noResponseCount @13 :Int8;
+  noResponseForceDecel @14 :Bool;
 
   alwaysOn @3 :Bool;
   alwaysOnLockout @4 :Bool;
@@ -2284,6 +2288,31 @@ struct DriverMonitoringState {
     pose @5 :Pose;
     wheeltouchFallbackPercent @6 :Int8;
     uncertainOffroadAlertPercent @7 :Int8;
+    blinkDebugState @8 :BlinkDebugState;
+
+    struct BlinkDebugState {
+      enabled @0 :Bool;
+      valid @1 :Bool;
+      eyeClosed @2 :Bool;
+      sleepCandidate @3 :Bool;
+      blinkCount10s @4 :UInt16;
+      currentClosureMillis @5 :UInt16;
+      maxClosureMillis10s @6 :UInt16;
+      closedPercent10s @7 :UInt8;
+      validPercent10s @8 :UInt8;
+      rawLeftBlinkProb @9 :Float32;
+      rawRightBlinkProb @10 :Float32;
+      effectiveBlinkProb @11 :Float32;
+      sleepProb @12 :Float32;
+      closeThresholdPercent @13 :UInt8;
+      openThresholdPercent @14 :UInt8;
+      minDurationMillis @15 :UInt16;
+      longClosureMillis @16 :UInt16;
+      noBlinkCandidate @17 :Bool;
+      noBlinkMillis @18 :UInt16;
+      noBlinkWindowReady @19 :Bool;
+      noBlinkAlertEnabled @20 :Bool;
+    }
 
     struct DistractedTypes {
       pose @0: Bool;
@@ -2310,6 +2339,11 @@ struct DriverMonitoringState {
   struct CalibrationState {
     calibratedPercent @0 :Int8;
     offset @1 :Float32;
+  }
+
+  deprecated :group {
+    alertCountLockoutPercent @1 :Int8;
+    alertTimeLockoutPercent @2 :Int8;
   }
 }
 

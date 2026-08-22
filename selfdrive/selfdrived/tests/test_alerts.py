@@ -8,7 +8,7 @@ from cereal import log, car
 from cereal.messaging import SubMaster
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
-from openpilot.selfdrive.selfdrived.events import Alert, EVENTS, ET
+from openpilot.selfdrive.selfdrived.events import Alert, EVENTS, ET, too_distracted_alert
 from openpilot.selfdrive.selfdrived.alertmanager import set_offroad_alert
 from openpilot.selfdrive.test.process_replay.process_replay import CONFIGS
 
@@ -103,6 +103,22 @@ class TestAlerts:
 
         if event_type not in (ET.WARNING, ET.PERMANENT, ET.PRE_ENABLE):
           assert a.creation_delay == 0.
+
+  def test_too_distracted_alert_explains_reengage_lockout(self):
+    dm_state = log.DriverMonitoringState.new_message()
+    dm_state.lockout = True
+    dm_state.lockoutMinutesRemaining = 5
+    alert = too_distracted_alert(self.CP, self.CS, {'driverMonitoringState': dm_state}, False, 100,
+                                 log.LongitudinalPersonality.standard)
+    assert alert.alert_text_1 == "Re-engage Unavailable"
+    assert alert.alert_text_2 == "Level 3 warning limit reached - 5 minutes remaining"
+
+  def test_too_distracted_alert_explains_cancel_reset(self):
+    dm_state = log.DriverMonitoringState.new_message()
+    alert = too_distracted_alert(self.CP, self.CS, {'driverMonitoringState': dm_state}, False, 100,
+                                 log.LongitudinalPersonality.standard)
+    assert alert.alert_text_1 == "Re-engage Unavailable"
+    assert alert.alert_text_2 == "Driver attention required - press CANCEL to reset"
 
   def test_offroad_alerts(self):
     params = Params()

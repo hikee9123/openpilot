@@ -49,6 +49,7 @@ void drawDriverMonitoringPanel(QPainter &p, const QRect &surface_rect,
   const auto vision_state = dm_state.getVisionPolicyState();
   const auto distracted_types = vision_state.getDistractedTypes();
   const auto pose = vision_state.getPose();
+  const auto blink_debug = vision_state.getBlinkDebugState();
 
   const bool is_distracted = vision_state.getIsDistracted();
   const bool has_alert = dm_state.getAlertLevel() != cereal::DriverMonitoringState::AlertLevel::NONE;
@@ -56,7 +57,7 @@ void drawDriverMonitoringPanel(QPainter &p, const QRect &surface_rect,
 
   const int panel_margin = 30;
   const int panel_width = std::clamp(surface_rect.width() - panel_margin * 2, 320, 720);
-  const int panel_height = 282;
+  const int panel_height = 456;
   const QRect panel_rect(surface_rect.x() + panel_margin, surface_rect.y() + panel_margin, panel_width, panel_height);
   const QColor normal_color(235, 235, 235, 235);
   const QColor dim_color(190, 190, 190, 225);
@@ -103,11 +104,41 @@ void drawDriverMonitoringPanel(QPainter &p, const QRect &surface_rect,
               .arg(yn(distracted_types.getEye()))
               .arg(yn(distracted_types.getPhone())),
             has_distracted_type ? warn_color : dim_color);
-  draw_line(QString("FaceProb %1   EyesVisible %2   EyesClosed %3")
+  const float eyes_visible_prob = std::min(driver_data.getLeftEyeProb(), driver_data.getRightEyeProb());
+  draw_line(QString("FaceProb %1   EyesVisible %2   Valid %3/%4%")
               .arg(prob(driver_data.getFaceProb()))
-              .arg(prob(driver_data.getEyesVisibleProb()))
-              .arg(prob(driver_data.getEyesClosedProb())),
+              .arg(prob(eyes_visible_prob))
+              .arg(yn(blink_debug.getValid()))
+              .arg(blink_debug.getValidPercent10s()),
             normal_color);
+  draw_line(QString("Raw L/R %1/%2   Effective %3")
+              .arg(prob(blink_debug.getRawLeftBlinkProb()))
+              .arg(prob(blink_debug.getRawRightBlinkProb()))
+              .arg(prob(blink_debug.getEffectiveBlinkProb())),
+            normal_color);
+  draw_line(QString("State %1   Blink/10s %2   Candidate %3")
+              .arg(blink_debug.getEyeClosed() ? "CLOSED" : "OPEN")
+              .arg(blink_debug.getBlinkCount10s())
+              .arg(yn(blink_debug.getSleepCandidate())),
+            blink_debug.getSleepCandidate() ? bad_color : normal_color);
+  draw_line(QString("NoBlink %1s   %2   Cand %3   Alert %4")
+              .arg(blink_debug.getNoBlinkMillis() / 1000.0, 0, 'f', 1)
+              .arg(blink_debug.getNoBlinkWindowReady() ? "READY" : "WAIT")
+              .arg(yn(blink_debug.getNoBlinkCandidate()))
+              .arg(blink_debug.getNoBlinkAlertEnabled() ? "ON" : "OFF"),
+            blink_debug.getNoBlinkCandidate() ? bad_color : normal_color);
+  draw_line(QString("Closed %1s   Max/10s %2s   PERCLOS %3%")
+              .arg(blink_debug.getCurrentClosureMillis() / 1000.0, 0, 'f', 2)
+              .arg(blink_debug.getMaxClosureMillis10s() / 1000.0, 0, 'f', 2)
+              .arg(blink_debug.getClosedPercent10s()),
+            normal_color);
+  draw_line(QString("SleepProb %1   Close/Open %2/%3   Blink %4ms Long %5ms")
+              .arg(prob(blink_debug.getSleepProb()))
+              .arg(blink_debug.getCloseThresholdPercent())
+              .arg(blink_debug.getOpenThresholdPercent())
+              .arg(blink_debug.getMinDurationMillis())
+              .arg(blink_debug.getLongClosureMillis()),
+            dim_color);
   draw_line(QString("Pitch %1   Yaw %2   Uncertainty %3")
               .arg(prob(pose.getPitch()))
               .arg(prob(pose.getYaw()))

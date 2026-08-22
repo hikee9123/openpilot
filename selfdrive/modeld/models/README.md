@@ -34,34 +34,14 @@ Refer to **slice_outputs** and **parse_vision_outputs/parse_policy_outputs** in 
 
 ## Driver Monitoring Model
 * .onnx model can be run with onnx runtimes
-* .dlc file is a pre-quantized model and only runs on qualcomm DSPs
 
 ### input format
 * single image W = 1440 H = 960 luminance channel (Y) from the planar YUV420 format:
   * full input size is 1440 * 960 = 1382400
-  * normalized ranging from 0.0 to 1.0 in float32 (onnx runner) or ranging from 0 to 255 in uint8 (snpe runner)
+  * uint8 values ranging from 0 to 255
 * camera calibration angles (roll, pitch, yaw) from liveCalibration: 3 x float32 inputs
 
 ### output format
-* 84 x float32 outputs = 2 + 41 * 2 ([parsing example](https://github.com/commaai/openpilot/blob/22ce4e17ba0d3bfcf37f8255a4dd1dc683fe0c38/selfdrive/modeld/models/dmonitoring.cc#L33))
-  * for each person in the front seats (2 * 41)
-    * face pose: 12 = 6 + 6
-      * face orientation [pitch, yaw, roll] in camera frame: 3
-      * face position [dx, dy] relative to image center: 2
-      * normalized face size: 1
-      * standard deviations for above outputs: 6
-    * face visible probability: 1
-    * eyes: 20 = (8 + 1) + (8 + 1) + 1 + 1
-      * eye position and size, and their standard deviations: 8
-      * eye visible probability: 1
-      * eye closed probability: 1
-    * wearing sunglasses probability: 1
-    * face occluded probability: 1
-    * touching wheel probability: 1
-    * paying attention probability: 1
-    * (deprecated) distracted probabilities: 2
-    * using phone probability: 1
-    * distracted probability: 1
-  * common outputs 2
-    * poor camera vision probability: 1
-    * left hand drive probability: 1
+* 553 outputs. The ONNX output is float16 and the runtime parser normalizes it to contiguous float32.
+* Each driver side includes face pose and uncertainty descriptors plus face, eye, blink, sunglasses, phone, and sleep probabilities.
+* Common outputs include wheel-side probability and 512 model features.

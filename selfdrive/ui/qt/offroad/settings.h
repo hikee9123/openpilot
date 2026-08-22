@@ -75,8 +75,10 @@ private slots:
 private:
   Params params;
   std::map<std::string, ParamControl*> toggles;
+  ButtonControl *blink_debug_settings_btn = nullptr;
   ButtonParamControl *long_personality_setting;
 
+  void updateBlinkDebugDescription();
   void updateToggles();
 };
 

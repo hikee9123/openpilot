@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include <QString>
+
 #include "selfdrive/ui/qt/onroad/buttons.h"
 #include "selfdrive/ui/qt/util.h"
 
@@ -19,6 +21,7 @@ static constexpr vec3 DEFAULT_FACE_KPTS_3D[] = {
 // Colors used for drawing based on monitoring state
 static const QColor DMON_ENGAGED_COLOR = QColor::fromRgbF(0.1, 0.945, 0.26);
 static const QColor DMON_DISENGAGED_COLOR = QColor::fromRgbF(0.545, 0.545, 0.545);
+static constexpr int DROWSY_BACKGROUND_MIN_CLOSURE_MS = 2000;
 
 DriverMonitorRenderer::DriverMonitorRenderer() : face_kpts_draw(std::size(DEFAULT_FACE_KPTS_3D)) {
   dm_img = loadPixmap("../assets/icons/driver_face.png", {img_size + 5, img_size + 5});
@@ -33,10 +36,37 @@ void DriverMonitorRenderer::updateState(const UIState &s) {
   auto dm_state = sm["driverMonitoringState"].getDriverMonitoringState();
   is_active = dm_state.getActivePolicy() == cereal::DriverMonitoringState::MonitoringPolicy::VISION;
   is_rhd = dm_state.getIsRHD();
+  const auto vision_state = dm_state.getVisionPolicyState();
+  face_detected = vision_state.getFaceDetected();
+  eye_distracted = vision_state.getDistractedTypes().getEye();
+  const auto blink_debug = vision_state.getBlinkDebugState();
+  blink_debug_enabled = blink_debug.getEnabled();
+  blink_debug_valid = blink_debug.getValid();
+  blink_eye_closed = blink_debug.getEyeClosed();
+  sleep_candidate = blink_debug.getSleepCandidate();
+  no_blink_candidate = blink_debug.getNoBlinkCandidate();
+  no_blink_window_ready = blink_debug.getNoBlinkWindowReady();
+  no_blink_alert_enabled = blink_debug.getNoBlinkAlertEnabled();
+  blink_count_10s = blink_debug.getBlinkCount10s();
+  no_blink_ms = blink_debug.getNoBlinkMillis();
+  current_closure_ms = blink_debug.getCurrentClosureMillis();
+  max_closure_ms_10s = blink_debug.getMaxClosureMillis10s();
+  closed_percent_10s = blink_debug.getClosedPercent10s();
+  valid_percent_10s = blink_debug.getValidPercent10s();
+  raw_left_blink_prob = blink_debug.getRawLeftBlinkProb();
+  raw_right_blink_prob = blink_debug.getRawRightBlinkProb();
+  effective_blink_prob = blink_debug.getEffectiveBlinkProb();
+  sleep_prob = blink_debug.getSleepProb();
+  close_threshold_percent = blink_debug.getCloseThresholdPercent();
+  open_threshold_percent = blink_debug.getOpenThresholdPercent();
+  min_duration_ms = blink_debug.getMinDurationMillis();
+  long_closure_ms = blink_debug.getLongClosureMillis();
   dm_fade_state = std::clamp(dm_fade_state + 0.2f * (0.5f - is_active), 0.0f, 1.0f);
 
   const auto &driverstate = sm["driverStateV2"].getDriverStateV2();
-  const auto driver_orient = is_rhd ? driverstate.getRightDriverData().getFaceOrientation() : driverstate.getLeftDriverData().getFaceOrientation();
+  const auto driver_data = is_rhd ? driverstate.getRightDriverData() : driverstate.getLeftDriverData();
+  const auto driver_orient = driver_data.getFaceOrientation();
+  eye_closed_prob = std::clamp((driver_data.getLeftBlinkProb() + driver_data.getRightBlinkProb()) * 0.5f, 0.0f, 1.0f);
 
   for (int i = 0; i < 3; ++i) {
     float v_this = (i == 0 ? (driver_orient[i] < 0 ? 0.7 : 0.9) : 0.4) * driver_orient[i];
@@ -91,6 +121,79 @@ void DriverMonitorRenderer::draw(QPainter &painter, const QRect &surface_rect) {
   const float arc_t_extend = 12.0f;
   QColor arc_color = uiState()->engaged() ? DMON_ENGAGED_COLOR : DMON_DISENGAGED_COLOR;
   arc_color.setAlphaF(0.4 * (1.0f - dm_fade_state));
+
+  const QRectF eye_rect(x - 86, y - btn_size / 2 - 54, 172, 46);
+  painter.setPen(Qt::NoPen);
+  painter.setBrush(QColor(0, 0, 0, 140));
+  painter.drawRoundedRect(eye_rect, 12, 12);
+  painter.setFont(InterFont(30, QFont::DemiBold));
+  const bool show_eye_prob = is_active && face_detected;
+  painter.setPen(show_eye_prob && eye_distracted ? QColor(255, 95, 95) : QColor(255, 255, 255, 230));
+  const QString eye_text = show_eye_prob ?
+                             QString("EYE %1%").arg(static_cast<int>(std::lround(eye_closed_prob * 100.0f))) : "EYE --";
+  painter.drawText(eye_rect, Qt::AlignCenter, eye_text);
+
+  if (blink_debug_enabled) {
+    const int panel_width = 510;
+    const int panel_height = 270;
+    const int panel_x = is_rhd ? surface_rect.right() - UI_BORDER_SIZE - panel_width + 1 : surface_rect.left() + UI_BORDER_SIZE;
+    const int panel_y = std::max(surface_rect.top() + UI_BORDER_SIZE,
+                                 static_cast<int>(eye_rect.top()) - panel_height - 18);
+    const QRectF panel_rect(panel_x, panel_y, panel_width, panel_height);
+    const bool show_drowsy_background = no_blink_candidate ||
+                                        (sleep_candidate && current_closure_ms > DROWSY_BACKGROUND_MIN_CLOSURE_MS);
+
+    painter.setPen(QPen(QColor(160, 170, 180, 150), 2));
+    painter.setBrush(show_drowsy_background ? QColor(205, 100, 0, 230) : QColor(0, 0, 0, 205));
+    painter.drawRoundedRect(panel_rect, 18, 18);
+
+    const int text_x = panel_x + 22;
+    int text_y = panel_y + 14;
+    const int text_width = panel_width - 44;
+    const int line_height = 34;
+    auto draw_debug_line = [&](const QString &text, const QColor &color, bool heading = false) {
+      painter.setFont(InterFont(heading ? 26 : 23, heading ? QFont::DemiBold : QFont::Medium));
+      painter.setPen(color);
+      painter.drawText(QRect(text_x, text_y, text_width, line_height), Qt::AlignLeft | Qt::AlignVCenter, text);
+      text_y += line_height;
+    };
+
+    const QColor normal_color(235, 235, 235, 240);
+    const QColor dim_color(190, 195, 200, 235);
+    const QColor good_color(82, 235, 104, 245);
+    const QColor warn_color(255, 190, 70, 245);
+    const QColor bad_color(255, 95, 95, 245);
+    draw_debug_line(QString("DM BLINK DEBUG   %1 %2%")
+                      .arg(blink_debug_valid ? "VALID" : "INVALID")
+                      .arg(valid_percent_10s),
+                    blink_debug_valid ? good_color : warn_color, true);
+    draw_debug_line(QString("Raw L/R %1/%2%   Effective %3%")
+                      .arg(static_cast<int>(std::lround(raw_left_blink_prob * 100.0f)))
+                      .arg(static_cast<int>(std::lround(raw_right_blink_prob * 100.0f)))
+                      .arg(static_cast<int>(std::lround(effective_blink_prob * 100.0f))), normal_color);
+    draw_debug_line(QString("State %1   Blink/10s %2")
+                      .arg(blink_eye_closed ? "CLOSED" : "OPEN")
+                      .arg(blink_count_10s), blink_eye_closed ? warn_color : normal_color);
+    draw_debug_line(QString("No Blink %1s   Window %2   Alert %3")
+                      .arg(no_blink_ms / 1000.0, 0, 'f', 1)
+                      .arg(no_blink_window_ready ? "READY" : "WAIT")
+                      .arg(no_blink_alert_enabled ? "ON" : "OFF"),
+                    no_blink_candidate ? bad_color : normal_color);
+    draw_debug_line(QString("Closed %1s   Max/10s %2s")
+                      .arg(current_closure_ms / 1000.0, 0, 'f', 2)
+                      .arg(max_closure_ms_10s / 1000.0, 0, 'f', 2), normal_color);
+    draw_debug_line(QString("PERCLOS %1%   SleepProb %2%")
+                      .arg(closed_percent_10s)
+                      .arg(static_cast<int>(std::lround(sleep_prob * 100.0f))), normal_color);
+    draw_debug_line(QString("Cand S:%1 N:%2   C%3 O%4 B%5 L%6")
+                      .arg(sleep_candidate ? "Y" : "N")
+                      .arg(no_blink_candidate ? "Y" : "N")
+                      .arg(close_threshold_percent)
+                      .arg(open_threshold_percent)
+                      .arg(min_duration_ms)
+                      .arg(long_closure_ms / 1000.0, 0, 'f', 1),
+                    (sleep_candidate || no_blink_candidate) ? bad_color : dim_color);
+  }
 
   float delta_x = -driver_pose_sins[1] * arc_l / 2.0f;
   float delta_y = -driver_pose_sins[0] * arc_l / 2.0f;

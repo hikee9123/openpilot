@@ -4,6 +4,12 @@ from opendbc.car.hyundai.values import CAR, HyundaiFlags
 hyundai_checksum = crcmod.mkCrcFun(0x11D, initCrc=0xFD, rev=False, xorOut=0xdf)
 
 
+def create_avm_button(packer, avm_switch, pressed):
+  values = avm_switch.copy()
+  values["AVM_Button"] = int(pressed)
+  return packer.make_can_msg("AVM_SWITCH", 0, values)
+
+
 def create_lkas11(packer, frame, CP, apply_torque, steer_req,
                   torque_fault, lkas11, sys_warning, sys_state, enabled,
                   left_lane, right_lane,
@@ -116,13 +122,6 @@ def create_clu11(packer, frame, clu11, button, CP):
   # send buttons to camera on camera-scc based cars
   bus = 2 if CP.flags & HyundaiFlags.CAMERA_SCC else 0
   return packer.make_can_msg("CLU11", bus, values)
-
-
-def create_lfahda_mfc(packer, enabled):
-  values = {
-    "LFA_Icon_State": 2 if enabled else 0,
-  }
-  return packer.make_can_msg("LFAHDA_MFC", 0, values)
 
 
 # 100 Hz  #custom

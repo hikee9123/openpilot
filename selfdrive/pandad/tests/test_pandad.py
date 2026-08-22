@@ -90,21 +90,12 @@ class TestPandad:
 
     assert any(Panda(s).is_internal() for s in Panda.list())
 
-  def test_best_case_startup_time(self):
-    # run once so we're up to date
+  def test_repeated_startup(self):
+    # The wrapper hardware-resets or recovers the internal Panda on every attempt.
     self._run_test(60)
 
-    ts = []
-    for _ in range(10):
-      # should be nearly instant this time
-      dt = self._run_test(5)
-      ts.append(dt)
-
-    # 5s for USB (due to enumeration)
-    # - 0.2s pandad -> pandad
-    # - plus some buffer
-    print("startup times", ts, sum(ts) / len(ts))
-    assert 0.1 < (sum(ts)/len(ts)) < 0.7
+    for _ in range(3):
+      self._run_test(10)
 
   def test_protocol_version_check(self):
     # flash old fw

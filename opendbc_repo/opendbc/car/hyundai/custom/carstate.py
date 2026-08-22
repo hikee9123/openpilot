@@ -1,13 +1,12 @@
 import copy
 import math
-import numpy as np
 import opendbc.custom.loger as trace1
 import cereal.messaging as messaging
 
 from typing import  List, Tuple
 from cereal import car, log
 from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.hyundai.values import CAR, Buttons
+from opendbc.car.hyundai.values import Buttons
 from opendbc.custom.params_json import read_json_file
 from openpilot.common.params import Params
 
@@ -75,6 +74,8 @@ class CarStateCustom:
     self.modelxDistance = 0.0
     self.modelyDistance = 0.0
     self.model_v2 = None
+    self.laneChangeState = LaneChangeState.off
+    self.laneLineProbs = []
     self.brakePos = 0.0
     self.clu_Main = 0
     self.mainMode_ACC = False
@@ -82,6 +83,7 @@ class CarStateCustom:
 
     # 외부/플래너 파생
     self.speed_plan_kph = 0.0
+    self._planner_speed_kph = 0.0
     self.cruise_set_mode = 0
     self.cruiseGap = 0
     self.control_mode = 0
@@ -97,12 +99,6 @@ class CarStateCustom:
 
     # Custom menu (robust defaults)
     self.autoLaneChange, self.menu_debug, self.curveSpeedLimit, self.autoEngage = self._load_custom_params()
-
-
-
-    # 지원 차량 목록
-    self.cars = self._get_supported_cars(CP)
-
 
   # ----------------------------
   # Config / Params
@@ -188,20 +184,13 @@ class CarStateCustom:
     last_x = xs[-1] if xs else None
     last_y = ys[-1] if ys else None
 
-    x = float(np.clip(last_x, 10, 500)) if last_x is not None else None
-    y = float(np.clip(last_y, -60, 60)) if last_y is not None else None
+    x = min(max(float(last_x), 10.0), 500.0) if last_x is not None else None
+    y = min(max(float(last_y), -60.0), 60.0) if last_y is not None else None
     return x, y
 
   # ----------------------------
   # Public-ish helpers
   # ----------------------------
-  def _get_supported_cars(self, CP):
-    cars = []
-    for _, member in CAR.__members__.items():
-      cars.append(member.value)
-    return cars
-
-
   def _update_controls_allowed(self):
     """pandaStates 기반 제어 허용 플래그 업데이트"""
     self.controlsAllowed = 1 if any(ps.controlsAllowed for ps in self.sm['pandaStates']) else 0
@@ -215,9 +204,11 @@ class CarStateCustom:
     self.sm.update(0)
 
     # Planner 기반 속도 (kph)
-    speeds = getattr(self.sm['longitudinalPlan'], 'speeds', [])
-    if len(speeds):
-      self.speed_plan_kph = float(speeds[-1]) * CV.MS_TO_KPH
+    if self.sm.updated.get("longitudinalPlan", False):
+      speeds = getattr(self.sm['longitudinalPlan'], 'speeds', [])
+      if len(speeds):
+        self._planner_speed_kph = float(speeds[-1]) * CV.MS_TO_KPH
+    self.speed_plan_kph = self._planner_speed_kph
 
     # UI Custom
     if self.sm.updated.get("uICustom", False):
@@ -230,33 +221,35 @@ class CarStateCustom:
       if getattr(self, 'curveSpeedLimit', None) != csl: self.curveSpeedLimit = csl
 
 
-    # 모델 곡률/이격
-    mdl = self.sm['modelV2']
-    self.model_v2 = mdl
-    self.laneChangeState = getattr(mdl.meta, 'laneChangeState', None)
-    self.laneLineProbs = list(getattr(mdl, 'laneLineProbs', []))
+    # 모델 곡률/이격은 modelV2가 갱신된 주기에만 다시 계산합니다.
+    if self.sm.updated.get("modelV2", False):
+      mdl = self.sm['modelV2']
+      self.model_v2 = mdl
+      self.laneChangeState = getattr(mdl.meta, 'laneChangeState', None)
+      self.laneLineProbs = list(getattr(mdl, 'laneLineProbs', []))
 
-    try:
-      desired_curv = float(mdl.action.desiredCurvature)
-      if not math.isfinite(desired_curv): desired_curv = 0.0
-    except Exception:
-      desired_curv = 0.0
+      try:
+        desired_curv = float(mdl.action.desiredCurvature)
+        if not math.isfinite(desired_curv): desired_curv = 0.0
+      except Exception:
+        desired_curv = 0.0
 
-    # 곡률 → 조향각(도)
-    wb = self._finite_or(getattr(self.CP, 'wheelbase', 2.7), 2.7)
-    self.steeringAngle = self.curvature_to_steering_angle( desired_curv, wb )
+      # 곡률 → 조향각(도)
+      wb = self._finite_or(getattr(self.CP, 'wheelbase', 2.7), 2.7)
+      self.steeringAngle = self.curvature_to_steering_angle(desired_curv, wb)
 
-    x_d, y_d = self._max_model_distance(mdl)
-    # None 대비 기본값 0.0
-    self.modelxDistance = x_d if x_d is not None else 0.0  # 앞차와의 거리
-    self.modelyDistance = y_d if y_d is not None else 0.0  # 곡률
+      x_d, y_d = self._max_model_distance(mdl)
+      # None 대비 기본값 0.0
+      self.modelxDistance = x_d if x_d is not None else 0.0  # 앞차와의 거리
+      self.modelyDistance = y_d if y_d is not None else 0.0  # 곡률
 
     if self.clu_Vanz > self.curveSpeedLimit:
       # 곡률 기반 속도 페널티(간단한 예: 곡률 y 편차 10~60 → 0~10 kph 감속)
       y_abs = abs(self.modelyDistance)
-      xp = list(self.CURVE_Y_ABS_RANGE)
-      fp = list(self.CURVE_PENALTY_RANGE)
-      spd_penalty = float(np.interp(y_abs, xp, fp, left=fp[0], right=fp[1]))
+      x0, x1 = self.CURVE_Y_ABS_RANGE
+      p0, p1 = self.CURVE_PENALTY_RANGE
+      ratio = min(max((y_abs - x0) / (x1 - x0), 0.0), 1.0) if x1 > x0 else 0.0
+      spd_penalty = p0 + (p1 - p0) * ratio
       self.speed_plan_kph = max(0.0, self.speed_plan_kph - spd_penalty)
 
   # ----------------------------
@@ -529,7 +522,6 @@ class CarStateCustom:
   def _send_debug(self, ret, cp):
 
     carSCustom = car.CarState.CarSCustom.new_message()
-    carSCustom.supportedCars = self.cars
     carSCustom.breakPos = float(self.brakePos)
     carSCustom.leadDistance = float(self.lead_distance)
     carSCustom.gapSet = int(self.gapSet)

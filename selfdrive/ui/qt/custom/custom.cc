@@ -10,10 +10,6 @@
 #include <cstdio>
 #include <algorithm>   // std::clamp
 
-#include <QMouseEvent>
-#include <QTabWidget>
-#include <QTabBar>
-#include <QWheelEvent>
 #include <QObject>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -45,6 +41,7 @@
 
 #include "selfdrive/ui/qt/util.h"
 #include "selfdrive/ui/qt/custom/custom.h"
+#include "selfdrive/ui/qt/widgets/swipeable_tab.h"
 
 // ======================================================================================
 // 공통 유틸/상수
@@ -54,6 +51,28 @@ constexpr double kEPS = 1e-9;
 constexpr const char *kOsmRoadsInstallSession = "osm_db_install";
 constexpr const char *kOsmSpeedCamerasSession = "osm_speed_cameras_update";
 constexpr qint64 kLogStorageRefreshIntervalMs = 30000;
+
+static QStringList loadHyundaiSupportedCars() {
+  QFile file(":/hyundai_supported_cars.json");
+  if (!file.open(QIODevice::ReadOnly)) {
+    qWarning() << "Failed to open Hyundai supported cars resource:" << file.errorString();
+    return {};
+  }
+
+  QJsonParseError error;
+  const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
+  if (error.error != QJsonParseError::NoError || !document.isArray()) {
+    qWarning() << "Failed to parse Hyundai supported cars resource:" << error.errorString();
+    return {};
+  }
+
+  QStringList cars;
+  for (const QJsonValue &value : document.array()) {
+    const QString car = value.toString();
+    if (!car.isEmpty() && !cars.contains(car)) cars.append(car);
+  }
+  return cars;
+}
 
 struct LogStorageStats {
   qint64 saved_bytes = 0;
@@ -151,116 +170,6 @@ static const char *kRoundBtnStyle = R"(
   color: #E4E4E4;
   background-color: #393939;
 )";
-
-// 탭 스타일(여러 탭에서 공유)
-static const char *kTabStyle = R"(
-  QTabBar::tab {
-    border: 1px solid #C4C4C3;
-    border-bottom-color: #C2C7CB;
-    border-top-left-radius: 4px;
-    border-top-right-radius: 4px;
-    min-width: 45ex;
-    padding: 2px;
-    margin-right: 1px;
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                stop:0 #FAFAFA, stop: 0.4 #F4F4F4,
-                                stop: 0.5 #EDEDED, stop: 1.0 #FAFAFA);
-    color: black;
-  }
-  QTabBar::tab:selected {
-    border-bottom-color: #B1B1B0;
-    background: white;
-    color: black;
-  }
-  QTabBar::tab:!selected {
-    margin-top: 2px;
-    background: black;
-    color: white;
-  }
-  QTabBar QToolButton {
-    min-width: 92px;
-    min-height: 64px;
-    margin: 2px;
-    border: 1px solid #666;
-    border-radius: 4px;
-    background-color: #393939;
-  }
-  QTabBar QToolButton:pressed {
-    background-color: #4a4a4a;
-  }
-)";
-
-class SwipeableTabBar : public QTabBar {
-public:
-  explicit SwipeableTabBar(QWidget *parent = nullptr) : QTabBar(parent) {
-    setUsesScrollButtons(true);
-    setExpanding(false);
-    setElideMode(Qt::ElideNone);
-  }
-
-protected:
-  void mousePressEvent(QMouseEvent *event) override {
-    dragStartPos = event->pos();
-    dragSwitched = false;
-    QTabBar::mousePressEvent(event);
-  }
-
-  void mouseMoveEvent(QMouseEvent *event) override {
-    const int dx = event->pos().x() - dragStartPos.x();
-    if (std::abs(dx) >= kSwipeThresholdPx) {
-      stepCurrentTab(dx < 0 ? 1 : -1);
-      dragStartPos = event->pos();
-      dragSwitched = true;
-      event->accept();
-      return;
-    }
-    QTabBar::mouseMoveEvent(event);
-  }
-
-  void mouseReleaseEvent(QMouseEvent *event) override {
-    if (dragSwitched) {
-      dragSwitched = false;
-      event->accept();
-      return;
-    }
-    QTabBar::mouseReleaseEvent(event);
-  }
-
-  void wheelEvent(QWheelEvent *event) override {
-    const QPoint delta = event->angleDelta();
-    if (!delta.isNull()) {
-      const int step = std::abs(delta.x()) > std::abs(delta.y()) ? -delta.x() : -delta.y();
-      if (step != 0) {
-        stepCurrentTab(step > 0 ? 1 : -1);
-        event->accept();
-        return;
-      }
-    }
-    QTabBar::wheelEvent(event);
-  }
-
-private:
-  void stepCurrentTab(int step) {
-    if (count() <= 0) {
-      return;
-    }
-    const int next = std::clamp(currentIndex() + step, 0, count() - 1);
-    if (next != currentIndex()) {
-      setCurrentIndex(next);
-    }
-  }
-
-  static constexpr int kSwipeThresholdPx = 90;
-  QPoint dragStartPos;
-  bool dragSwitched = false;
-};
-
-class SwipeableTabWidget : public QTabWidget {
-public:
-  explicit SwipeableTabWidget(QWidget *parent = nullptr) : QTabWidget(parent) {
-    setTabBar(new SwipeableTabBar(this));
-  }
-};
 
 inline void applyListWidgetBaseStyle(QWidget *w) {
   w->setStyleSheet(R"(
@@ -680,8 +589,15 @@ void CValueControl2::refresh() {
 // ======================================================================================
 CustomPanel::CustomPanel(SettingsWindow *parent) : QWidget(parent) {
   pm.reset(new PubMaster({"uICustom"}));
-  sm.reset(new SubMaster({"carState"}));
   m_jsonobj = readJsonFile("CustomParam");
+  m_cars = loadHyundaiSupportedCars();
+  if (m_cars.isEmpty()) {
+    const QJsonArray supported_cars = m_jsonobj.value("SupportCars").toArray();
+    for (const QJsonValue &value : supported_cars) {
+      const QString car = value.toString();
+      if (!car.isEmpty() && !m_cars.contains(car)) m_cars.append(car);
+    }
+  }
 
   QList<QPair<QString, QWidget *>> panels = {
     {tr("UI"), new UITab(this, m_jsonobj)},
@@ -694,7 +610,7 @@ CustomPanel::CustomPanel(SettingsWindow *parent) : QWidget(parent) {
 
   // 탭 위젯
   auto *tabWidget = new SwipeableTabWidget(this);
-  tabWidget->setStyleSheet(kTabStyle);
+  tabWidget->setStyleSheet(kSwipeableTabStyle);
   for (auto &[name, panel] : panels) {
     panel->setContentsMargins(50, 25, 50, 25);
     ScrollView *panel_frame = new ScrollView(panel, this);
@@ -714,7 +630,6 @@ CustomPanel::CustomPanel(SettingsWindow *parent) : QWidget(parent) {
 }
 
 void CustomPanel::offroadTransition(bool offroad) {
-  sm->update(0);
   if (!timer->isActive()) m_cmdIdx = 0;
   updateToggles(false);
 }
@@ -724,7 +639,6 @@ void CustomPanel::OnTimer() {
   UIScene &scene = s->scene;
   SubMaster &sm2 = *(s->sm);
 
-  sm->update(0);
   if (scene.started) {
     m_time = 0;
     scene.custom.powerOffRemaining = 0;
@@ -843,26 +757,6 @@ void CustomPanel::closeEvent(QCloseEvent *event) {
 void CustomPanel::showEvent(QShowEvent *event) {
   QWidget::setContentsMargins(0, 0, 0, 0);
   QWidget::showEvent(event);
-
-  if (!m_cars.isEmpty()) return;
-
-  sm->update(0);
-  UIState *s = uiState();
-  SubMaster &sm2 = *(s->sm);
-
-  const auto car_state = sm2["carState"].getCarState();
-  const auto carState_custom = car_state.getCarSCustom();
-  const auto carSupport = carState_custom.getSupportedCars();
-
-  if (carSupport.size() <= 0) {
-    // JSON에서 후보 로드(SurportCars → SupportCars 정정)
-    const QJsonArray supportCar = m_jsonobj.value("SupportCars").toArray();
-    for (const auto &item : supportCar) m_cars.append(item.toString());
-  } else {
-    for (int i = 0; i < (int)carSupport.size(); ++i) {
-      m_cars.append(QString::fromStdString(carSupport[i]));
-    }
-  }
 }
 
 void CustomPanel::hideEvent(QHideEvent *event) {
@@ -1061,10 +955,6 @@ CommunityTab::CommunityTab(CustomPanel *parent, QJsonObject &jsonobj)
 
   QObject::connect(changeCar, &ButtonControl::clicked, this, [=] {
     const QStringList items = m_pCustom ? m_pCustom->m_cars : QStringList();
-
-    QJsonArray jsonArray;
-    for (const auto &item : items) jsonArray.append(item);
-    m_jsonobj["SupportCars"] = jsonArray; // SurportCars → SupportCars 수정 유지
 
     const QString current = QString::fromStdString(Params().get("SelectedCar"));
     const QString selection = MultiOptionDialog::getSelection(tr("Select a car"), items, current, this);
@@ -1713,6 +1603,27 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
       proc->deleteLater();
     });
 
+    connect(proc, &QProcess::errorOccurred, this, [=](QProcess::ProcessError error) {
+      if (error != QProcess::FailedToStart) return;
+
+      qWarning() << "model_make.sh failed to start:" << proc->errorString();
+      if (modelProcess == proc) modelProcess = nullptr;
+      Params().put("ActiveModelName", prev);
+      currentModel = QString::fromStdString(prev);
+      modelCompileStartedAt = 0;
+      modelCompilingName.clear();
+      modelCompileStage.clear();
+      modelCompileDetail.clear();
+      modelCompilePercent = 0;
+      changeModelButton->setTitle(tr("Failed to start"));
+      changeModelButton->setText(tr("RETRY"));
+      changeModelButton->setDescription(proc->errorString());
+      changeModelButton->setEnabled(true);
+      if (modelStatusTitle) modelStatusTitle->setText(tr("Compile failed to start"));
+      if (modelProgressBar) modelProgressBar->setVisible(false);
+      proc->deleteLater();
+    });
+
     connect(proc, &QObject::destroyed, this, [this, proc]() {
       if (modelProcess == proc) modelProcess = nullptr;
     });
@@ -1724,7 +1635,7 @@ ModelTab::ModelTab(CustomPanel *parent, QJsonObject &jsonobj)
 
   commaModelUpdateButton = new ButtonControl(
       tr("Comma official model"), tr("CHECK"),
-      tr("Check commaai/openpilot for a new official driving model."));
+      tr("Check commaai/openpilot for the latest split driving model compatible with this fork."));
   QObject::connect(commaModelUpdateButton, &ButtonControl::clicked, this, [this]() {
     runCommaModelUpdate(commaModelUpdateAvailable);
   });
@@ -1805,26 +1716,28 @@ void ModelTab::runCommaModelUpdate(bool apply)
       const QString modelName = result.value("model_name").toString();
       const QString folder = result.value("new_model_folder").toString();
       const QString existing = result.value("existing_model").toString();
+      const QString compatibilityNote = result.value("compatibility_note").toString();
 
       if (resultStatus == "new") {
         commaModelUpdateAvailable = true;
         commaModelUpdateFolder = folder;
         commaModelUpdateButton->setTitle(modelName.isEmpty() ? tr("New comma model") : modelName);
         commaModelUpdateButton->setText(tr("INSTALL"));
-        commaModelUpdateButton->setDescription(folder);
+        commaModelUpdateButton->setDescription(compatibilityNote.isEmpty() ? folder : compatibilityNote + "\n" + folder);
       } else if (resultStatus == "registered") {
         commaModelUpdateAvailable = false;
         commaModelUpdateFolder.clear();
         commaModelUpdateButton->setTitle(modelName.isEmpty() ? tr("Model added") : modelName);
         commaModelUpdateButton->setText(tr("ADDED"));
-        commaModelUpdateButton->setDescription(folder);
+        commaModelUpdateButton->setDescription(compatibilityNote.isEmpty() ? folder : compatibilityNote + "\n" + folder);
         refreshModelStatus();
       } else {
         commaModelUpdateAvailable = false;
         commaModelUpdateFolder.clear();
         commaModelUpdateButton->setTitle(tr("Comma official model"));
         commaModelUpdateButton->setText(resultStatus == "updated" ? tr("UPDATED") : tr("LATEST"));
-        commaModelUpdateButton->setDescription(existing.isEmpty() ? modelName : existing);
+        const QString modelDetail = existing.isEmpty() ? modelName : existing;
+        commaModelUpdateButton->setDescription(compatibilityNote.isEmpty() ? modelDetail : compatibilityNote + "\n" + modelDetail);
       }
     } else {
       commaModelUpdateButton->setTitle(tr("Update check failed"));
@@ -1834,6 +1747,18 @@ void ModelTab::runCommaModelUpdate(bool apply)
       commaModelUpdateFolder.clear();
     }
 
+    commaModelUpdateButton->setEnabled(true);
+    proc->deleteLater();
+  });
+  connect(proc, &QProcess::errorOccurred, this, [this, proc](QProcess::ProcessError error) {
+    if (error != QProcess::FailedToStart) return;
+
+    if (commaModelUpdateProcess == proc) commaModelUpdateProcess = nullptr;
+    commaModelUpdateAvailable = false;
+    commaModelUpdateFolder.clear();
+    commaModelUpdateButton->setTitle(tr("Update check failed"));
+    commaModelUpdateButton->setText(tr("RETRY"));
+    commaModelUpdateButton->setDescription(proc->errorString());
     commaModelUpdateButton->setEnabled(true);
     proc->deleteLater();
   });
@@ -2194,14 +2119,54 @@ NavigationTab::NavigationTab(CustomPanel *parent, QJsonObject &jsonobj)
 
   osmRoadsStatusTimer = new QTimer(this);
   connect(osmRoadsStatusTimer, &QTimer::timeout, this, &NavigationTab::refreshOsmRoadsStatus);
-  osmRoadsStatusTimer->start(1000);
+  osmRoadsStatusTimer->setInterval(1000);
   skipOsmRoadsExistingLog();
-  refreshOsmRoadsStatus();
 
   osmSpeedCamerasStatusTimer = new QTimer(this);
   connect(osmSpeedCamerasStatusTimer, &QTimer::timeout, this, &NavigationTab::refreshOsmSpeedCamerasStatus);
-  osmSpeedCamerasStatusTimer->start(1000);
-  refreshOsmSpeedCamerasStatus();
+  osmSpeedCamerasStatusTimer->setInterval(1000);
+
+  connect(osmEnable, &ToggleControl::toggleFlipped, this, [this](bool) {
+    QTimer::singleShot(0, this, &NavigationTab::updateOsmMonitoring);
+  });
+  updateOsmMonitoring();
+}
+
+void NavigationTab::updateOsmMonitoring()
+{
+  const bool osmEnabled = params.getBool("OSMEnable");
+  const bool monitorRoads = isVisible() && (osmEnabled || osmRoadsInstallRunning());
+  const bool monitorSpeedCameras = isVisible() && (osmEnabled || osmSpeedCamerasUpdateRunning());
+
+  installOsmDbButton->setEnabled(osmEnabled || osmRoadsInstallRunning());
+  updateOsmSpeedCamerasButton->setEnabled(osmEnabled || osmSpeedCamerasUpdateRunning());
+
+  if (monitorRoads) {
+    osmRoadsStatusTimer->start();
+    refreshOsmRoadsStatus();
+  } else {
+    osmRoadsStatusTimer->stop();
+  }
+
+  if (monitorSpeedCameras) {
+    osmSpeedCamerasStatusTimer->start();
+    refreshOsmSpeedCamerasStatus();
+  } else {
+    osmSpeedCamerasStatusTimer->stop();
+  }
+}
+
+void NavigationTab::showEvent(QShowEvent *event)
+{
+  QWidget::showEvent(event);
+  updateOsmMonitoring();
+}
+
+void NavigationTab::hideEvent(QHideEvent *event)
+{
+  osmRoadsStatusTimer->stop();
+  osmSpeedCamerasStatusTimer->stop();
+  QWidget::hideEvent(event);
 }
 
 bool NavigationTab::osmRoadsInstallRunning()
@@ -2313,9 +2278,11 @@ void NavigationTab::refreshOsmSpeedCamerasStatus()
     staleParams.put("OsmSpeedCamerasUpdateError", error.toStdString());
   }
 
+  const bool osmEnabled = params.getBool("OSMEnable");
   osmSpeedCamerasProgressBar->setValue(ok ? progress : 0);
   osmSpeedCamerasProgressBar->setVisible(running || progress > 0);
-  updateOsmSpeedCamerasButton->setEnabled(true);
+  updateOsmSpeedCamerasButton->setEnabled(osmEnabled || running);
+  if (!osmEnabled && !running) osmSpeedCamerasStatusTimer->stop();
 
   auto appendCounts = [&](QStringList &details) {
     if (rowsOk && downloadRows > 0) {
@@ -2416,9 +2383,11 @@ void NavigationTab::refreshOsmRoadsStatus()
     staleParams.put("OsmRoadsUpdateError", error.toStdString());
   }
 
+  const bool osmEnabled = params.getBool("OSMEnable");
   osmRoadsProgressBar->setValue(ok ? progress : 0);
   osmRoadsProgressBar->setVisible(running || progress > 0);
-  installOsmDbButton->setEnabled(true);
+  installOsmDbButton->setEnabled(osmEnabled || running);
+  if (!osmEnabled && !running) osmRoadsStatusTimer->stop();
 
   if (running) {
     emitOsmRoadsInstallLog();

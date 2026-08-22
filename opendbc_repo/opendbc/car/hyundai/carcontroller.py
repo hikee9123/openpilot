@@ -111,6 +111,7 @@ class CarController(CarControllerBase):
     else:
       can_sends.extend(self.create_can_msgs(apply_steer_req, apply_torque, torque_fault, set_speed_in_units, accel,
                                             stopping, hud_control, actuators, CS, CC))
+      can_sends.extend(self.customCC.create_avm_messages(self.packer, CS, now_nanos))
 
     new_actuators = actuators.as_builder()
     new_actuators.torque = apply_torque / self.params.STEER_MAX
@@ -141,8 +142,8 @@ class CarController(CarControllerBase):
       elif CC.cruiseControl.resume:
         # send resume at a max freq of 10Hz
         if (self.frame - self.last_button_frame) * DT_CTRL > 0.1:
-          # send 25 messages at a time to increases the likelihood of resume being accepted
-          can_sends.extend([hyundaican.create_clu11(self.packer, self.frame, CS.clu11, Buttons.RES_ACCEL, self.CP)] * 25)
+          # Keep each sendcan event to one CLU11 frame to avoid colliding with the stock 50 Hz message.
+          can_sends.append(hyundaican.create_clu11(self.packer, self.frame, CS.clu11, Buttons.RES_ACCEL, self.CP))
           if (self.frame - self.last_button_frame) * DT_CTRL >= 0.15:
             self.last_button_frame = self.frame
       elif CS.out.cruiseState.available: #custom
@@ -155,10 +156,6 @@ class CarController(CarControllerBase):
       can_sends.extend(hyundaican.create_acc_commands(self.packer, CC.enabled, accel, jerk, int(self.frame / 2),
                                                       hud_control, set_speed_in_units, stopping,
                                                       CC.cruiseControl.override, use_fca, self.CP))
-
-    # 20 Hz LFA MFA message
-    if self.frame % 5 == 0 and self.CP.flags & HyundaiFlags.SEND_LFA.value:
-      can_sends.append(hyundaican.create_lfahda_mfc(self.packer, CC.enabled))
 
     # 5 Hz ACC options
     if self.frame % 20 == 0 and self.CP.openpilotLongitudinalControl:

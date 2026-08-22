@@ -358,6 +358,13 @@ class TestOnroad:
           assert enc_sof == cam_sof, f"SOF mismatch: frameId={fid}, enc_sof={enc_sof}, cam_sof={cam_sof}"
           assert enc_eof == cam_eof, f"EOF mismatch: frameId={fid}, enc_eof={enc_eof}, cam_eof={cam_eof}"
 
+  def test_mpc_execution_timings(self):
+    ts = [m.longitudinalPlan.solverExecutionTime for m in self.msgs['longitudinalPlan']
+          if (m.logMonoTime*1e-9 - self.ts['longitudinalPlan']['t'][0]) > LOG_OFFSET]
+    assert ts, "no longitudinalPlan timing samples after startup"
+    assert max(ts) < 0.05, f"high 'longitudinalPlan' execution time: {max(ts)}"
+    assert np.mean(ts) < 0.05, f"high avg 'longitudinalPlan' execution time: {np.mean(ts)}"
+
   def test_model_execution_timings(self, subtests):
     result = "\n"
     result += "------------------------------------------------\n"
@@ -373,6 +380,10 @@ class TestOnroad:
     ]
     for (s, instant_max, avg_max) in cfgs:
       ts = [getattr(m, s).modelExecutionTime for m in self.msgs[s] if (m.logMonoTime*1e-9 - self.ts[s]['t'][0]) > LOG_OFFSET]
+      if not ts:
+        with subtests.test(s):
+          assert ts, f"no {s} timing samples after startup"
+        continue
       result += f"'{s}' execution time: min  {min(ts):.5f}s\n"
       result += f"'{s}' execution time: max {max(ts):.5f}s\n"
       result += f"'{s}' execution time: mean {np.mean(ts):.5f}s\n"

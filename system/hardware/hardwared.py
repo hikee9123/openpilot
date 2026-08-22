@@ -348,12 +348,11 @@ def hardware_thread(end_event, hw_queue) -> None:
       if engaged != engaged_prev:
         params.put_bool("IsEngaged", engaged)
         engaged_prev = engaged
-
-      try:
-        with open('/dev/kmsg', 'w') as kmsg:
-          kmsg.write(f"<3>[hardware] engaged: {engaged}\n")
-      except Exception:
-        pass
+        try:
+          with open('/dev/kmsg', 'w') as kmsg:
+            kmsg.write(f"<3>[hardware] engaged: {engaged}\n")
+        except Exception:
+          pass
 
     if should_start:
       off_ts = None

@@ -381,6 +381,16 @@ def invalid_lkas_setting_alert(CP: car.CarParams, CS: car.CarState, sm: messagin
   return NormalPermanentAlert("Invalid LKAS setting", text)
 
 
+def too_distracted_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
+  dm_state = sm['driverMonitoringState']
+  if dm_state.lockout:
+    minutes = max(int(dm_state.lockoutMinutesRemaining), 1)
+    unit = "minute" if minutes == 1 else "minutes"
+    return NoEntryAlert(f"Level 3 warning limit reached - {minutes} {unit} remaining",
+                        alert_text_1="Re-engage Unavailable")
+  return NoEntryAlert("Driver attention required - press CANCEL to reset",
+                      alert_text_1="Re-engage Unavailable")
+
 
 EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
   # ********** events with no alerts **********
@@ -767,7 +777,7 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
   },
 
   EventName.tooDistracted: {
-    ET.NO_ENTRY: NoEntryAlert("Distraction Level Too High"),
+    ET.NO_ENTRY: too_distracted_alert,
   },
 
   EventName.excessiveActuation: {
