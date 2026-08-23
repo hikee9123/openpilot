@@ -8,10 +8,111 @@ MIN_CLOSURE_EVENTS = 10
 TARGET_CONFIDENCE_MINUTES = 30
 TARGET_CONFIDENCE_CLOSURES = 50
 STATE_VERSION = 1
+AUTO_APPLY_MIN_CONFIDENCE_PCT = 80
+AUTO_APPLY_MIN_NEW_VALID_SAMPLES = 5 * 60 * SAMPLE_RATE_HZ
+
+AUTO_APPLY_PARAM_KEYS = {
+  "closeThresholdPct": "DmBlinkCloseThresholdPct",
+  "openThresholdPct": "DmBlinkOpenThresholdPct",
+  "minDurationMs": "DmBlinkMinDurationMs",
+  "minValidPct": "DmBlinkMinValidPct",
+}
+
+AUTO_APPLY_MAX_STEP = {
+  "closeThresholdPct": 5,
+  "openThresholdPct": 5,
+  "minDurationMs": 50,
+  "minValidPct": 5,
+}
 
 
 def _clamp(value, minimum, maximum):
   return min(max(value, minimum), maximum)
+
+
+def _bounded_step(current, target, maximum_step):
+  return _clamp(target, current - maximum_step, current + maximum_step)
+
+
+def eligible_auto_apply_recommendations(state):
+  if not isinstance(state, dict) or state.get("version") != STATE_VERSION or not state.get("ready"):
+    return None
+
+  try:
+    confidence_pct = int(state.get("confidencePct", 0))
+    recommendations = state.get("recommendations")
+    values = {key: int(recommendations[key]) for key in AUTO_APPLY_PARAM_KEYS}
+  except (KeyError, TypeError, ValueError, OverflowError):
+    return None
+
+  if confidence_pct < AUTO_APPLY_MIN_CONFIDENCE_PCT or not (
+    50 <= values["closeThresholdPct"] <= 95 and
+    5 <= values["openThresholdPct"] <= values["closeThresholdPct"] - 5 and
+    50 <= values["minDurationMs"] <= 300 and
+    50 <= values["minValidPct"] <= 95
+  ):
+    return None
+  return values
+
+
+def apply_auto_tune_on_start(params, now=None):
+  if params.get_bool("DmBlinkAutoTuneStartChecked"):
+    return None
+  # This transition-scoped marker prevents a process restart from changing settings mid-drive.
+  params.put_bool("DmBlinkAutoTuneStartChecked", True)
+
+  if not (params.get_bool("DmBlinkAutoTuneEnabled") and params.get_bool("DmBlinkAutoTuneAutoApply")):
+    return None
+
+  state = params.get("DmBlinkAutoTuneState") or {}
+  targets = eligible_auto_apply_recommendations(state)
+  if targets is None:
+    return None
+
+  try:
+    source_updated = int(state.get("lastUpdated", 0))
+    source_valid_sample_count = int(state.get("validSampleCount", 0))
+    last_applied = params.get("DmBlinkAutoTuneLastApplied") or {}
+    last_applied_valid_sample_count = int(last_applied.get("sourceValidSampleCount", 0))
+    same_source = int(last_applied.get("sourceUpdated", 0)) == source_updated
+    not_enough_new_data = (
+      last_applied_valid_sample_count > 0 and
+      source_valid_sample_count - last_applied_valid_sample_count < AUTO_APPLY_MIN_NEW_VALID_SAMPLES
+    )
+    if source_updated <= 0 or source_valid_sample_count <= 0 or same_source or not_enough_new_data:
+      return None
+    previous = {
+      key: int(params.get(param_key, return_default=True))
+      for key, param_key in AUTO_APPLY_PARAM_KEYS.items()
+    }
+  except (AttributeError, TypeError, ValueError, OverflowError):
+    return None
+
+  applied = {
+    key: _bounded_step(previous[key], targets[key], AUTO_APPLY_MAX_STEP[key])
+    for key in AUTO_APPLY_PARAM_KEYS
+  }
+  applied["closeThresholdPct"] = _clamp(applied["closeThresholdPct"], 5, 95)
+  applied["openThresholdPct"] = _clamp(applied["openThresholdPct"], 5,
+                                        applied["closeThresholdPct"] - 5)
+  applied["minDurationMs"] = _clamp(applied["minDurationMs"], 50, 500)
+  applied["minValidPct"] = _clamp(applied["minValidPct"], 50, 100)
+
+  for key, param_key in AUTO_APPLY_PARAM_KEYS.items():
+    params.put(param_key, str(applied[key]))
+
+  record = {
+    "sourceUpdated": source_updated,
+    "sourceValidSampleCount": source_valid_sample_count,
+    "appliedAt": int(time.time() if now is None else now),
+    "confidencePct": int(state["confidencePct"]),
+    "previous": previous,
+    "target": targets,
+    "applied": applied,
+  }
+  # Written last so an interrupted partial write is retried on the next DM start.
+  params.put("DmBlinkAutoTuneLastApplied", record)
+  return record
 
 
 def _histogram_percentile(histogram, percentile):

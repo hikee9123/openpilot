@@ -1,4 +1,7 @@
-from openpilot.selfdrive.monitoring.blink_auto_tuner import BlinkAutoTuner
+from openpilot.selfdrive.monitoring.blink_auto_tuner import (
+  AUTO_APPLY_MIN_CONFIDENCE_PCT, BlinkAutoTuner, apply_auto_tune_on_start,
+  eligible_auto_apply_recommendations,
+)
 
 
 CURRENT_SETTINGS = {
@@ -78,3 +81,120 @@ def test_pause_does_not_count_closure_across_driving_sessions():
   tuner.observe(True, 0.1, False, 0, 90)
 
   assert tuner.closure_count == 0
+
+
+class ParamsStub:
+  def __init__(self, state, auto_tune=True, auto_apply=True):
+    self.values = {
+      "DmBlinkAutoTuneEnabled": auto_tune,
+      "DmBlinkAutoTuneAutoApply": auto_apply,
+      "DmBlinkAutoTuneStartChecked": False,
+      "DmBlinkAutoTuneState": state,
+      "DmBlinkCloseThresholdPct": 87,
+      "DmBlinkOpenThresholdPct": 50,
+      "DmBlinkMinDurationMs": 100,
+      "DmBlinkMinValidPct": 80,
+      "DmBlinkMaxDurationMs": 1500,
+      "DmSleepCandidateDurationMs": 10000,
+    }
+
+  def get_bool(self, key):
+    return bool(self.values.get(key, False))
+
+  def get(self, key, return_default=False):
+    return self.values.get(key)
+
+  def put(self, key, value):
+    self.values[key] = value if isinstance(value, dict) else int(value)
+
+  def put_bool(self, key, value):
+    self.values[key] = bool(value)
+
+
+def auto_apply_state(confidence_pct=90, last_updated=123):
+  return {
+    "version": 1,
+    "ready": True,
+    "confidencePct": confidence_pct,
+    "lastUpdated": last_updated,
+    "validSampleCount": 30 * 60 * 20,
+    "recommendations": {
+      "closeThresholdPct": 70,
+      "openThresholdPct": 40,
+      "minDurationMs": 250,
+      "maxBlinkDurationMs": 1500,
+      "sleepCandidateDurationMs": 10000,
+      "minValidPct": 60,
+    },
+  }
+
+
+def test_auto_apply_requires_high_confidence():
+  state = auto_apply_state(confidence_pct=AUTO_APPLY_MIN_CONFIDENCE_PCT - 1)
+  assert eligible_auto_apply_recommendations(state) is None
+  assert apply_auto_tune_on_start(ParamsStub(state), now=456) is None
+
+
+def test_auto_apply_is_bounded_and_preserves_sleep_settings():
+  params = ParamsStub(auto_apply_state())
+  record = apply_auto_tune_on_start(params, now=456)
+
+  assert record is not None
+  assert record["applied"] == {
+    "closeThresholdPct": 82,
+    "openThresholdPct": 45,
+    "minDurationMs": 150,
+    "minValidPct": 75,
+  }
+  assert params.values["DmBlinkMaxDurationMs"] == 1500
+  assert params.values["DmSleepCandidateDurationMs"] == 10000
+  assert record["appliedAt"] == 456
+
+
+def test_auto_apply_runs_only_once_per_recommendation():
+  params = ParamsStub(auto_apply_state())
+  assert apply_auto_tune_on_start(params, now=456) is not None
+  assert apply_auto_tune_on_start(params, now=457) is None
+
+
+def test_auto_apply_process_restart_is_blocked_for_same_drive():
+  params = ParamsStub(auto_apply_state())
+  assert apply_auto_tune_on_start(params, now=456) is not None
+  params.values["DmBlinkAutoTuneState"] = auto_apply_state(last_updated=124)
+  assert apply_auto_tune_on_start(params, now=457) is None
+
+
+def test_next_auto_apply_requires_five_new_valid_minutes():
+  params = ParamsStub(auto_apply_state())
+  assert apply_auto_tune_on_start(params, now=456) is not None
+  params.values["DmBlinkAutoTuneStartChecked"] = False
+  params.values["DmBlinkAutoTuneState"] = auto_apply_state(last_updated=124)
+  assert apply_auto_tune_on_start(params, now=457) is None
+
+  params.values["DmBlinkAutoTuneStartChecked"] = False
+  params.values["DmBlinkAutoTuneState"]["validSampleCount"] += 5 * 60 * 20
+  assert apply_auto_tune_on_start(params, now=458) is not None
+
+
+def test_auto_apply_step_limits_hold_at_manual_setting_bounds():
+  params = ParamsStub(auto_apply_state())
+  params.values.update({
+    "DmBlinkCloseThresholdPct": 5,
+    "DmBlinkOpenThresholdPct": 5,
+    "DmBlinkMinDurationMs": 500,
+    "DmBlinkMinValidPct": 100,
+  })
+  record = apply_auto_tune_on_start(params, now=456)
+
+  assert record["applied"] == {
+    "closeThresholdPct": 10,
+    "openThresholdPct": 5,
+    "minDurationMs": 450,
+    "minValidPct": 95,
+  }
+
+
+def test_auto_apply_respects_both_toggles():
+  state = auto_apply_state()
+  assert apply_auto_tune_on_start(ParamsStub(state, auto_tune=False), now=456) is None
+  assert apply_auto_tune_on_start(ParamsStub(state, auto_apply=False), now=456) is None

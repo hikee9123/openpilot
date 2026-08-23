@@ -2,6 +2,8 @@
 import cereal.messaging as messaging
 from openpilot.common.params import Params
 from openpilot.common.realtime import config_realtime_process
+from openpilot.common.swaglog import cloudlog
+from openpilot.selfdrive.monitoring.blink_auto_tuner import apply_auto_tune_on_start
 from openpilot.selfdrive.monitoring.policy import BlinkDebugSettings, DriverMonitoring
 
 
@@ -9,6 +11,13 @@ def dmonitoringd_thread():
   config_realtime_process([0, 1, 2, 3], 5)
 
   params = Params()
+  try:
+    applied = apply_auto_tune_on_start(params)
+    if applied is not None:
+      cloudlog.event("dm_blink_auto_tune_applied", applied=applied)
+  except Exception:
+    cloudlog.exception("Failed to apply DM Blink Auto Tune recommendations")
+
   pm = messaging.PubMaster(['driverMonitoringState'])
   sm = messaging.SubMaster(['driverStateV2', 'liveCalibration', 'carState', 'selfdriveState', 'modelV2'], poll='driverStateV2')
 

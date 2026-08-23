@@ -40,6 +40,8 @@ constexpr int kBlinkMinDurationDefault = 100;
 constexpr int kBlinkMaxDurationDefault = 1500;
 constexpr int kSleepCandidateDurationDefault = 10000;
 constexpr int kBlinkMinValidDefault = 80;
+constexpr int kBlinkAutoApplyMinConfidence = 80;
+constexpr int kBlinkAutoApplyMinNewValidSamples = 5 * 60 * 20;
 
 int getIntParam(Params &params, const std::string &key, int default_value) {
   try {
@@ -68,7 +70,11 @@ struct BlinkAutoTuneState {
   int valid_percent = 0;
   int closure_count = 0;
   double valid_minutes = 0.0;
+  int valid_sample_count = 0;
   qint64 last_updated = 0;
+  qint64 last_applied = 0;
+  int last_applied_valid_sample_count = 0;
+  int last_applied_confidence_pct = 0;
   int close_threshold_pct = kBlinkCloseDefault;
   int open_threshold_pct = kBlinkOpenDefault;
   int min_duration_ms = kBlinkMinDurationDefault;
@@ -85,6 +91,20 @@ BlinkAutoTuneState getBlinkAutoTuneState(Params &params) {
   state.max_blink_duration_ms = getIntParam(params, "DmBlinkMaxDurationMs", kBlinkMaxDurationDefault);
   state.sleep_candidate_duration_ms = getIntParam(params, "DmSleepCandidateDurationMs", kSleepCandidateDurationDefault);
   state.min_valid_pct = getIntParam(params, "DmBlinkMinValidPct", kBlinkMinValidDefault);
+
+  const std::string raw_applied = params.get("DmBlinkAutoTuneLastApplied");
+  if (!raw_applied.empty()) {
+    QJsonParseError applied_error;
+    const QJsonDocument applied_document = QJsonDocument::fromJson(QByteArray::fromStdString(raw_applied), &applied_error);
+    if (applied_error.error == QJsonParseError::NoError && applied_document.isObject()) {
+      const QJsonObject applied_root = applied_document.object();
+      state.last_applied = std::max(static_cast<qint64>(applied_root.value("appliedAt").toDouble(0.0)), qint64{0});
+      state.last_applied_valid_sample_count = std::max(applied_root.value("sourceValidSampleCount").toInt(0), 0);
+      state.last_applied_confidence_pct = std::clamp(applied_root.value("confidencePct").toInt(0), 0, 100);
+    } else {
+      qWarning() << "Failed to parse DmBlinkAutoTuneLastApplied:" << applied_error.errorString();
+    }
+  }
 
   const std::string raw_state = params.get("DmBlinkAutoTuneState");
   if (raw_state.empty()) {
@@ -105,6 +125,7 @@ BlinkAutoTuneState getBlinkAutoTuneState(Params &params) {
   state.valid_percent = std::clamp(root.value("validPercent").toInt(0), 0, 100);
   state.closure_count = std::max(root.value("closureCount").toInt(0), 0);
   state.valid_minutes = std::max(root.value("validMinutes").toDouble(0.0), 0.0);
+  state.valid_sample_count = std::max(root.value("validSampleCount").toInt(0), 0);
   state.last_updated = std::max(static_cast<qint64>(root.value("lastUpdated").toDouble(0.0)), qint64{0});
   state.close_threshold_pct = recommendations.value("closeThresholdPct").toInt(state.close_threshold_pct);
   state.open_threshold_pct = recommendations.value("openThresholdPct").toInt(state.open_threshold_pct);
@@ -443,9 +464,16 @@ public:
     auto_tune_enabled = new StagedToggleControl(
       tr("Enable Auto Tune"),
       tr("Collect numeric driver-monitoring data while openpilot is enabled above 10 km/h and calculate recommendations. "
-         "Active DM values are never changed automatically."),
+         "Learning runs during the drive; active DM values do not change during that drive."),
       params.getBool("DmBlinkAutoTuneEnabled"), auto_tune_layout->parentWidget());
     auto_tune_layout->addWidget(auto_tune_enabled);
+
+    auto_apply_next_drive = new StagedToggleControl(
+      tr("Auto apply on next drive"),
+      tr("Apply a bounded recommendation only at the next DM start when confidence is at least 80%. "
+         "Maximum blink and Sleep Candidate remain manual."),
+      params.getBool("DmBlinkAutoTuneAutoApply"), auto_tune_layout->parentWidget());
+    auto_tune_layout->addWidget(auto_apply_next_drive);
 
     auto_tune_status = new QLabel(auto_tune_layout->parentWidget());
     auto_tune_status->setWordWrap(true);
@@ -493,11 +521,16 @@ public:
 
     QObject::connect(reset_button, &QPushButton::clicked, [this]() { setDefaults(); });
     QObject::connect(cancel_button, &QPushButton::clicked, this, &QDialog::reject);
-    QObject::connect(auto_tune_enabled, &ToggleControl::toggleFlipped, [this](bool) { refreshAutoTuneUi(); });
+    QObject::connect(auto_tune_enabled, &ToggleControl::toggleFlipped, [this](bool enabled) {
+      if (!enabled) auto_apply_next_drive->setValue(false);
+      refreshAutoTuneUi();
+    });
+    QObject::connect(auto_apply_next_drive, &ToggleControl::toggleFlipped, [this](bool) { refreshAutoTuneUi(); });
     QObject::connect(apply_all_auto_button, &QPushButton::clicked, [this]() { useAllAutoRecommendations(); });
     QObject::connect(reset_auto_data_button, &QPushButton::clicked, [this]() {
       if (ConfirmationDialog::confirm(tr("Reset all learned Blink Auto Tune data?"), tr("Reset"), this)) {
         params.remove("DmBlinkAutoTuneState");
+        params.remove("DmBlinkAutoTuneLastApplied");
         auto_tune_state = getBlinkAutoTuneState(params);
         refreshAutoTuneUi();
       }
@@ -526,6 +559,7 @@ private:
 
   void refreshAutoTuneUi() {
     const bool ready = auto_tune_state.ready;
+    auto_apply_next_drive->setEnabled(auto_tune_enabled->value());
     close_threshold->setAutoValue(auto_tune_state.close_threshold_pct, ready, auto_tune_state.confidence_pct);
     open_threshold->setAutoValue(auto_tune_state.open_threshold_pct, ready, auto_tune_state.confidence_pct);
     min_duration->setAutoValue(auto_tune_state.min_duration_ms, ready, auto_tune_state.confidence_pct);
@@ -544,18 +578,39 @@ private:
       status = tr("READY - Review the AUTO values beside each current value before applying.");
     }
 
+    QString auto_apply_status;
+    if (!auto_tune_enabled->value() || !auto_apply_next_drive->value()) {
+      auto_apply_status = tr("NEXT-DRIVE AUTO APPLY OFF");
+    } else if (!ready || auto_tune_state.confidence_pct < kBlinkAutoApplyMinConfidence) {
+      auto_apply_status = tr("NEXT-DRIVE AUTO APPLY WAITING - Requires 80% confidence.");
+    } else if (auto_tune_state.last_applied_valid_sample_count > 0 &&
+               auto_tune_state.valid_sample_count - auto_tune_state.last_applied_valid_sample_count <
+                 kBlinkAutoApplyMinNewValidSamples) {
+      auto_apply_status = tr("NEXT-DRIVE AUTO APPLY WAITING - Requires 5 new valid driving minutes.");
+    } else {
+      auto_apply_status = tr("NEXT-DRIVE AUTO APPLY READY - A bounded step will apply at the next DM start.");
+    }
+
     QString updated = tr("Never");
     if (auto_tune_state.last_updated > 0) {
       updated = QDateTime::fromSecsSinceEpoch(auto_tune_state.last_updated).toString("yyyy-MM-dd HH:mm");
     }
+    QString applied = tr("Never");
+    if (auto_tune_state.last_applied > 0) {
+      applied = tr("%1 (%2% confidence)")
+                  .arg(QDateTime::fromSecsSinceEpoch(auto_tune_state.last_applied).toString("yyyy-MM-dd HH:mm"))
+                  .arg(auto_tune_state.last_applied_confidence_pct);
+    }
     auto_tune_status->setText(
-      tr("%1\nValid driving: %2 min | Valid data: %3% | Closures: %4 | Confidence: %5%\nLast update: %6")
+      tr("%1\n%2\nValid driving: %3 min | Valid data: %4% | Closures: %5 | Confidence: %6%\nLast update: %7 | Last auto apply: %8")
         .arg(status)
+        .arg(auto_apply_status)
         .arg(auto_tune_state.valid_minutes, 0, 'f', 1)
         .arg(auto_tune_state.valid_percent)
         .arg(auto_tune_state.closure_count)
         .arg(auto_tune_state.confidence_pct)
-        .arg(updated));
+        .arg(updated)
+        .arg(applied));
   }
 
   void useAllAutoRecommendations() {
@@ -573,6 +628,7 @@ private:
     alert_mode->setValue(0);
     dismiss_on_driver_input->setValue(true);
     auto_tune_enabled->setValue(false);
+    auto_apply_next_drive->setValue(false);
     close_threshold->setValue(kBlinkCloseDefault);
     open_threshold->setValue(kBlinkOpenDefault);
     min_duration->setValue(kBlinkMinDurationDefault);
@@ -600,6 +656,7 @@ private:
     params.putBool("DmBlinkAlertEnabled", alert_mode->value() == 1);
     params.putBool("DmBlinkDismissOnDriverInput", dismiss_on_driver_input->value());
     params.putBool("DmBlinkAutoTuneEnabled", auto_tune_enabled->value());
+    params.putBool("DmBlinkAutoTuneAutoApply", auto_tune_enabled->value() && auto_apply_next_drive->value());
     params.put("DmBlinkCloseThresholdPct", std::to_string(close_threshold->value()));
     params.put("DmBlinkOpenThresholdPct", std::to_string(open_threshold->value()));
     params.put("DmBlinkMinDurationMs", std::to_string(min_duration->value()));
@@ -615,6 +672,7 @@ private:
   StagedButtonControl *alert_mode;
   StagedToggleControl *dismiss_on_driver_input;
   StagedToggleControl *auto_tune_enabled;
+  StagedToggleControl *auto_apply_next_drive;
   QLabel *auto_tune_status;
   QPushButton *apply_all_auto_button;
   QPushButton *reset_auto_data_button;
@@ -755,17 +813,19 @@ void TogglesPanel::updateBlinkDebugDescription() {
   const bool alert_enabled = params.getBool("DmBlinkAlertEnabled");
   const bool dismiss_on_driver_input = params.getBool("DmBlinkDismissOnDriverInput");
   const bool auto_tune_enabled = params.getBool("DmBlinkAutoTuneEnabled");
+  const bool auto_apply_enabled = params.getBool("DmBlinkAutoTuneAutoApply");
   const int close_pct = getIntParam(params, "DmBlinkCloseThresholdPct", kBlinkCloseDefault);
   const int min_duration_ms = getIntParam(params, "DmBlinkMinDurationMs", kBlinkMinDurationDefault);
   const int max_blink_duration_ms = getIntParam(params, "DmBlinkMaxDurationMs", kBlinkMaxDurationDefault);
   const int sleep_candidate_duration_ms = getIntParam(params, "DmSleepCandidateDurationMs", kSleepCandidateDurationDefault);
   blink_debug_settings_btn->setDescription(
-    tr("Diagnostic overlay: %1 | Eye warning: %2 | Driver input dismiss: %3 | Auto Tune: %4 | Close %5% | Blink %6-%7 ms | Sleep Candidate %8 s. "
+    tr("Diagnostic overlay: %1 | Eye warning: %2 | Driver input dismiss: %3 | Auto Tune: %4 | Next-drive apply: %5 | Close %6% | Blink %7-%8 ms | Sleep Candidate %9 s. "
        "NO BLINK mode requires a full 10-second valid observation; pose, phone, and no-face warnings remain active.")
       .arg(enabled ? tr("ON") : tr("OFF"))
       .arg(alert_enabled ? tr("NO BLINK 10s") : tr("EXISTING"))
       .arg(dismiss_on_driver_input ? tr("ON") : tr("OFF"))
       .arg(auto_tune_enabled ? tr("ON") : tr("OFF"))
+      .arg(auto_apply_enabled ? tr("ON") : tr("OFF"))
       .arg(close_pct)
       .arg(min_duration_ms)
       .arg(max_blink_duration_ms)
