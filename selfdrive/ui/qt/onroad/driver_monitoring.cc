@@ -60,7 +60,8 @@ void DriverMonitorRenderer::updateState(const UIState &s) {
   close_threshold_percent = blink_debug.getCloseThresholdPercent();
   open_threshold_percent = blink_debug.getOpenThresholdPercent();
   min_duration_ms = blink_debug.getMinDurationMillis();
-  long_closure_ms = blink_debug.getLongClosureMillis();
+  max_blink_duration_ms = blink_debug.getMaxBlinkDurationMillis();
+  sleep_candidate_duration_ms = blink_debug.getSleepCandidateDurationMillis();
   dm_fade_state = std::clamp(dm_fade_state + 0.2f * (0.5f - is_active), 0.0f, 1.0f);
 
   const auto &driverstate = sm["driverStateV2"].getDriverStateV2();
@@ -185,13 +186,14 @@ void DriverMonitorRenderer::draw(QPainter &painter, const QRect &surface_rect) {
     draw_debug_line(QString("PERCLOS %1%   SleepProb %2%")
                       .arg(closed_percent_10s)
                       .arg(static_cast<int>(std::lround(sleep_prob * 100.0f))), normal_color);
-    draw_debug_line(QString("Cand S:%1 N:%2   C%3 O%4 B%5 L%6")
+    draw_debug_line(QString("Cand S:%1 N:%2 C%3/%4 B%5-%6 T%7")
                       .arg(sleep_candidate ? "Y" : "N")
                       .arg(no_blink_candidate ? "Y" : "N")
                       .arg(close_threshold_percent)
                       .arg(open_threshold_percent)
                       .arg(min_duration_ms)
-                      .arg(long_closure_ms / 1000.0, 0, 'f', 1),
+                      .arg(max_blink_duration_ms)
+                      .arg(sleep_candidate_duration_ms / 1000.0, 0, 'f', 1),
                     (sleep_candidate || no_blink_candidate) ? bad_color : dim_color);
   }
 

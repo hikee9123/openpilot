@@ -145,8 +145,9 @@ class BlinkAutoTuner:
         "closeThresholdPct": close_pct,
         "openThresholdPct": open_pct,
         "minDurationMs": min_duration_ms,
-        # Long closure requires confirmed drowsiness labels, so baseline tuning keeps the active safety value.
-        "longClosureMs": int(current["longClosureMs"]),
+        # Blink upper bounds and sleep timing require labeled events, so baseline tuning preserves them.
+        "maxBlinkDurationMs": int(current["maxBlinkDurationMs"]),
+        "sleepCandidateDurationMs": int(current["sleepCandidateDurationMs"]),
         "minValidPct": min_valid_pct,
       })
 

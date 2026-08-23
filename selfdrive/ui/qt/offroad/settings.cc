@@ -37,7 +37,8 @@ constexpr int kBlinkOpenDefault = 50;
 constexpr int kBlinkThresholdMin = 5;
 constexpr int kBlinkThresholdHysteresis = 5;
 constexpr int kBlinkMinDurationDefault = 100;
-constexpr int kBlinkLongClosureDefault = 1500;
+constexpr int kBlinkMaxDurationDefault = 1500;
+constexpr int kSleepCandidateDurationDefault = 10000;
 constexpr int kBlinkMinValidDefault = 80;
 
 int getIntParam(Params &params, const std::string &key, int default_value) {
@@ -53,6 +54,14 @@ int maximumOpenThreshold(int close_threshold) {
   return std::max(kBlinkThresholdMin, close_threshold - kBlinkThresholdHysteresis);
 }
 
+int minimumMaxBlinkDuration(int min_duration_ms) {
+  return std::max(500, (min_duration_ms / 100 + 1) * 100);
+}
+
+int minimumSleepCandidateDuration(int max_blink_duration_ms) {
+  return std::max(2000, (max_blink_duration_ms / 1000 + 1) * 1000);
+}
+
 struct BlinkAutoTuneState {
   bool ready = false;
   int confidence_pct = 0;
@@ -63,7 +72,8 @@ struct BlinkAutoTuneState {
   int close_threshold_pct = kBlinkCloseDefault;
   int open_threshold_pct = kBlinkOpenDefault;
   int min_duration_ms = kBlinkMinDurationDefault;
-  int long_closure_ms = kBlinkLongClosureDefault;
+  int max_blink_duration_ms = kBlinkMaxDurationDefault;
+  int sleep_candidate_duration_ms = kSleepCandidateDurationDefault;
   int min_valid_pct = kBlinkMinValidDefault;
 };
 
@@ -72,7 +82,8 @@ BlinkAutoTuneState getBlinkAutoTuneState(Params &params) {
   state.close_threshold_pct = getIntParam(params, "DmBlinkCloseThresholdPct", kBlinkCloseDefault);
   state.open_threshold_pct = getIntParam(params, "DmBlinkOpenThresholdPct", kBlinkOpenDefault);
   state.min_duration_ms = getIntParam(params, "DmBlinkMinDurationMs", kBlinkMinDurationDefault);
-  state.long_closure_ms = getIntParam(params, "DmBlinkLongClosureMs", kBlinkLongClosureDefault);
+  state.max_blink_duration_ms = getIntParam(params, "DmBlinkMaxDurationMs", kBlinkMaxDurationDefault);
+  state.sleep_candidate_duration_ms = getIntParam(params, "DmSleepCandidateDurationMs", kSleepCandidateDurationDefault);
   state.min_valid_pct = getIntParam(params, "DmBlinkMinValidPct", kBlinkMinValidDefault);
 
   const std::string raw_state = params.get("DmBlinkAutoTuneState");
@@ -98,13 +109,17 @@ BlinkAutoTuneState getBlinkAutoTuneState(Params &params) {
   state.close_threshold_pct = recommendations.value("closeThresholdPct").toInt(state.close_threshold_pct);
   state.open_threshold_pct = recommendations.value("openThresholdPct").toInt(state.open_threshold_pct);
   state.min_duration_ms = recommendations.value("minDurationMs").toInt(state.min_duration_ms);
-  state.long_closure_ms = recommendations.value("longClosureMs").toInt(state.long_closure_ms);
+  state.max_blink_duration_ms = recommendations.value("maxBlinkDurationMs").toInt(state.max_blink_duration_ms);
+  state.sleep_candidate_duration_ms = recommendations.value("sleepCandidateDurationMs").toInt(state.sleep_candidate_duration_ms);
   state.min_valid_pct = recommendations.value("minValidPct").toInt(state.min_valid_pct);
   state.close_threshold_pct = std::clamp(state.close_threshold_pct, kBlinkThresholdMin, 95);
   state.open_threshold_pct = std::clamp(state.open_threshold_pct, kBlinkThresholdMin,
                                         maximumOpenThreshold(state.close_threshold_pct));
   state.min_duration_ms = std::clamp(state.min_duration_ms, 50, 500);
-  state.long_closure_ms = std::clamp(state.long_closure_ms, state.min_duration_ms + 50, 5000);
+  state.max_blink_duration_ms = std::clamp(state.max_blink_duration_ms,
+                                           minimumMaxBlinkDuration(state.min_duration_ms), 3000);
+  state.sleep_candidate_duration_ms = std::clamp(state.sleep_candidate_duration_ms,
+                                                  minimumSleepCandidateDuration(state.max_blink_duration_ms), 30000);
   state.min_valid_pct = std::clamp(state.min_valid_pct, 50, 100);
   return state;
 }
@@ -390,10 +405,15 @@ public:
                                  tr("Ignore shorter probability spikes."),
                                  50, 500, 50, getIntParam(params, "DmBlinkMinDurationMs", kBlinkMinDurationDefault),
                                  TouchValueFormat::MILLISECONDS);
-    long_closure = addTouchValue(blink_layout, tr("Long eye closure"),
-                                 tr("Set Sleep Candidate after continuous valid closure."),
-                                 500, 5000, 100, getIntParam(params, "DmBlinkLongClosureMs", kBlinkLongClosureDefault),
-                                 TouchValueFormat::SECONDS);
+    max_blink_duration = addTouchValue(blink_layout, tr("Maximum blink"),
+                                       tr("Count only closures up to this duration as a normal blink."),
+                                       500, 3000, 100, getIntParam(params, "DmBlinkMaxDurationMs", kBlinkMaxDurationDefault),
+                                       TouchValueFormat::SECONDS);
+    sleep_candidate_duration = addTouchValue(blink_layout, tr("Sleep Candidate"),
+                                              tr("Set Sleep Candidate after this continuous valid eye closure."),
+                                              2000, 30000, 1000,
+                                              getIntParam(params, "DmSleepCandidateDurationMs", kSleepCandidateDurationDefault),
+                                              TouchValueFormat::SECONDS);
     min_valid = addTouchValue(blink_layout, tr("Minimum valid data"),
                               tr("Required valid samples in the fixed 10-second window."),
                               50, 100, 5, getIntParam(params, "DmBlinkMinValidPct", kBlinkMinValidDefault),
@@ -403,12 +423,17 @@ public:
       open_threshold->setMaximum(maximumOpenThreshold(value));
     });
     min_duration->setValueChangedCallback([this](int value) {
-      long_closure->setMinimum(value + 50);
+      max_blink_duration->setMinimum(minimumMaxBlinkDuration(value));
     });
-    long_closure->setMinimum(min_duration->value() + 50);
+    max_blink_duration->setValueChangedCallback([this](int value) {
+      sleep_candidate_duration->setMinimum(minimumSleepCandidateDuration(value));
+    });
+    max_blink_duration->setMinimum(minimumMaxBlinkDuration(min_duration->value()));
+    sleep_candidate_duration->setMinimum(minimumSleepCandidateDuration(max_blink_duration->value()));
 
     auto *window_note = new QLabel(
-      tr("Measurement window: 10 seconds (fixed). Changes apply on the next DM start."), blink_layout->parentWidget());
+      tr("No-blink measurement window: 10 seconds (fixed). Sleep Candidate timing is adjustable. Changes apply on the next DM start."),
+      blink_layout->parentWidget());
     window_note->setWordWrap(true);
     window_note->setStyleSheet("font-size: 38px; color: #aeb5bc; padding: 18px 8px;");
     blink_layout->addWidget(window_note);
@@ -430,7 +455,8 @@ public:
 
     auto *auto_tune_note = new QLabel(
       tr("Recommendations require at least 10 valid driving minutes and 10 eye-closure events. "
-         "Long eye closure remains unchanged until confirmed drowsiness labels are available."), auto_tune_layout->parentWidget());
+         "Maximum blink and Sleep Candidate durations remain unchanged until labeled events are available."),
+      auto_tune_layout->parentWidget());
     auto_tune_note->setWordWrap(true);
     auto_tune_note->setStyleSheet("font-size: 36px; color: #aeb5bc; padding: 16px 8px;");
     auto_tune_layout->addWidget(auto_tune_note);
@@ -503,7 +529,9 @@ private:
     close_threshold->setAutoValue(auto_tune_state.close_threshold_pct, ready, auto_tune_state.confidence_pct);
     open_threshold->setAutoValue(auto_tune_state.open_threshold_pct, ready, auto_tune_state.confidence_pct);
     min_duration->setAutoValue(auto_tune_state.min_duration_ms, ready, auto_tune_state.confidence_pct);
-    long_closure->setAutoValue(auto_tune_state.long_closure_ms, ready, auto_tune_state.confidence_pct);
+    max_blink_duration->setAutoValue(auto_tune_state.max_blink_duration_ms, ready, auto_tune_state.confidence_pct);
+    sleep_candidate_duration->setAutoValue(auto_tune_state.sleep_candidate_duration_ms, ready,
+                                           auto_tune_state.confidence_pct);
     min_valid->setAutoValue(auto_tune_state.min_valid_pct, ready, auto_tune_state.confidence_pct);
     apply_all_auto_button->setEnabled(ready);
 
@@ -535,7 +563,8 @@ private:
     close_threshold->useAutoValue();
     open_threshold->useAutoValue();
     min_duration->useAutoValue();
-    long_closure->useAutoValue();
+    max_blink_duration->useAutoValue();
+    sleep_candidate_duration->useAutoValue();
     min_valid->useAutoValue();
   }
 
@@ -547,7 +576,8 @@ private:
     close_threshold->setValue(kBlinkCloseDefault);
     open_threshold->setValue(kBlinkOpenDefault);
     min_duration->setValue(kBlinkMinDurationDefault);
-    long_closure->setValue(kBlinkLongClosureDefault);
+    max_blink_duration->setValue(kBlinkMaxDurationDefault);
+    sleep_candidate_duration->setValue(kSleepCandidateDurationDefault);
     min_valid->setValue(kBlinkMinValidDefault);
     refreshAutoTuneUi();
   }
@@ -557,8 +587,12 @@ private:
       ConfirmationDialog::alert(tr("Open threshold exceeds the allowed value for the selected Close threshold."), this);
       return false;
     }
-    if (min_duration->value() >= long_closure->value()) {
-      ConfirmationDialog::alert(tr("Long eye closure must be greater than Minimum blink duration."), this);
+    if (min_duration->value() >= max_blink_duration->value()) {
+      ConfirmationDialog::alert(tr("Maximum blink must be greater than Minimum blink duration."), this);
+      return false;
+    }
+    if (max_blink_duration->value() >= sleep_candidate_duration->value()) {
+      ConfirmationDialog::alert(tr("Sleep Candidate must be greater than Maximum blink duration."), this);
       return false;
     }
 
@@ -569,7 +603,8 @@ private:
     params.put("DmBlinkCloseThresholdPct", std::to_string(close_threshold->value()));
     params.put("DmBlinkOpenThresholdPct", std::to_string(open_threshold->value()));
     params.put("DmBlinkMinDurationMs", std::to_string(min_duration->value()));
-    params.put("DmBlinkLongClosureMs", std::to_string(long_closure->value()));
+    params.put("DmBlinkMaxDurationMs", std::to_string(max_blink_duration->value()));
+    params.put("DmSleepCandidateDurationMs", std::to_string(sleep_candidate_duration->value()));
     params.put("DmBlinkMinValidPct", std::to_string(min_valid->value()));
     return true;
   }
@@ -586,7 +621,8 @@ private:
   TouchValueControl *close_threshold;
   TouchValueControl *open_threshold;
   TouchValueControl *min_duration;
-  TouchValueControl *long_closure;
+  TouchValueControl *max_blink_duration;
+  TouchValueControl *sleep_candidate_duration;
   TouchValueControl *min_valid;
 };
 
@@ -721,9 +757,10 @@ void TogglesPanel::updateBlinkDebugDescription() {
   const bool auto_tune_enabled = params.getBool("DmBlinkAutoTuneEnabled");
   const int close_pct = getIntParam(params, "DmBlinkCloseThresholdPct", kBlinkCloseDefault);
   const int min_duration_ms = getIntParam(params, "DmBlinkMinDurationMs", kBlinkMinDurationDefault);
-  const int long_closure_ms = getIntParam(params, "DmBlinkLongClosureMs", kBlinkLongClosureDefault);
+  const int max_blink_duration_ms = getIntParam(params, "DmBlinkMaxDurationMs", kBlinkMaxDurationDefault);
+  const int sleep_candidate_duration_ms = getIntParam(params, "DmSleepCandidateDurationMs", kSleepCandidateDurationDefault);
   blink_debug_settings_btn->setDescription(
-    tr("Diagnostic overlay: %1 | Eye warning: %2 | Driver input dismiss: %3 | Auto Tune: %4 | Close %5% | Blink %6 ms | Long closure %7 s. "
+    tr("Diagnostic overlay: %1 | Eye warning: %2 | Driver input dismiss: %3 | Auto Tune: %4 | Close %5% | Blink %6-%7 ms | Sleep Candidate %8 s. "
        "NO BLINK mode requires a full 10-second valid observation; pose, phone, and no-face warnings remain active.")
       .arg(enabled ? tr("ON") : tr("OFF"))
       .arg(alert_enabled ? tr("NO BLINK 10s") : tr("EXISTING"))
@@ -731,7 +768,8 @@ void TogglesPanel::updateBlinkDebugDescription() {
       .arg(auto_tune_enabled ? tr("ON") : tr("OFF"))
       .arg(close_pct)
       .arg(min_duration_ms)
-      .arg(long_closure_ms / 1000.0, 0, 'f', 1));
+      .arg(max_blink_duration_ms)
+      .arg(sleep_candidate_duration_ms / 1000.0, 0, 'f', 1));
 }
 
 void TogglesPanel::updateState(const UIState &s) {

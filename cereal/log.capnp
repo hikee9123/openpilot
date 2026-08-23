@@ -2312,6 +2312,8 @@ struct DriverMonitoringState {
       noBlinkMillis @18 :UInt16;
       noBlinkWindowReady @19 :Bool;
       noBlinkAlertEnabled @20 :Bool;
+      maxBlinkDurationMillis @21 :UInt16;
+      sleepCandidateDurationMillis @22 :UInt16;
     }
 
     struct DistractedTypes {

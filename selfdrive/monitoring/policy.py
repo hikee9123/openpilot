@@ -14,6 +14,7 @@ from openpilot.common.transformations.camera import DEVICE_CAMERAS
 AlertLevel = log.DriverMonitoringState.AlertLevel
 MonitoringPolicy = log.DriverMonitoringState.MonitoringPolicy
 ButtonType = car.CarState.ButtonEvent.Type
+BLINK_DURATION_EPSILON = 1e-6
 
 def to_percent(v):
   return int(min(max(v * 100., 0.), 100.))
@@ -31,6 +32,14 @@ def _maximum_open_threshold_pct(close_threshold_pct):
   return max(5, close_threshold_pct - 5)
 
 
+def _minimum_max_blink_duration_ms(min_duration_ms):
+  return max(500, (min_duration_ms // 100 + 1) * 100)
+
+
+def _minimum_sleep_candidate_duration_ms(max_blink_duration_ms):
+  return max(2000, (max_blink_duration_ms // 1000 + 1) * 1000)
+
+
 @dataclass(frozen=True)
 class BlinkDebugSettings:
   enabled: bool = False
@@ -39,7 +48,8 @@ class BlinkDebugSettings:
   close_threshold: float = 0.87
   open_threshold: float = 0.50
   min_duration: float = 0.10
-  long_closure: float = 1.50
+  max_blink_duration: float = 1.50
+  sleep_candidate_duration: float = 10.0
   min_valid_ratio: float = 0.80
   window_seconds: float = 10.0
 
@@ -49,8 +59,11 @@ class BlinkDebugSettings:
     open_pct = _read_int_param(params, "DmBlinkOpenThresholdPct", 50, 5, 90)
     open_pct = min(open_pct, _maximum_open_threshold_pct(close_pct))
     min_duration_ms = _read_int_param(params, "DmBlinkMinDurationMs", 100, 50, 500)
-    long_closure_ms = _read_int_param(params, "DmBlinkLongClosureMs", 1500, 500, 5000)
-    long_closure_ms = max(long_closure_ms, min_duration_ms + 50)
+    max_blink_duration_ms = _read_int_param(params, "DmBlinkMaxDurationMs", 1500, 500, 3000)
+    max_blink_duration_ms = max(max_blink_duration_ms, _minimum_max_blink_duration_ms(min_duration_ms))
+    sleep_candidate_duration_ms = _read_int_param(params, "DmSleepCandidateDurationMs", 10000, 2000, 30000)
+    sleep_candidate_duration_ms = max(sleep_candidate_duration_ms,
+                                      _minimum_sleep_candidate_duration_ms(max_blink_duration_ms))
     min_valid_pct = _read_int_param(params, "DmBlinkMinValidPct", 80, 50, 100)
     return cls(
       enabled=params.get_bool("DmBlinkDebugOverlayEnabled"),
@@ -59,7 +72,8 @@ class BlinkDebugSettings:
       close_threshold=close_pct / 100.,
       open_threshold=open_pct / 100.,
       min_duration=min_duration_ms / 1000.,
-      long_closure=long_closure_ms / 1000.,
+      max_blink_duration=max_blink_duration_ms / 1000.,
+      sleep_candidate_duration=sleep_candidate_duration_ms / 1000.,
       min_valid_ratio=min_valid_pct / 100.,
     )
 
@@ -107,7 +121,7 @@ class BlinkEventTracker:
         if self.effective <= self.settings.open_threshold:
           duration = self.closed_duration
           self.closure_events.append((self.elapsed, duration))
-          if self.settings.min_duration <= duration < self.settings.long_closure:
+          if self.settings.min_duration <= duration <= self.settings.max_blink_duration + BLINK_DURATION_EPSILON:
             self.blink_events.append(self.elapsed)
             self.last_blink_elapsed = self.elapsed
           self.eye_closed = False
@@ -121,9 +135,11 @@ class BlinkEventTracker:
 
     self.samples.append((self.elapsed, self.valid, sample_closed))
     self._prune()
-    self.sleep_candidate = self.valid and self.eye_closed and self.closed_duration >= self.settings.long_closure and \
+    self.sleep_candidate = self.valid and self.eye_closed and \
+                           self.closed_duration + BLINK_DURATION_EPSILON >= self.settings.sleep_candidate_duration and \
                            self.valid_ratio >= self.settings.min_valid_ratio
-    blink_in_progress = self.eye_closed and self.closed_duration < self.settings.long_closure
+    blink_in_progress = self.eye_closed and \
+                        self.closed_duration <= self.settings.max_blink_duration + BLINK_DURATION_EPSILON
     self.no_blink_candidate = self.valid and not blink_in_progress and \
                               self.no_blink_window_ready and self.blink_count == 0
     self.no_blink_candidate_started = self.no_blink_candidate and not previous_no_blink_candidate
@@ -633,7 +649,10 @@ class DriverMonitoring:
     blink_debug.closeThresholdPercent = to_percent(self.blink_tracker.settings.close_threshold)
     blink_debug.openThresholdPercent = to_percent(self.blink_tracker.settings.open_threshold)
     blink_debug.minDurationMillis = round(self.blink_tracker.settings.min_duration * 1000.)
-    blink_debug.longClosureMillis = round(self.blink_tracker.settings.long_closure * 1000.)
+    # Keep the legacy field populated for older debug UIs; new consumers use the explicit fields below.
+    blink_debug.longClosureMillis = round(self.blink_tracker.settings.sleep_candidate_duration * 1000.)
+    blink_debug.maxBlinkDurationMillis = round(self.blink_tracker.settings.max_blink_duration * 1000.)
+    blink_debug.sleepCandidateDurationMillis = round(self.blink_tracker.settings.sleep_candidate_duration * 1000.)
 
     dm.wheeltouchPolicyState.awarenessPercent = to_percent(self.last_wheeltouch_awareness if self.active_policy == MonitoringPolicy.vision else self.awareness)
     dm.wheeltouchPolicyState.awarenessStep = 0. if self.active_policy == MonitoringPolicy.vision else self.step_change

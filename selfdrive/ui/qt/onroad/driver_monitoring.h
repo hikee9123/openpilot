@@ -36,7 +36,8 @@ private:
   int close_threshold_percent = 0;
   int open_threshold_percent = 0;
   int min_duration_ms = 0;
-  int long_closure_ms = 0;
+  int max_blink_duration_ms = 0;
+  int sleep_candidate_duration_ms = 0;
   float raw_left_blink_prob = 0.0f;
   float raw_right_blink_prob = 0.0f;
   float effective_blink_prob = 0.0f;

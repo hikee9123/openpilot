@@ -17,7 +17,8 @@ def current_settings(params, blink_debug):
     "closeThresholdPct": int(blink_debug.closeThresholdPercent),
     "openThresholdPct": int(blink_debug.openThresholdPercent),
     "minDurationMs": int(blink_debug.minDurationMillis),
-    "longClosureMs": int(blink_debug.longClosureMillis),
+    "maxBlinkDurationMs": int(blink_debug.maxBlinkDurationMillis),
+    "sleepCandidateDurationMs": int(blink_debug.sleepCandidateDurationMillis),
     "minValidPct": int(params.get("DmBlinkMinValidPct", return_default=True)),
   }
 

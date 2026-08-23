@@ -5,7 +5,8 @@ CURRENT_SETTINGS = {
   "closeThresholdPct": 87,
   "openThresholdPct": 50,
   "minDurationMs": 100,
-  "longClosureMs": 1500,
+  "maxBlinkDurationMs": 1500,
+  "sleepCandidateDurationMs": 10000,
   "minValidPct": 80,
 }
 
@@ -38,7 +39,8 @@ def test_generates_bounded_recommendations():
   assert 50 <= recommendations["closeThresholdPct"] <= 95
   assert 5 <= recommendations["openThresholdPct"] <= recommendations["closeThresholdPct"] - 5
   assert 50 <= recommendations["minDurationMs"] <= 300
-  assert recommendations["longClosureMs"] == CURRENT_SETTINGS["longClosureMs"]
+  assert recommendations["maxBlinkDurationMs"] == CURRENT_SETTINGS["maxBlinkDurationMs"]
+  assert recommendations["sleepCandidateDurationMs"] == CURRENT_SETTINGS["sleepCandidateDurationMs"]
   assert 50 <= recommendations["minValidPct"] <= 95
 
 

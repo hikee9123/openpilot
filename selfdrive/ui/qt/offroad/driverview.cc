@@ -132,12 +132,13 @@ void drawDriverMonitoringPanel(QPainter &p, const QRect &surface_rect,
               .arg(blink_debug.getMaxClosureMillis10s() / 1000.0, 0, 'f', 2)
               .arg(blink_debug.getClosedPercent10s()),
             normal_color);
-  draw_line(QString("SleepProb %1   Close/Open %2/%3   Blink %4ms Long %5ms")
+  draw_line(QString("SleepProb %1   C/O %2/%3   Blink %4-%5ms   Sleep %6s")
               .arg(prob(blink_debug.getSleepProb()))
               .arg(blink_debug.getCloseThresholdPercent())
               .arg(blink_debug.getOpenThresholdPercent())
               .arg(blink_debug.getMinDurationMillis())
-              .arg(blink_debug.getLongClosureMillis()),
+              .arg(blink_debug.getMaxBlinkDurationMillis())
+              .arg(blink_debug.getSleepCandidateDurationMillis() / 1000.0, 0, 'f', 1),
             dim_color);
   draw_line(QString("Pitch %1   Yaw %2   Uncertainty %3")
               .arg(prob(pose.getPitch()))

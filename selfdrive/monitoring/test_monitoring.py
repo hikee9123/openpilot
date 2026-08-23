@@ -238,7 +238,8 @@ class TestMonitoring:
 class TestBlinkEventTracker:
   def setup_method(self):
     self.settings = BlinkDebugSettings(close_threshold=0.87, open_threshold=0.50,
-                                       min_duration=0.10, long_closure=1.50,
+                                       min_duration=0.10, max_blink_duration=1.50,
+                                       sleep_candidate_duration=10.0,
                                        min_valid_ratio=0.80)
     self.tracker = BlinkEventTracker(self.settings)
 
@@ -252,17 +253,30 @@ class TestBlinkEventTracker:
     assert self.tracker.blink_count == 1
     assert not self.tracker.eye_closed
 
+  def test_counts_closure_at_configured_maximum_as_blink(self):
+    self.update_for(1.50, 0.95)
+    self.update_for(0.05, 0.10)
+    assert self.tracker.blink_count == 1
+
   def test_ignores_short_probability_spike(self):
     self.update_for(DT_DMON, 0.95)
     self.update_for(DT_DMON, 0.10)
     assert self.tracker.blink_count == 0
 
-  def test_long_closure_is_candidate_not_repeated_blinks(self):
-    self.update_for(1.60, 0.95)
+  def test_sleep_candidate_uses_ten_second_closure_not_repeated_blinks(self):
+    self.update_for(9.95, 0.95)
+    assert not self.tracker.sleep_candidate
+    self.update_for(0.10, 0.95)
     assert self.tracker.sleep_candidate
     self.update_for(DT_DMON, 0.10)
     assert self.tracker.blink_count == 0
-    assert self.tracker.max_closure >= 1.50
+    assert self.tracker.max_closure >= 10.0
+
+  def test_closure_above_blink_max_is_not_counted_as_blink(self):
+    self.update_for(2.0, 0.95)
+    assert not self.tracker.sleep_candidate
+    self.update_for(DT_DMON, 0.10)
+    assert self.tracker.blink_count == 0
 
   def test_invalid_samples_do_not_end_or_extend_closure(self):
     self.update_for(0.10, 0.95)
@@ -308,11 +322,12 @@ class TestBlinkEventTracker:
 
   def test_threshold_param_bounds_and_hysteresis(self):
     class ParamsStub:
-      def __init__(self, close_pct, open_pct):
+      def __init__(self, close_pct, open_pct, extra_values=None):
         self.values = {
           "DmBlinkCloseThresholdPct": str(close_pct),
           "DmBlinkOpenThresholdPct": str(open_pct),
         }
+        self.values.update(extra_values or {})
 
       def get(self, key):
         return self.values.get(key)
@@ -331,6 +346,24 @@ class TestBlinkEventTracker:
       settings = BlinkDebugSettings.from_params(ParamsStub(close_pct, open_pct))
       assert settings.close_threshold == expected_close
       assert settings.open_threshold == expected_open
+      assert settings.max_blink_duration == 1.50
+      assert settings.sleep_candidate_duration == 10.0
+
+    custom = BlinkDebugSettings.from_params(ParamsStub(87, 50, {
+      "DmBlinkMinDurationMs": "500",
+      "DmBlinkMaxDurationMs": "500",
+      "DmSleepCandidateDurationMs": "2000",
+    }))
+    assert custom.min_duration == 0.50
+    assert custom.max_blink_duration == 0.60
+    assert custom.sleep_candidate_duration == 2.0
+
+    bounded = BlinkDebugSettings.from_params(ParamsStub(87, 50, {
+      "DmBlinkMaxDurationMs": "9999",
+      "DmSleepCandidateDurationMs": "1",
+    }))
+    assert bounded.max_blink_duration == 3.0
+    assert bounded.sleep_candidate_duration == 4.0
 
 
 class TestBlinkAlertLink:
@@ -354,7 +387,7 @@ class TestBlinkAlertLink:
 
   def test_no_blink_mode_replaces_instantaneous_blink_warning(self):
     blink_settings = BlinkDebugSettings(alert_enabled=True, close_threshold=0.75,
-                                        open_threshold=0.50, long_closure=0.10)
+                                        open_threshold=0.50, sleep_candidate_duration=0.10)
     dm = DriverMonitoring(blink_debug_settings=blink_settings)
     self.update_for(dm, 0.15, 0.80)
 
@@ -420,7 +453,7 @@ class TestBlinkAlertLink:
 
   def test_existing_blink_warning_remains_enabled(self):
     blink_settings = BlinkDebugSettings(alert_enabled=False, close_threshold=0.95,
-                                        open_threshold=0.50, long_closure=0.10)
+                                        open_threshold=0.50, sleep_candidate_duration=0.10)
     dm = DriverMonitoring(blink_debug_settings=blink_settings)
     self.update_for(dm, DT_DMON, 0.90)
 
