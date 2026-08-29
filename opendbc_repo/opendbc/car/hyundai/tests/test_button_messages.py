@@ -149,6 +149,39 @@ def test_scheduler_is_scoped_to_community_safety(monkeypatch):
   assert sent == [(0, Buttons.CANCEL, 0)]
 
 
+def test_community_main_off_uses_stock_lkas_and_mdps_passthrough(monkeypatch):
+  controller, cs, cc, hud_control, _ = _make_controller(monkeypatch)
+  cs.out.cruiseState.available = False
+
+  can_sends = controller.create_can_msgs(False, 0, False, 0, 0.0, False,
+                                         hud_control, object(), cs, cc, CONTROL_STEP_NS)
+
+  assert ("lkas11",) not in can_sends
+  assert ("mdps12",) not in can_sends
+
+
+def test_community_main_on_sends_lkas_and_mdps(monkeypatch):
+  controller, cs, cc, hud_control, _ = _make_controller(monkeypatch)
+
+  can_sends = controller.create_can_msgs(False, 0, False, 0, 0.0, False,
+                                         hud_control, object(), cs, cc, CONTROL_STEP_NS)
+
+  assert ("lkas11",) in can_sends
+  assert ("mdps12",) in can_sends
+
+
+def test_noncommunity_main_off_control_messages_are_unchanged(monkeypatch):
+  controller, cs, cc, hud_control, _ = _make_controller(monkeypatch)
+  controller.community_safety = False
+  cs.out.cruiseState.available = False
+
+  can_sends = controller.create_can_msgs(False, 0, False, 0, 0.0, False,
+                                         hud_control, object(), cs, cc, CONTROL_STEP_NS)
+
+  assert ("lkas11",) in can_sends
+  assert ("mdps12",) in can_sends
+
+
 def test_noncommunity_resume_path_is_unchanged(monkeypatch):
   controller, cs, cc, hud_control, sent = _make_controller(monkeypatch)
   controller.community_safety = False

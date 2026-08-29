@@ -262,14 +262,17 @@ class CarController(CarControllerBase):
     sys_warning, sys_state, left_lane_warning, right_lane_warning = process_hud_alert(CC.enabled, self.car_fingerprint,
                                                                                       hud_control)
 
-    can_sends.append(hyundaican.create_lkas11(self.packer, self.frame, self.CP, apply_torque, apply_steer_req,
-                                              torque_fault, CS.lkas11, sys_warning, sys_state, CC.enabled,
-                                              hud_control.leftLaneVisible, hud_control.rightLaneVisible,
-                                              left_lane_warning, right_lane_warning))
+    community_stock_passthrough = self.community_safety and not self.CP.openpilotLongitudinalControl and not CS.out.cruiseState.available
+    if not community_stock_passthrough:
+      can_sends.append(hyundaican.create_lkas11(self.packer, self.frame, self.CP, apply_torque, apply_steer_req,
+                                                torque_fault, CS.lkas11, sys_warning, sys_state, CC.enabled,
+                                                hud_control.leftLaneVisible, hud_control.rightLaneVisible,
+                                                left_lane_warning, right_lane_warning))
 
     # Button messages
     if not self.CP.openpilotLongitudinalControl:
-      can_sends.append( hyundaican.create_mdps12( self.packer, self.frame, CS.customCS.mdps12 ) ) #custom  # 100 Hz send mdps12 to LKAS to prevent LKAS error
+      if not community_stock_passthrough:
+        can_sends.append(hyundaican.create_mdps12(self.packer, self.frame, CS.customCS.mdps12))  # custom: 100 Hz MDPS12 to LKAS
       if self.community_safety:
         button = None
         source = None

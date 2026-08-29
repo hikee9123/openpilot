@@ -117,6 +117,7 @@ class SelfdriveD:
     self.events_prev = []
     self.logged_comm_issue = None
     self.not_running_prev = None
+    self.can_timeout_prev = False
     self.experimental_mode = False
     self.personality = self.params.get("LongitudinalPersonality", return_default=True)
     self.recalibrating_seen = False
@@ -337,9 +338,13 @@ class SelfdriveD:
     if not self.sm.valid['pandaStates']:
       self.events.add(EventName.usbError)
     if CS.canTimeout:
+      if not self.can_timeout_prev:
+        cloudlog.event("can_timeout", error=True, can_valid=CS.canValid,
+                       panda_states=[panda_state.to_dict() for panda_state in self.sm['pandaStates']])
       self.events.add(EventName.canBusMissing)
     elif not CS.canValid:
       self.events.add(EventName.canError)
+    self.can_timeout_prev = CS.canTimeout
 
     # generic catch-all. ideally, a more specific event should be added above instead
     has_disable_events = self.events.contains(ET.NO_ENTRY) and (self.events.contains(ET.SOFT_DISABLE) or self.events.contains(ET.IMMEDIATE_DISABLE))

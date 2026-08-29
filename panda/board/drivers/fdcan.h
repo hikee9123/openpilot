@@ -19,15 +19,16 @@ static bool can_set_speed(uint8_t can_number) {
 }
 
 void can_clear_send(FDCAN_GlobalTypeDef *FDCANx, uint8_t can_number) {
-  static uint32_t last_reset = 0U;
+  static uint32_t last_reset[CANS_ARRAY_SIZE] = {0U};
   uint32_t time = microsecond_timer_get();
 
-  // Resetting CAN core is a slow blocking operation, limit frequency
-  if (get_ts_elapsed(time, last_reset) > 100000U) {  // 10 Hz
+  // Resetting a CAN core is a slow blocking operation. Rate limit each core
+  // independently so a fault on one bus cannot delay recovery on another.
+  if (get_ts_elapsed(time, last_reset[can_number]) > 100000U) {  // 10 Hz
     can_health[can_number].can_core_reset_cnt += 1U;
     can_health[can_number].total_tx_lost_cnt += (FDCAN_TX_FIFO_EL_CNT - (FDCANx->TXFQS & FDCAN_TXFQS_TFFL)); // TX FIFO msgs will be lost after reset
     llcan_clear_send(FDCANx);
-    last_reset = time;
+    last_reset[can_number] = time;
   }
 }
 

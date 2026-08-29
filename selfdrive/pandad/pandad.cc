@@ -187,9 +187,101 @@ void fill_panda_can_state(cereal::PandaState::PandaCanState::Builder &cs, const 
   cs.setCanCoreResetCnt(can_health.can_core_reset_cnt);
 }
 
+struct CanHealthLogState {
+  bool initialized = false;
+  bool pending = false;
+  uint64_t last_log_time_nanos = 0U;
+  uint16_t last_observed_spi_error_count = 0U;
+  uint16_t last_logged_spi_error_count = 0U;
+  uint32_t last_logged_safety_tx_blocked = 0U;
+  can_health_t last_observed = {};
+  can_health_t last_logged = {};
+};
+
+uint32_t counter_delta(uint32_t current, uint32_t previous) {
+  return current >= previous ? current - previous : current;
+}
+
+void log_can_health_changes(CanHealthLogState &state, uint32_t panda_index, uint32_t bus,
+                            const health_t &health, const can_health_t &can_health) {
+  const uint64_t current_time_nanos = nanos_since_boot();
+
+  if (!state.initialized) {
+    state.initialized = true;
+    state.last_observed = can_health;
+    state.last_logged = can_health;
+    state.last_observed_spi_error_count = health.spi_error_count_pkt;
+    state.last_logged_spi_error_count = health.spi_error_count_pkt;
+    state.last_logged_safety_tx_blocked = health.safety_tx_blocked_pkt;
+    state.pending = can_health.bus_off || can_health.error_warning || can_health.error_passive ||
+                    (can_health.total_error_cnt != 0U) || (can_health.total_tx_lost_cnt != 0U) ||
+                    (can_health.total_rx_lost_cnt != 0U) || (can_health.can_core_reset_cnt != 0U) ||
+                    ((bus == 0U) && (health.spi_error_count_pkt != 0U));
+  } else {
+    state.pending |= (can_health.bus_off != state.last_observed.bus_off) ||
+                     (can_health.error_warning != state.last_observed.error_warning) ||
+                     (can_health.error_passive != state.last_observed.error_passive) ||
+                     (can_health.last_stored_error != state.last_observed.last_stored_error) ||
+                     (can_health.last_data_stored_error != state.last_observed.last_data_stored_error) ||
+                     (can_health.receive_error_cnt != state.last_observed.receive_error_cnt) ||
+                     (can_health.transmit_error_cnt != state.last_observed.transmit_error_cnt) ||
+                     (can_health.bus_off_cnt != state.last_observed.bus_off_cnt) ||
+                     (can_health.total_error_cnt != state.last_observed.total_error_cnt) ||
+                     (can_health.total_tx_lost_cnt != state.last_observed.total_tx_lost_cnt) ||
+                     (can_health.total_rx_lost_cnt != state.last_observed.total_rx_lost_cnt) ||
+                     (can_health.can_core_reset_cnt != state.last_observed.can_core_reset_cnt) ||
+                     ((bus == 0U) && (health.spi_error_count_pkt != state.last_observed_spi_error_count));
+    state.last_observed = can_health;
+    state.last_observed_spi_error_count = health.spi_error_count_pkt;
+  }
+
+  // Log the first fault immediately, then aggregate continuing changes to 1 Hz.
+  if (!state.pending || ((state.last_log_time_nanos != 0U) &&
+                         ((current_time_nanos - state.last_log_time_nanos) < 1000000000ULL))) {
+    return;
+  }
+
+  LOGE("panda CAN health: panda=%u bus=%u off=%u off_cnt=%u(+%u) warn=%u passive=%u "
+       "lec=%u stored=%u dlec=%u dstored=%u rx_err=%u tx_err=%u total_err=%u(+%u) "
+       "tx_lost=%u(+%u) rx_lost=%u(+%u) resets=%u(+%u) rx=%u(+%u) tx=%u(+%u) fwd=%u(+%u) "
+       "irq=%u/%u/%u safety=%u param=%u controls=%u blocked=%u(+%u) spi=%u(+%u)",
+       panda_index, bus, static_cast<unsigned int>(can_health.bus_off), can_health.bus_off_cnt,
+       counter_delta(can_health.bus_off_cnt, state.last_logged.bus_off_cnt),
+       static_cast<unsigned int>(can_health.error_warning), static_cast<unsigned int>(can_health.error_passive),
+       static_cast<unsigned int>(can_health.last_error), static_cast<unsigned int>(can_health.last_stored_error),
+       static_cast<unsigned int>(can_health.last_data_error), static_cast<unsigned int>(can_health.last_data_stored_error),
+       static_cast<unsigned int>(can_health.receive_error_cnt), static_cast<unsigned int>(can_health.transmit_error_cnt),
+       can_health.total_error_cnt,
+       counter_delta(can_health.total_error_cnt, state.last_logged.total_error_cnt),
+       can_health.total_tx_lost_cnt, counter_delta(can_health.total_tx_lost_cnt, state.last_logged.total_tx_lost_cnt),
+       can_health.total_rx_lost_cnt, counter_delta(can_health.total_rx_lost_cnt, state.last_logged.total_rx_lost_cnt),
+       can_health.can_core_reset_cnt, counter_delta(can_health.can_core_reset_cnt, state.last_logged.can_core_reset_cnt),
+       can_health.total_rx_cnt, counter_delta(can_health.total_rx_cnt, state.last_logged.total_rx_cnt),
+       can_health.total_tx_cnt, counter_delta(can_health.total_tx_cnt, state.last_logged.total_tx_cnt),
+       can_health.total_fwd_cnt, counter_delta(can_health.total_fwd_cnt, state.last_logged.total_fwd_cnt),
+       can_health.irq0_call_rate, can_health.irq1_call_rate, can_health.irq2_call_rate,
+       static_cast<unsigned int>(health.safety_mode_pkt), static_cast<unsigned int>(health.safety_param_pkt),
+       static_cast<unsigned int>(health.controls_allowed_pkt),
+       health.safety_tx_blocked_pkt, counter_delta(health.safety_tx_blocked_pkt, state.last_logged_safety_tx_blocked),
+       static_cast<unsigned int>(health.spi_error_count_pkt),
+       counter_delta(health.spi_error_count_pkt, state.last_logged_spi_error_count));
+
+  state.pending = false;
+  state.last_log_time_nanos = current_time_nanos;
+  state.last_logged = can_health;
+  state.last_logged_spi_error_count = health.spi_error_count_pkt;
+  state.last_logged_safety_tx_blocked = health.safety_tx_blocked_pkt;
+}
+
 std::optional<bool> send_panda_states(PubMaster *pm, const std::vector<Panda *> &pandas, bool is_onroad, bool spoofing_started) {
   bool ignition_local = false;
   const uint32_t pandas_cnt = pandas.size();
+
+  static std::vector<std::array<CanHealthLogState, PANDA_CAN_CNT>> can_health_log_states;
+  if (can_health_log_states.size() != pandas_cnt) {
+    can_health_log_states.clear();
+    can_health_log_states.resize(pandas_cnt);
+  }
 
   // build msg
   MessageBuilder msg;
@@ -269,6 +361,7 @@ std::optional<bool> send_panda_states(PubMaster *pm, const std::vector<Panda *> 
 
     auto cs = std::array{ps.initCanState0(), ps.initCanState1(), ps.initCanState2()};
     for (uint32_t j = 0; j < PANDA_CAN_CNT; j++) {
+      log_can_health_changes(can_health_log_states[i][j], i, j, health, pandaCanStates[i][j]);
       fill_panda_can_state(cs[j], pandaCanStates[i][j]);
     }
 
