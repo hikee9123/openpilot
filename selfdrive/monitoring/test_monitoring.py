@@ -272,6 +272,18 @@ class TestBlinkEventTracker:
     assert self.tracker.blink_count == 0
     assert self.tracker.max_closure >= 10.0
 
+  def test_sleep_candidate_ignores_invalid_frames_until_valid_open(self):
+    self.update_for(10.05, 0.95)
+    assert self.tracker.sleep_candidate
+
+    self.update_for(0.50, 0.0, valid=False)
+    assert self.tracker.sleep_candidate
+    assert self.tracker.sleep_warning_candidate
+    assert not self.tracker.sleep_warning_candidate_started
+
+    self.update_for(DT_DMON, 0.10)
+    assert not self.tracker.sleep_candidate
+
   def test_closure_above_blink_max_is_not_counted_as_blink(self):
     self.update_for(2.0, 0.95)
     assert not self.tracker.sleep_candidate
@@ -299,6 +311,31 @@ class TestBlinkEventTracker:
     self.update_for(0.05, 0.10)
     assert self.tracker.no_blink_candidate
     assert self.tracker.no_blink_candidate_started
+
+  def test_no_blink_candidate_ignores_invalid_frames(self):
+    self.update_for(10.0, 0.10)
+    assert self.tracker.no_blink_candidate
+
+    self.update_for(0.50, 0.0, valid=False)
+    assert self.tracker.no_blink_candidate
+    assert not self.tracker.no_blink_candidate_started
+    self.update_for(DT_DMON, 0.10)
+    assert self.tracker.no_blink_candidate
+    assert not self.tracker.no_blink_candidate_started
+
+  def test_latched_no_blink_candidate_rearms_after_completed_blink(self):
+    self.update_for(10.0, 0.10)
+    assert self.tracker.no_blink_candidate
+
+    self.update_for(0.20, 0.95)
+    assert self.tracker.no_blink_candidate
+    self.update_for(DT_DMON, 0.10)
+    assert not self.tracker.no_blink_candidate
+
+    self.update_for(9.95, 0.10)
+    assert not self.tracker.no_blink_candidate
+    self.update_for(DT_DMON, 0.10)
+    assert self.tracker.no_blink_candidate
 
   def test_valid_blink_restarts_no_blink_window(self):
     self.update_for(9.90, 0.10)

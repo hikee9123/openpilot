@@ -29,13 +29,10 @@ DriverMonitorRenderer::DriverMonitorRenderer() : face_kpts_draw(std::size(DEFAUL
 
 void DriverMonitorRenderer::updateState(const UIState &s) {
   auto &sm = *(s.sm);
-  is_visible = sm["selfdriveState"].getSelfdriveState().getAlertSize() == cereal::SelfdriveState::AlertSize::NONE &&
-               sm.rcv_frame("driverStateV2") > s.scene.started_frame;
-  if (!is_visible) return;
-
   auto dm_state = sm["driverMonitoringState"].getDriverMonitoringState();
   is_active = dm_state.getActivePolicy() == cereal::DriverMonitoringState::MonitoringPolicy::VISION;
   is_rhd = dm_state.getIsRHD();
+  alert_level = static_cast<int>(dm_state.getAlertLevel());
   const auto vision_state = dm_state.getVisionPolicyState();
   face_detected = vision_state.getFaceDetected();
   eye_distracted = vision_state.getDistractedTypes().getEye();
@@ -62,6 +59,9 @@ void DriverMonitorRenderer::updateState(const UIState &s) {
   min_duration_ms = blink_debug.getMinDurationMillis();
   max_blink_duration_ms = blink_debug.getMaxBlinkDurationMillis();
   sleep_candidate_duration_ms = blink_debug.getSleepCandidateDurationMillis();
+  const bool alert_visible = sm["selfdriveState"].getSelfdriveState().getAlertSize() != cereal::SelfdriveState::AlertSize::NONE;
+  is_visible = sm.rcv_frame("driverStateV2") > s.scene.started_frame && (!alert_visible || blink_debug_enabled);
+  if (!is_visible) return;
   dm_fade_state = std::clamp(dm_fade_state + 0.2f * (0.5f - is_active), 0.0f, 1.0f);
 
   const auto &driverstate = sm["driverStateV2"].getDriverStateV2();
@@ -143,10 +143,14 @@ void DriverMonitorRenderer::draw(QPainter &painter, const QRect &surface_rect) {
     const QRectF panel_rect(panel_x, panel_y, panel_width, panel_height);
     const bool long_closure_candidate = sleep_candidate &&
                                         current_closure_ms > DROWSY_BACKGROUND_MIN_CLOSURE_MS;
-    const bool show_drowsy_background = no_blink_candidate || long_closure_candidate;
+    const bool candidate_policy_active = no_blink_candidate || long_closure_candidate;
+    const bool warning_active = alert_level > 0;
+    const bool show_drowsy_background = no_blink_alert_enabled ? warning_active : candidate_policy_active;
 
     painter.setPen(QPen(QColor(160, 170, 180, 150), 2));
-    painter.setBrush(show_drowsy_background ? QColor(205, 100, 0, 230) : QColor(0, 0, 0, 205));
+    const QColor warning_background = no_blink_alert_enabled && alert_level >= 3 ?
+                                        QColor(155, 35, 35, 230) : QColor(205, 100, 0, 230);
+    painter.setBrush(show_drowsy_background ? warning_background : QColor(0, 0, 0, 205));
     painter.drawRoundedRect(panel_rect, 18, 18);
 
     const int text_x = panel_x + 22;

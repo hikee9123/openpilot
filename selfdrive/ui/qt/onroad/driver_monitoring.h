@@ -27,6 +27,7 @@ private:
   bool no_blink_candidate = false;
   bool no_blink_window_ready = false;
   bool no_blink_alert_enabled = false;
+  int alert_level = 0;
   int blink_count_10s = 0;
   int no_blink_ms = 0;
   int current_closure_ms = 0;

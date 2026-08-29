@@ -112,6 +112,7 @@ class BlinkEventTracker:
   def update(self, valid, effective, raw_left=0., raw_right=0., sleep_prob=0.):
     previous_sleep_warning_candidate = self.sleep_warning_candidate
     previous_no_blink_candidate = self.no_blink_candidate
+    valid_blink_completed = False
     self.elapsed += DT_DMON
     self.valid = bool(valid)
     self.raw_left = min(max(raw_left, 0.), 1.)
@@ -128,6 +129,7 @@ class BlinkEventTracker:
           if self.settings.min_duration <= duration <= self.settings.max_blink_duration + BLINK_DURATION_EPSILON:
             self.blink_events.append(self.elapsed)
             self.last_blink_elapsed = self.elapsed
+            valid_blink_completed = True
           self.eye_closed = False
           self.closed_duration = 0.
         else:
@@ -139,16 +141,24 @@ class BlinkEventTracker:
 
     self.samples.append((self.elapsed, self.valid, sample_closed))
     self._prune()
-    self.sleep_candidate = self.valid and self.eye_closed and \
-                           self.closed_duration + BLINK_DURATION_EPSILON >= self.settings.sleep_candidate_duration and \
-                           self.valid_ratio >= self.settings.min_valid_ratio
+    sleep_candidate_detected = self.valid and self.eye_closed and \
+                               self.closed_duration + BLINK_DURATION_EPSILON >= self.settings.sleep_candidate_duration and \
+                               self.valid_ratio >= self.settings.min_valid_ratio
+    if sleep_candidate_detected:
+      self.sleep_candidate = True
+    elif self.valid and not self.eye_closed:
+      self.sleep_candidate = False
     self.sleep_warning_candidate = self.sleep_candidate and \
                                    self.closed_duration > SLEEP_WARNING_MIN_CLOSURE + BLINK_DURATION_EPSILON
     self.sleep_warning_candidate_started = self.sleep_warning_candidate and not previous_sleep_warning_candidate
     blink_in_progress = self.eye_closed and \
                         self.closed_duration <= self.settings.max_blink_duration + BLINK_DURATION_EPSILON
-    self.no_blink_candidate = self.valid and not blink_in_progress and \
-                              self.no_blink_window_ready and self.blink_count == 0
+    no_blink_candidate_detected = self.valid and not blink_in_progress and \
+                                  self.no_blink_window_ready and self.blink_count == 0
+    if valid_blink_completed:
+      self.no_blink_candidate = False
+    elif no_blink_candidate_detected:
+      self.no_blink_candidate = True
     self.no_blink_candidate_started = self.no_blink_candidate and not previous_no_blink_candidate
 
   def acknowledge_driver_interaction(self):
