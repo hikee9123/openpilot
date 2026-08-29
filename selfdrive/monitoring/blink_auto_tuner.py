@@ -156,6 +156,27 @@ def _weighted_two_cluster_centers(histogram):
   return low_center, high_center
 
 
+def _recommended_probability_thresholds(histogram):
+  cluster_centers = _weighted_two_cluster_centers(histogram)
+  if cluster_centers is not None:
+    low_center, high_center = cluster_centers
+    probability_gap = high_center - low_center
+    close_pct = _clamp(round(low_center + probability_gap * 0.80), 50, 95)
+    open_pct = _clamp(round(low_center + probability_gap * 0.45), 5, close_pct - 5)
+    return close_pct, open_pct, "clusters"
+
+  low_tail = _histogram_percentile(histogram, 0.10)
+  open_pct = _histogram_percentile(histogram, 0.40)
+  close_pct = _histogram_percentile(histogram, 0.90)
+  if (low_tail is None or open_pct is None or close_pct is None or
+      close_pct - low_tail < 25 or close_pct - open_pct < 15):
+    return None
+
+  close_pct = _clamp(close_pct, 50, 95)
+  open_pct = _clamp(open_pct, 5, close_pct - 5)
+  return close_pct, open_pct, "percentiles"
+
+
 @dataclass
 class BlinkAutoTuner:
   sample_count: int = 0
@@ -228,16 +249,14 @@ class BlinkAutoTuner:
     return round(100.0 * self.valid_sample_count / self.sample_count) if self.sample_count else 0
 
   def recommendations(self, current):
-    cluster_centers = _weighted_two_cluster_centers(self.blink_histogram)
+    probability_thresholds = _recommended_probability_thresholds(self.blink_histogram)
     enough_data = self.valid_minutes >= MIN_VALID_MINUTES and self.closure_count >= MIN_CLOSURE_EVENTS
-    ready = enough_data and cluster_centers is not None
+    ready = enough_data and probability_thresholds is not None
+    recommendation_mode = probability_thresholds[2] if probability_thresholds is not None else "unavailable"
 
     recommendations = dict(current)
     if ready:
-      low_center, high_center = cluster_centers
-      probability_gap = high_center - low_center
-      close_pct = _clamp(round(low_center + probability_gap * 0.80), 50, 95)
-      open_pct = _clamp(round(low_center + probability_gap * 0.45), 5, close_pct - 5)
+      close_pct, open_pct, _ = probability_thresholds
       min_duration_bin = _histogram_percentile(self.closure_duration_histogram, 0.10)
       min_duration_ms = _clamp((min_duration_bin or 1) * 50, 50, 300)
       valid_pct = _histogram_percentile(self.valid_ratio_histogram, 0.10)
@@ -254,11 +273,11 @@ class BlinkAutoTuner:
 
     sample_score = min(self.valid_minutes / TARGET_CONFIDENCE_MINUTES, 1.0)
     closure_score = min(self.closure_count / TARGET_CONFIDENCE_CLOSURES, 1.0)
-    confidence_pct = round(100.0 * min(sample_score, closure_score)) if cluster_centers is not None else 0
-    return ready, confidence_pct, recommendations
+    confidence_pct = round(100.0 * min(sample_score, closure_score)) if probability_thresholds is not None else 0
+    return ready, confidence_pct, recommendations, recommendation_mode
 
   def to_dict(self, current, now=None):
-    ready, confidence_pct, recommendations = self.recommendations(current)
+    ready, confidence_pct, recommendations, recommendation_mode = self.recommendations(current)
     return {
       "version": STATE_VERSION,
       "sampleCount": self.sample_count,
@@ -269,6 +288,7 @@ class BlinkAutoTuner:
       "closureDurationHistogram": self.closure_duration_histogram,
       "ready": ready,
       "confidencePct": confidence_pct,
+      "recommendationMode": recommendation_mode,
       "validMinutes": round(self.valid_minutes, 1),
       "validPercent": self.valid_percent,
       "lastUpdated": int(time.time() if now is None else now),

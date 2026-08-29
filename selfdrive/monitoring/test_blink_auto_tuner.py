@@ -13,6 +13,19 @@ CURRENT_SETTINGS = {
   "minValidPct": 80,
 }
 
+# Captured from the affected device after 462 valid driving minutes. Its broad,
+# overlapping probability distribution is valid but exceeds the old 30% upper-cluster ratio guard.
+DEVICE_BROAD_BLINK_HISTOGRAM = [
+  0, 0, 0, 0, 0, 12, 34, 98, 260, 573, 947, 1340, 2029, 2808, 3648, 4887, 6118,
+  7523, 8308, 8363, 8223, 8282, 8185, 8133, 7987, 8222, 8423, 8384, 8182, 8218,
+  8053, 7863, 7578, 7322, 7111, 7109, 7196, 7445, 7583, 7525, 7591, 7580, 7771,
+  7681, 7642, 7597, 7710, 7820, 7986, 7881, 7951, 7942, 8081, 7944, 8043, 7999,
+  7959, 7964, 8032, 7794, 7672, 7684, 7566, 7339, 7849, 7813, 7767, 7874, 7930,
+  7939, 7913, 7817, 7994, 7971, 7746, 7357, 6752, 6209, 5643, 5040, 4804, 4145,
+  3866, 3370, 3278, 3098, 2991, 2978, 3233, 2892, 2841, 2650, 2199, 1588, 905,
+  523, 215, 44, 5, 0, 0,
+]
+
 
 def add_synthetic_drive(tuner, minutes=10):
   frame_count = minutes * 60 * 20
@@ -39,12 +52,44 @@ def test_generates_bounded_recommendations():
   recommendations = state["recommendations"]
 
   assert state["ready"]
+  assert state["recommendationMode"] == "clusters"
   assert 50 <= recommendations["closeThresholdPct"] <= 95
   assert 5 <= recommendations["openThresholdPct"] <= recommendations["closeThresholdPct"] - 5
   assert 50 <= recommendations["minDurationMs"] <= 300
   assert recommendations["maxBlinkDurationMs"] == CURRENT_SETTINGS["maxBlinkDurationMs"]
   assert recommendations["sleepCandidateDurationMs"] == CURRENT_SETTINGS["sleepCandidateDurationMs"]
   assert 50 <= recommendations["minValidPct"] <= 95
+
+
+def test_percentile_fallback_handles_device_distribution():
+  tuner = BlinkAutoTuner()
+  tuner.sample_count = sum(DEVICE_BROAD_BLINK_HISTOGRAM)
+  tuner.valid_sample_count = tuner.sample_count
+  tuner.closure_count = 50
+  tuner.blink_histogram = DEVICE_BROAD_BLINK_HISTOGRAM.copy()
+  tuner.valid_ratio_histogram[90] = tuner.sample_count
+  tuner.closure_duration_histogram[4] = tuner.closure_count
+
+  state = tuner.to_dict(CURRENT_SETTINGS, now=123)
+
+  assert state["ready"]
+  assert state["confidencePct"] == 100
+  assert state["recommendationMode"] == "percentiles"
+  assert state["recommendations"]["closeThresholdPct"] == 78
+  assert state["recommendations"]["openThresholdPct"] == 42
+
+
+def test_percentile_fallback_rejects_narrow_distribution():
+  tuner = BlinkAutoTuner()
+  tuner.sample_count = tuner.valid_sample_count = 30 * 60 * 20
+  tuner.closure_count = 50
+  tuner.blink_histogram[50] = tuner.valid_sample_count
+
+  state = tuner.to_dict(CURRENT_SETTINGS, now=123)
+
+  assert not state["ready"]
+  assert state["confidencePct"] == 0
+  assert state["recommendationMode"] == "unavailable"
 
 
 def test_state_round_trip_preserves_accumulators():

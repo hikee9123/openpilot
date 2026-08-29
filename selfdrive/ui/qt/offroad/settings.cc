@@ -75,6 +75,7 @@ struct BlinkAutoTuneState {
   qint64 last_applied = 0;
   int last_applied_valid_sample_count = 0;
   int last_applied_confidence_pct = 0;
+  QString recommendation_mode = "unavailable";
   int close_threshold_pct = kBlinkCloseDefault;
   int open_threshold_pct = kBlinkOpenDefault;
   int min_duration_ms = kBlinkMinDurationDefault;
@@ -122,6 +123,7 @@ BlinkAutoTuneState getBlinkAutoTuneState(Params &params) {
   const QJsonObject recommendations = root.value("recommendations").toObject();
   state.ready = root.value("ready").toBool(false) && !recommendations.isEmpty();
   state.confidence_pct = std::clamp(root.value("confidencePct").toInt(0), 0, 100);
+  state.recommendation_mode = root.value("recommendationMode").toString("unavailable");
   state.valid_percent = std::clamp(root.value("validPercent").toInt(0), 0, 100);
   state.closure_count = std::max(root.value("closureCount").toInt(0), 0);
   state.valid_minutes = std::max(root.value("validMinutes").toDouble(0.0), 0.0);
@@ -601,14 +603,21 @@ private:
                   .arg(QDateTime::fromSecsSinceEpoch(auto_tune_state.last_applied).toString("yyyy-MM-dd HH:mm"))
                   .arg(auto_tune_state.last_applied_confidence_pct);
     }
+    QString mode = tr("Unavailable");
+    if (auto_tune_state.recommendation_mode == "clusters") {
+      mode = tr("Clusters");
+    } else if (auto_tune_state.recommendation_mode == "percentiles") {
+      mode = tr("Percentile fallback");
+    }
     auto_tune_status->setText(
-      tr("%1\n%2\nValid driving: %3 min | Valid data: %4% | Closures: %5 | Confidence: %6%\nLast update: %7 | Last auto apply: %8")
+      tr("%1\n%2\nValid driving: %3 min | Valid data: %4% | Closures: %5 | Confidence: %6% | Mode: %7\nLast update: %8 | Last auto apply: %9")
         .arg(status)
         .arg(auto_apply_status)
         .arg(auto_tune_state.valid_minutes, 0, 'f', 1)
         .arg(auto_tune_state.valid_percent)
         .arg(auto_tune_state.closure_count)
         .arg(auto_tune_state.confidence_pct)
+        .arg(mode)
         .arg(updated)
         .arg(applied));
   }
