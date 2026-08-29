@@ -141,8 +141,9 @@ void DriverMonitorRenderer::draw(QPainter &painter, const QRect &surface_rect) {
     const int panel_y = std::max(surface_rect.top() + UI_BORDER_SIZE,
                                  static_cast<int>(eye_rect.top()) - panel_height - 18);
     const QRectF panel_rect(panel_x, panel_y, panel_width, panel_height);
-    const bool show_drowsy_background = no_blink_candidate ||
-                                        (sleep_candidate && current_closure_ms > DROWSY_BACKGROUND_MIN_CLOSURE_MS);
+    const bool long_closure_candidate = sleep_candidate &&
+                                        current_closure_ms > DROWSY_BACKGROUND_MIN_CLOSURE_MS;
+    const bool show_drowsy_background = no_blink_candidate || long_closure_candidate;
 
     painter.setPen(QPen(QColor(160, 170, 180, 150), 2));
     painter.setBrush(show_drowsy_background ? QColor(205, 100, 0, 230) : QColor(0, 0, 0, 205));
@@ -175,10 +176,10 @@ void DriverMonitorRenderer::draw(QPainter &painter, const QRect &surface_rect) {
     draw_debug_line(QString("State %1   Blink/10s %2")
                       .arg(blink_eye_closed ? "CLOSED" : "OPEN")
                       .arg(blink_count_10s), blink_eye_closed ? warn_color : normal_color);
-    draw_debug_line(QString("No Blink %1s   Window %2   Alert %3")
+    draw_debug_line(QString("No Blink %1s   Window %2   Link %3")
                       .arg(no_blink_ms / 1000.0, 0, 'f', 1)
                       .arg(no_blink_window_ready ? "READY" : "WAIT")
-                      .arg(no_blink_alert_enabled ? "ON" : "OFF"),
+                      .arg(no_blink_alert_enabled ? "WARNING" : "DEBUG"),
                     no_blink_candidate ? bad_color : normal_color);
     draw_debug_line(QString("Closed %1s   Max/10s %2s")
                       .arg(current_closure_ms / 1000.0, 0, 'f', 2)
@@ -194,7 +195,7 @@ void DriverMonitorRenderer::draw(QPainter &painter, const QRect &surface_rect) {
                       .arg(min_duration_ms)
                       .arg(max_blink_duration_ms)
                       .arg(sleep_candidate_duration_ms / 1000.0, 0, 'f', 1),
-                    (sleep_candidate || no_blink_candidate) ? bad_color : dim_color);
+                    (long_closure_candidate || no_blink_candidate) ? bad_color : dim_color);
   }
 
   float delta_x = -driver_pose_sins[1] * arc_l / 2.0f;

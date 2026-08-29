@@ -393,20 +393,20 @@ public:
     auto *display_layout = createPage(tab_widget, tr("Display & Alert"));
     debug_enabled = new StagedToggleControl(
       tr("Show blink debug overlay"),
-      tr("Display the 10-second blink and eye-closure diagnostics while driving."),
+      tr("Show or hide the 10-second blink and eye-closure diagnostics while driving. This display setting does not change warning behavior."),
       params.getBool("DmBlinkDebugOverlayEnabled"), display_layout->parentWidget());
     display_layout->addWidget(debug_enabled);
 
     alert_mode = new StagedButtonControl(
-      tr("Eye warning mode"),
-      tr("EXISTING uses the model's instantaneous eye state. NO BLINK warns only after no valid blink is detected for 10 seconds."),
-      {tr("EXISTING"), tr("NO BLINK 10s")},
+      tr("Candidate warning link"),
+      tr("OFF leaves No-blink and Sleep candidates as diagnostics only. ON immediately adds either candidate to the existing distraction warning. Existing eye, pose, phone, and no-face warnings remain active."),
+      {tr("OFF (DEBUG)"), tr("ON (WARNING)")},
       params.getBool("DmBlinkAlertEnabled") ? 1 : 0);
     display_layout->addWidget(alert_mode);
 
     dismiss_on_driver_input = new StagedToggleControl(
-      tr("Dismiss No-blink warning on driver input"),
-      tr("A new steering, accelerator, or brake input clears level 1/2 No-blink warnings. CANCEL resets all warning levels, including emergency, and restarts the 10-second observation."),
+      tr("Dismiss linked warning on driver input"),
+      tr("A new steering, accelerator, or brake input clears level 1/2 linked eye warnings. CANCEL resets all warning levels, including emergency, and restarts the 10-second observation."),
       params.getBool("DmBlinkDismissOnDriverInput"), display_layout->parentWidget());
     display_layout->addWidget(dismiss_on_driver_input);
     display_layout->addStretch();
@@ -455,7 +455,7 @@ public:
     sleep_candidate_duration->setMinimum(minimumSleepCandidateDuration(max_blink_duration->value()));
 
     auto *window_note = new QLabel(
-      tr("No-blink measurement window: 10 seconds (fixed). Sleep Candidate timing is adjustable. Changes apply on the next DM start."),
+      tr("No-blink uses a fixed 10-second window. Sleep Candidate uses the adjustable continuous closure time and ignores closures of 2 seconds or less. Changes apply on the next DM start."),
       blink_layout->parentWidget());
     window_note->setWordWrap(true);
     window_note->setStyleSheet("font-size: 38px; color: #aeb5bc; padding: 18px 8px;");
@@ -828,10 +828,10 @@ void TogglesPanel::updateBlinkDebugDescription() {
   const int max_blink_duration_ms = getIntParam(params, "DmBlinkMaxDurationMs", kBlinkMaxDurationDefault);
   const int sleep_candidate_duration_ms = getIntParam(params, "DmSleepCandidateDurationMs", kSleepCandidateDurationDefault);
   blink_debug_settings_btn->setDescription(
-    tr("Diagnostic overlay: %1 | Eye warning: %2 | Driver input dismiss: %3 | Auto Tune: %4 | Next-drive apply: %5 | Close %6% | Blink %7-%8 ms | Sleep Candidate %9 s. "
-       "NO BLINK mode requires a full 10-second valid observation; pose, phone, and no-face warnings remain active.")
+    tr("Diagnostic overlay: %1 | Candidate link: %2 | Driver input dismiss: %3 | Auto Tune: %4 | Next-drive apply: %5 | Close %6% | Blink %7-%8 ms | Sleep Candidate %9 s. "
+       "The overlay only controls show/hide. Link OFF disables candidate-generated warnings; existing DM warnings remain active.")
       .arg(enabled ? tr("ON") : tr("OFF"))
-      .arg(alert_enabled ? tr("NO BLINK 10s") : tr("EXISTING"))
+      .arg(alert_enabled ? tr("ON (WARNING)") : tr("OFF (DEBUG)"))
       .arg(dismiss_on_driver_input ? tr("ON") : tr("OFF"))
       .arg(auto_tune_enabled ? tr("ON") : tr("OFF"))
       .arg(auto_apply_enabled ? tr("ON") : tr("OFF"))

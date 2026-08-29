@@ -385,7 +385,7 @@ class TestBlinkAlertLink:
       if update_events:
         dm._update_events(driver_interacting, op_engaged, lowspeed, False, cancel_pressed)
 
-  def test_no_blink_mode_replaces_instantaneous_blink_warning(self):
+  def test_linked_sleep_candidate_ignores_closures_below_two_seconds(self):
     blink_settings = BlinkDebugSettings(alert_enabled=True, close_threshold=0.75,
                                         open_threshold=0.50, sleep_candidate_duration=0.10)
     dm = DriverMonitoring(blink_debug_settings=blink_settings)
@@ -425,6 +425,39 @@ class TestBlinkAlertLink:
     assert dm.awareness == 1.0
     assert not dm.blink_tracker.no_blink_candidate
     assert not dm.distracted_types['eye']
+
+  def test_linked_sleep_candidate_starts_first_warning_immediately(self):
+    blink_settings = BlinkDebugSettings(alert_enabled=True, close_threshold=0.75,
+                                        open_threshold=0.50, sleep_candidate_duration=2.0)
+    dm = DriverMonitoring(blink_debug_settings=blink_settings)
+    self.update_for(dm, 2.0, 0.80, update_events=True)
+    assert dm.alert_level == log.DriverMonitoringState.AlertLevel.none
+
+    self.update_for(dm, 0.05, 0.80, update_events=True)
+
+    assert dm.blink_tracker.sleep_warning_candidate
+    assert not dm.blink_tracker.no_blink_candidate
+    assert dm.distracted_types['eye']
+    assert dm.alert_level == log.DriverMonitoringState.AlertLevel.one
+
+  def test_unlinked_sleep_candidate_is_debug_only(self):
+    blink_settings = BlinkDebugSettings(enabled=True, alert_enabled=False, close_threshold=0.70,
+                                        open_threshold=0.50, sleep_candidate_duration=2.0)
+    dm = DriverMonitoring(blink_debug_settings=blink_settings)
+    self.update_for(dm, 2.05, 0.75, update_events=True)
+
+    assert dm.blink_tracker.sleep_warning_candidate
+    assert not dm.blink_tracker.no_blink_candidate
+    assert not dm.distracted_types['eye']
+    assert dm.alert_level == log.DriverMonitoringState.AlertLevel.none
+
+  def test_debug_visibility_does_not_change_existing_eye_warning(self):
+    for debug_enabled in (False, True):
+      blink_settings = BlinkDebugSettings(enabled=debug_enabled, alert_enabled=False)
+      dm = DriverMonitoring(blink_debug_settings=blink_settings)
+      self.update_for(dm, DT_DMON, 0.90)
+
+      assert dm.distracted_types['eye']
 
   def test_cancel_immediately_resets_warning_even_when_driver_input_dismiss_is_off(self):
     dm = DriverMonitoring(blink_debug_settings=BlinkDebugSettings(alert_enabled=True, dismiss_on_driver_input=False))

@@ -15,6 +15,7 @@ AlertLevel = log.DriverMonitoringState.AlertLevel
 MonitoringPolicy = log.DriverMonitoringState.MonitoringPolicy
 ButtonType = car.CarState.ButtonEvent.Type
 BLINK_DURATION_EPSILON = 1e-6
+SLEEP_WARNING_MIN_CLOSURE = 2.0
 
 def to_percent(v):
   return int(min(max(v * 100., 0.), 100.))
@@ -43,7 +44,7 @@ def _minimum_sleep_candidate_duration_ms(max_blink_duration_ms):
 @dataclass(frozen=True)
 class BlinkDebugSettings:
   enabled: bool = False
-  alert_enabled: bool = False  # selects the 10-second no-blink eye warning mode
+  alert_enabled: bool = False  # links no-blink and long-closure candidates to the existing eye warning
   dismiss_on_driver_input: bool = True
   close_threshold: float = 0.87
   open_threshold: float = 0.50
@@ -89,6 +90,8 @@ class BlinkEventTracker:
     self.closed_duration = 0.
     self.valid = False
     self.sleep_candidate = False
+    self.sleep_warning_candidate = False
+    self.sleep_warning_candidate_started = False
     self.no_blink_candidate = False
     self.no_blink_candidate_started = False
     self.last_blink_elapsed = 0.
@@ -107,6 +110,7 @@ class BlinkEventTracker:
       self.closure_events.popleft()
 
   def update(self, valid, effective, raw_left=0., raw_right=0., sleep_prob=0.):
+    previous_sleep_warning_candidate = self.sleep_warning_candidate
     previous_no_blink_candidate = self.no_blink_candidate
     self.elapsed += DT_DMON
     self.valid = bool(valid)
@@ -138,6 +142,9 @@ class BlinkEventTracker:
     self.sleep_candidate = self.valid and self.eye_closed and \
                            self.closed_duration + BLINK_DURATION_EPSILON >= self.settings.sleep_candidate_duration and \
                            self.valid_ratio >= self.settings.min_valid_ratio
+    self.sleep_warning_candidate = self.sleep_candidate and \
+                                   self.closed_duration > SLEEP_WARNING_MIN_CLOSURE + BLINK_DURATION_EPSILON
+    self.sleep_warning_candidate_started = self.sleep_warning_candidate and not previous_sleep_warning_candidate
     blink_in_progress = self.eye_closed and \
                         self.closed_duration <= self.settings.max_blink_duration + BLINK_DURATION_EPSILON
     self.no_blink_candidate = self.valid and not blink_in_progress and \
@@ -403,10 +410,9 @@ class DriverMonitoring:
 
     self.distracted_types['pose'] = bool((pitch_error > pitch_threshold) or (yaw_error > yaw_threshold))
     blink_distracted = (self.blink.left + self.blink.right) * 0.5 > self.settings._BLINK_THRESHOLD
-    if self.blink_tracker.settings.alert_enabled:
-      self.distracted_types['eye'] = bool(self.blink_tracker.no_blink_candidate)
-    else:
-      self.distracted_types['eye'] = bool(blink_distracted)
+    linked_eye_candidate = self.blink_tracker.settings.alert_enabled and \
+                           (self.blink_tracker.no_blink_candidate or self.blink_tracker.sleep_warning_candidate)
+    self.distracted_types['eye'] = bool(blink_distracted or linked_eye_candidate)
     self.distracted_types['phone'] = bool(self.phone_prob > self.settings._PHONE_THRESH)
 
   def _update_states(self, driver_state, cal_rpy, car_speed, op_engaged, lowspeed, demo_mode=False, steering_angle_deg=0.):
@@ -494,7 +500,7 @@ class DriverMonitoring:
     self.alert_level = AlertLevel.none
     self.driver_interacting = driver_engaged
 
-    no_blink_mode = self.blink_tracker.settings.alert_enabled
+    candidate_warning_enabled = self.blink_tracker.settings.alert_enabled
     if cancel_pressed:
       # CANCEL is an explicit disengagement request, so it acknowledges every DM alert level.
       # Keep alert/no-response counters intact so the existing lockout policy still applies.
@@ -505,20 +511,22 @@ class DriverMonitoring:
       self._reset_awareness()
       return
 
-    no_blink_only = self.blink_tracker.no_blink_candidate and \
-                    not (self.distracted_types['pose'] or self.distracted_types['phone'])
-    if no_blink_mode and self.blink_tracker.settings.dismiss_on_driver_input and interaction_started:
+    eye_candidate_only = (self.blink_tracker.no_blink_candidate or self.blink_tracker.sleep_warning_candidate) and \
+                         not (self.distracted_types['pose'] or self.distracted_types['phone'])
+    if candidate_warning_enabled and self.blink_tracker.settings.dismiss_on_driver_input and interaction_started:
       self.blink_tracker.acknowledge_driver_interaction()
       self._get_distracted_types()
       self.driver_distracted = any(self.distracted_types.values()) and self.face_detected and self.pose.low_std
-      if no_blink_only and self.awareness > 0.:
+      if eye_candidate_only and self.awareness > 0.:
         self.driver_distraction_filter.x = 0.
         self._reset_awareness()
         return
 
-    # The 10-second observation period is the first warning stage in no-blink mode.
+    # A linked no-blink or long-closure candidate is the first warning stage.
     # Start the existing escalation sequence immediately instead of waiting another five seconds.
-    if no_blink_mode and self.blink_tracker.no_blink_candidate_started and self.awareness > 0.:
+    eye_candidate_started = self.blink_tracker.no_blink_candidate_started or \
+                            self.blink_tracker.sleep_warning_candidate_started
+    if candidate_warning_enabled and eye_candidate_started and self.awareness > 0.:
       self.awareness = min(self.awareness, self.threshold_alert_1)
       self.driver_distraction_filter.x = max(self.driver_distraction_filter.x, 0.64)
 
