@@ -14,6 +14,7 @@
 #include <QHBoxLayout>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include "common/watchdog.h"
@@ -66,14 +67,21 @@ int minimumSleepCandidateDuration(int max_blink_duration_ms) {
 
 struct BlinkAutoTuneState {
   bool ready = false;
+  bool stable = false;
+  bool auto_apply_eligible = false;
   int confidence_pct = 0;
+  int coverage_pct = 0;
   int valid_percent = 0;
   int closure_count = 0;
+  int stable_bucket_count = 0;
+  int required_stable_buckets = 3;
+  int data_epoch = 0;
   double valid_minutes = 0.0;
   int valid_sample_count = 0;
   qint64 last_updated = 0;
   qint64 last_applied = 0;
   int last_applied_valid_sample_count = 0;
+  int last_applied_data_epoch = -1;
   int last_applied_confidence_pct = 0;
   QString recommendation_mode = "unavailable";
   int close_threshold_pct = kBlinkCloseDefault;
@@ -101,6 +109,7 @@ BlinkAutoTuneState getBlinkAutoTuneState(Params &params) {
       const QJsonObject applied_root = applied_document.object();
       state.last_applied = std::max(static_cast<qint64>(applied_root.value("appliedAt").toDouble(0.0)), qint64{0});
       state.last_applied_valid_sample_count = std::max(applied_root.value("sourceValidSampleCount").toInt(0), 0);
+      state.last_applied_data_epoch = applied_root.value("sourceDataEpoch").toInt(-1);
       state.last_applied_confidence_pct = std::clamp(applied_root.value("confidencePct").toInt(0), 0, 100);
     } else {
       qWarning() << "Failed to parse DmBlinkAutoTuneLastApplied:" << applied_error.errorString();
@@ -120,14 +129,24 @@ BlinkAutoTuneState getBlinkAutoTuneState(Params &params) {
   }
 
   const QJsonObject root = document.object();
+  if (root.value("version").toInt(0) != 2) {
+    return state;
+  }
   const QJsonObject recommendations = root.value("recommendations").toObject();
+  const QJsonObject quality = root.value("quality").toObject();
   state.ready = root.value("ready").toBool(false) && !recommendations.isEmpty();
+  state.stable = quality.value("stable").toBool(false);
+  state.auto_apply_eligible = root.value("autoApplyEligible").toBool(false);
   state.confidence_pct = std::clamp(root.value("confidencePct").toInt(0), 0, 100);
+  state.coverage_pct = std::clamp(root.value("coveragePct").toInt(0), 0, 100);
   state.recommendation_mode = root.value("recommendationMode").toString("unavailable");
   state.valid_percent = std::clamp(root.value("validPercent").toInt(0), 0, 100);
   state.closure_count = std::max(root.value("closureCount").toInt(0), 0);
   state.valid_minutes = std::max(root.value("validMinutes").toDouble(0.0), 0.0);
-  state.valid_sample_count = std::max(root.value("validSampleCount").toInt(0), 0);
+  state.valid_sample_count = std::max(root.value("epochValidSampleCount").toInt(root.value("validSampleCount").toInt(0)), 0);
+  state.stable_bucket_count = std::max(quality.value("stableBucketCount").toInt(0), 0);
+  state.required_stable_buckets = std::max(quality.value("requiredStableBuckets").toInt(3), 1);
+  state.data_epoch = std::max(root.value("dataEpoch").toInt(0), 0);
   state.last_updated = std::max(static_cast<qint64>(root.value("lastUpdated").toDouble(0.0)), qint64{0});
   state.close_threshold_pct = recommendations.value("closeThresholdPct").toInt(state.close_threshold_pct);
   state.open_threshold_pct = recommendations.value("openThresholdPct").toInt(state.open_threshold_pct);
@@ -472,7 +491,7 @@ public:
 
     auto_apply_next_drive = new StagedToggleControl(
       tr("Auto apply on next drive"),
-      tr("Apply a bounded recommendation only at the next DM start when confidence is at least 80%. "
+      tr("Apply a bounded recommendation only at the next DM start when recent cluster data is stable and confidence is at least 80%. "
          "Maximum blink and Sleep Candidate remain manual."),
       params.getBool("DmBlinkAutoTuneAutoApply"), auto_tune_layout->parentWidget());
     auto_tune_layout->addWidget(auto_apply_next_drive);
@@ -484,8 +503,9 @@ public:
     auto_tune_layout->addWidget(auto_tune_status);
 
     auto *auto_tune_note = new QLabel(
-      tr("Recommendations require at least 10 valid driving minutes and 10 eye-closure events. "
-         "Maximum blink and Sleep Candidate durations remain unchanged until labeled events are available."),
+      tr("Recommendations use the most recent approximately 30 valid driving minutes. Manual recommendations appear after 10 minutes and 10 eye closures. "
+         "Auto apply additionally requires three stable 5-minute cluster periods. Percentile fallback is manual review only. "
+         "Maximum blink and Sleep Candidate remain manual."),
       auto_tune_layout->parentWidget());
     auto_tune_note->setWordWrap(true);
     auto_tune_note->setStyleSheet("font-size: 36px; color: #aeb5bc; padding: 16px 8px;");
@@ -493,7 +513,7 @@ public:
 
     auto *auto_button_layout = new QHBoxLayout();
     auto_button_layout->setSpacing(24);
-    apply_all_auto_button = new QPushButton(tr("Use all recommendations"), auto_tune_layout->parentWidget());
+    apply_all_auto_button = new QPushButton(tr("Use tunable recommendations"), auto_tune_layout->parentWidget());
     reset_auto_data_button = new QPushButton(tr("Reset learned data"), auto_tune_layout->parentWidget());
     apply_all_auto_button->setObjectName("dialogButton");
     reset_auto_data_button->setObjectName("dialogButton");
@@ -531,8 +551,11 @@ public:
     QObject::connect(apply_all_auto_button, &QPushButton::clicked, [this]() { useAllAutoRecommendations(); });
     QObject::connect(reset_auto_data_button, &QPushButton::clicked, [this]() {
       if (ConfirmationDialog::confirm(tr("Reset all learned Blink Auto Tune data?"), tr("Reset"), this)) {
+        const int reset_generation = std::max(getIntParam(params, "DmBlinkAutoTuneResetGeneration", 0), 0);
+        params.put("DmBlinkAutoTuneResetGeneration", std::to_string(reset_generation >= 1000000000 ? 1 : reset_generation + 1));
         params.remove("DmBlinkAutoTuneState");
         params.remove("DmBlinkAutoTuneLastApplied");
+        params.remove("DmBlinkAutoTunePendingApply");
         auto_tune_state = getBlinkAutoTuneState(params);
         refreshAutoTuneUi();
       }
@@ -540,6 +563,13 @@ public:
     QObject::connect(apply_button, &QPushButton::clicked, [this]() {
       if (save()) accept();
     });
+
+    auto *auto_tune_refresh_timer = new QTimer(this);
+    QObject::connect(auto_tune_refresh_timer, &QTimer::timeout, [this]() {
+      auto_tune_state = getBlinkAutoTuneState(params);
+      refreshAutoTuneUi();
+    });
+    auto_tune_refresh_timer->start(2000);
   }
 
 private:
@@ -583,9 +613,16 @@ private:
     QString auto_apply_status;
     if (!auto_tune_enabled->value() || !auto_apply_next_drive->value()) {
       auto_apply_status = tr("NEXT-DRIVE AUTO APPLY OFF");
-    } else if (!ready || auto_tune_state.confidence_pct < kBlinkAutoApplyMinConfidence) {
-      auto_apply_status = tr("NEXT-DRIVE AUTO APPLY WAITING - Requires 80% confidence.");
+    } else if (!ready) {
+      auto_apply_status = tr("NEXT-DRIVE AUTO APPLY WAITING - Requires 10 valid minutes and 10 eye closures.");
+    } else if (auto_tune_state.recommendation_mode == "percentiles") {
+      auto_apply_status = tr("NEXT-DRIVE AUTO APPLY WAITING - Percentile fallback requires manual review.");
+    } else if (!auto_tune_state.stable) {
+      auto_apply_status = tr("NEXT-DRIVE AUTO APPLY WAITING - Requires three stable 5-minute cluster periods.");
+    } else if (!auto_tune_state.auto_apply_eligible || auto_tune_state.confidence_pct < kBlinkAutoApplyMinConfidence) {
+      auto_apply_status = tr("NEXT-DRIVE AUTO APPLY WAITING - Requires 80% stable confidence.");
     } else if (auto_tune_state.last_applied_valid_sample_count > 0 &&
+               auto_tune_state.last_applied_data_epoch == auto_tune_state.data_epoch &&
                auto_tune_state.valid_sample_count - auto_tune_state.last_applied_valid_sample_count <
                  kBlinkAutoApplyMinNewValidSamples) {
       auto_apply_status = tr("NEXT-DRIVE AUTO APPLY WAITING - Requires 5 new valid driving minutes.");
@@ -610,13 +647,16 @@ private:
       mode = tr("Percentile fallback");
     }
     auto_tune_status->setText(
-      tr("%1\n%2\nValid driving: %3 min | Valid data: %4% | Closures: %5 | Confidence: %6% | Mode: %7\nLast update: %8 | Last auto apply: %9")
+      tr("%1\n%2\nRecent valid: %3 min | Valid data: %4% | Closures: %5 | Coverage: %6% | Stable confidence: %7%\nRecent periods: %8/%9 | Mode: %10\nLast update: %11 | Last auto apply: %12")
         .arg(status)
         .arg(auto_apply_status)
         .arg(auto_tune_state.valid_minutes, 0, 'f', 1)
         .arg(auto_tune_state.valid_percent)
         .arg(auto_tune_state.closure_count)
+        .arg(auto_tune_state.coverage_pct)
         .arg(auto_tune_state.confidence_pct)
+        .arg(auto_tune_state.stable_bucket_count)
+        .arg(auto_tune_state.required_stable_buckets)
         .arg(mode)
         .arg(updated)
         .arg(applied));
@@ -627,8 +667,6 @@ private:
     close_threshold->useAutoValue();
     open_threshold->useAutoValue();
     min_duration->useAutoValue();
-    max_blink_duration->useAutoValue();
-    sleep_candidate_duration->useAutoValue();
     min_valid->useAutoValue();
   }
 

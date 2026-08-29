@@ -1,5 +1,5 @@
 from openpilot.selfdrive.monitoring.blink_auto_tuner import (
-  AUTO_APPLY_MIN_CONFIDENCE_PCT, BlinkAutoTuner, apply_auto_tune_on_start,
+  AUTO_APPLY_MIN_CONFIDENCE_PCT, STATE_VERSION, BlinkAutoTuner, apply_auto_tune_on_start,
   eligible_auto_apply_recommendations,
 )
 
@@ -27,14 +27,14 @@ DEVICE_BROAD_BLINK_HISTOGRAM = [
 ]
 
 
-def add_synthetic_drive(tuner, minutes=10):
+def add_synthetic_drive(tuner, minutes=10, open_probability=0.05, closed_probability=0.90):
   frame_count = minutes * 60 * 20
   closure_ms = 0
   for frame in range(frame_count):
     phase = frame % 100
     closed = phase < 4
     closure_ms = closure_ms + 50 if closed else 0
-    tuner.observe(True, 0.90 if closed else 0.05, closed, closure_ms, 90)
+    tuner.observe(True, closed_probability if closed else open_probability, closed, closure_ms, 90)
 
 
 def test_requires_enough_driving_data():
@@ -73,7 +73,8 @@ def test_percentile_fallback_handles_device_distribution():
   state = tuner.to_dict(CURRENT_SETTINGS, now=123)
 
   assert state["ready"]
-  assert state["confidencePct"] == 100
+  assert state["confidencePct"] == AUTO_APPLY_MIN_CONFIDENCE_PCT - 1
+  assert not state["autoApplyEligible"]
   assert state["recommendationMode"] == "percentiles"
   assert state["recommendations"]["closeThresholdPct"] == 78
   assert state["recommendations"]["openThresholdPct"] == 42
@@ -93,12 +94,14 @@ def test_percentile_fallback_rejects_narrow_distribution():
 
 
 def test_state_round_trip_preserves_accumulators():
-  tuner = BlinkAutoTuner()
+  tuner = BlinkAutoTuner(reset_generation=7)
   add_synthetic_drive(tuner, minutes=1)
   restored = BlinkAutoTuner.from_dict(tuner.to_dict(CURRENT_SETTINGS, now=123))
 
   assert restored.sample_count == tuner.sample_count
   assert restored.valid_sample_count == tuner.valid_sample_count
+  assert restored.epoch_valid_sample_count == tuner.epoch_valid_sample_count
+  assert restored.reset_generation == 7
   assert restored.closure_count == tuner.closure_count
   assert restored.blink_histogram == tuner.blink_histogram
 
@@ -134,6 +137,7 @@ class ParamsStub:
       "DmBlinkAutoTuneEnabled": auto_tune,
       "DmBlinkAutoTuneAutoApply": auto_apply,
       "DmBlinkAutoTuneStartChecked": False,
+      "DmBlinkAutoTunePendingApply": None,
       "DmBlinkAutoTuneState": state,
       "DmBlinkCloseThresholdPct": 87,
       "DmBlinkOpenThresholdPct": 50,
@@ -155,14 +159,21 @@ class ParamsStub:
   def put_bool(self, key, value):
     self.values[key] = bool(value)
 
+  def remove(self, key):
+    self.values.pop(key, None)
+
 
 def auto_apply_state(confidence_pct=90, last_updated=123):
   return {
-    "version": 1,
+    "version": STATE_VERSION,
     "ready": True,
     "confidencePct": confidence_pct,
+    "autoApplyEligible": True,
+    "recommendationMode": "clusters",
     "lastUpdated": last_updated,
     "validSampleCount": 30 * 60 * 20,
+    "epochValidSampleCount": 30 * 60 * 20,
+    "dataEpoch": 1,
     "recommendations": {
       "closeThresholdPct": 70,
       "openThresholdPct": 40,
@@ -218,6 +229,7 @@ def test_next_auto_apply_requires_five_new_valid_minutes():
 
   params.values["DmBlinkAutoTuneStartChecked"] = False
   params.values["DmBlinkAutoTuneState"]["validSampleCount"] += 5 * 60 * 20
+  params.values["DmBlinkAutoTuneState"]["epochValidSampleCount"] += 5 * 60 * 20
   assert apply_auto_tune_on_start(params, now=458) is not None
 
 
@@ -243,3 +255,92 @@ def test_auto_apply_respects_both_toggles():
   state = auto_apply_state()
   assert apply_auto_tune_on_start(ParamsStub(state, auto_tune=False), now=456) is None
   assert apply_auto_tune_on_start(ParamsStub(state, auto_apply=False), now=456) is None
+
+
+def test_percentile_fallback_never_auto_applies():
+  state = auto_apply_state()
+  state["recommendationMode"] = "percentiles"
+
+  assert eligible_auto_apply_recommendations(state) is None
+  assert apply_auto_tune_on_start(ParamsStub(state), now=456) is None
+
+
+def test_stable_recent_buckets_enable_auto_apply():
+  tuner = BlinkAutoTuner()
+  tuner.update_context(CURRENT_SETTINGS, False)
+  add_synthetic_drive(tuner, minutes=30)
+  state = tuner.to_dict(CURRENT_SETTINGS, now=123)
+
+  assert state["ready"]
+  assert state["quality"]["stable"]
+  assert state["confidencePct"] == 100
+  assert state["autoApplyEligible"]
+
+
+def test_recent_window_replaces_old_probability_distribution():
+  tuner = BlinkAutoTuner()
+  tuner.update_context(CURRENT_SETTINGS, False)
+  add_synthetic_drive(tuner, minutes=35)
+  old_recommendations = tuner.to_dict(CURRENT_SETTINGS, now=123)["recommendations"]
+
+  add_synthetic_drive(tuner, minutes=35, open_probability=0.30, closed_probability=0.65)
+  recent_state = tuner.to_dict(CURRENT_SETTINGS, now=124)
+
+  assert old_recommendations["closeThresholdPct"] == 73
+  assert recent_state["validMinutes"] == 30.0
+  assert recent_state["epochValidSampleCount"] == 70 * 60 * 20
+  assert recent_state["recommendations"]["closeThresholdPct"] == 58
+  assert recent_state["recommendations"]["openThresholdPct"] == 46
+
+
+def test_threshold_or_driver_side_change_starts_new_data_epoch():
+  tuner = BlinkAutoTuner()
+  tuner.update_context(CURRENT_SETTINGS, False)
+  add_synthetic_drive(tuner, minutes=10)
+  original_epoch = tuner.data_epoch
+
+  changed = dict(CURRENT_SETTINGS)
+  changed["closeThresholdPct"] += 1
+  assert tuner.update_context(changed, False)
+  assert tuner.data_epoch == original_epoch + 1
+  assert tuner.valid_sample_count == 0
+
+  tuner.observe(True, 0.1, False, 0, 90)
+  assert tuner.update_context(changed, True)
+  assert tuner.valid_sample_count == 0
+
+
+class InterruptingParamsStub(ParamsStub):
+  def __init__(self, state):
+    super().__init__(state)
+    self.interrupt_once = True
+
+  def put(self, key, value):
+    if key == "DmBlinkOpenThresholdPct" and self.interrupt_once:
+      self.interrupt_once = False
+      raise RuntimeError("simulated interrupted parameter write")
+    super().put(key, value)
+
+
+def test_interrupted_auto_apply_recovers_exact_pending_values():
+  params = InterruptingParamsStub(auto_apply_state())
+  try:
+    apply_auto_tune_on_start(params, now=456)
+  except RuntimeError:
+    pass
+
+  pending = params.values["DmBlinkAutoTunePendingApply"]
+  assert pending is not None
+  expected = pending["applied"].copy()
+  recovered = apply_auto_tune_on_start(params, now=457)
+
+  assert recovered["applied"] == expected
+  assert "DmBlinkAutoTunePendingApply" not in params.values
+  assert params.values["DmBlinkAutoTuneLastApplied"]["applied"] == expected
+  for key, param_key in {
+    "closeThresholdPct": "DmBlinkCloseThresholdPct",
+    "openThresholdPct": "DmBlinkOpenThresholdPct",
+    "minDurationMs": "DmBlinkMinDurationMs",
+    "minValidPct": "DmBlinkMinValidPct",
+  }.items():
+    assert params.values[param_key] == expected[key]

@@ -36,6 +36,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"DmBlinkAutoTuneAutoApply", {PERSISTENT, BOOL, "0"}},
     {"DmBlinkAutoTuneEnabled", {PERSISTENT, BOOL, "0"}},
     {"DmBlinkAutoTuneLastApplied", {PERSISTENT, JSON}},
+    {"DmBlinkAutoTunePendingApply", {PERSISTENT, JSON}},
+    {"DmBlinkAutoTuneResetGeneration", {PERSISTENT, INT, "0"}},
     {"DmBlinkAutoTuneStartChecked", {CLEAR_ON_OFFROAD_TRANSITION, BOOL, "0"}},
     {"DmBlinkAutoTuneState", {PERSISTENT, JSON}},
     {"DmBlinkCloseThresholdPct", {PERSISTENT, INT, "87"}},

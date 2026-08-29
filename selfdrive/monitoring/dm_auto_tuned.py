@@ -12,6 +12,13 @@ SAVE_INTERVAL_SECONDS = 60.0
 MINIMUM_SPEED = 2.8
 
 
+def current_reset_generation(params):
+  try:
+    return max(0, int(params.get("DmBlinkAutoTuneResetGeneration", return_default=True)))
+  except (TypeError, ValueError, OverflowError):
+    return 0
+
+
 def current_settings(params, blink_debug):
   return {
     "closeThresholdPct": int(blink_debug.closeThresholdPercent),
@@ -27,6 +34,9 @@ def main():
   config_realtime_process([0, 1, 2, 3], 1)
   params = Params()
   tuner = BlinkAutoTuner.from_dict(params.get("DmBlinkAutoTuneState") or {})
+  reset_generation = current_reset_generation(params)
+  if tuner.reset_generation != reset_generation:
+    tuner = BlinkAutoTuner(reset_generation=reset_generation)
   sm = messaging.SubMaster(["driverMonitoringState", "selfdriveState", "carState"], poll="driverMonitoringState")
   last_save_time = time.monotonic()
   latest_settings = None
@@ -40,6 +50,10 @@ def main():
       dm_state = sm["driverMonitoringState"]
       blink_debug = dm_state.visionPolicyState.blinkDebugState
       latest_settings = current_settings(params, blink_debug)
+      reset_generation = current_reset_generation(params)
+      if tuner.reset_generation != reset_generation:
+        tuner = BlinkAutoTuner(reset_generation=reset_generation)
+      tuner.update_context(latest_settings, dm_state.isRHD)
       collecting = sm["selfdriveState"].enabled and sm["carState"].vEgo >= MINIMUM_SPEED
       if collecting:
         tuner.observe(
