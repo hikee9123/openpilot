@@ -3,6 +3,7 @@
 #include <cmath>
 #include <exception>
 #include <functional>
+#include <iterator>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -43,6 +44,8 @@ constexpr int kSleepCandidateDurationDefault = 10000;
 constexpr int kBlinkMinValidDefault = 80;
 constexpr int kBlinkAutoApplyMinConfidence = 80;
 constexpr int kBlinkAutoApplyMinNewValidSamples = 5 * 60 * 20;
+constexpr int kBlinkAutoTuneSensitivityDefault = 2;
+constexpr int kBlinkAutoTuneSensitivityOffsets[] = {-10, -5, 0, 5, 10};
 
 int getIntParam(Params &params, const std::string &key, int default_value) {
   try {
@@ -63,6 +66,29 @@ int minimumMaxBlinkDuration(int min_duration_ms) {
 
 int minimumSleepCandidateDuration(int max_blink_duration_ms) {
   return std::max(2000, (max_blink_duration_ms / 1000 + 1) * 1000);
+}
+
+int blinkAutoTuneSensitivityLevel(int level) {
+  return std::clamp(level, 0, static_cast<int>(std::size(kBlinkAutoTuneSensitivityOffsets)) - 1);
+}
+
+int blinkAutoTuneSensitivityOffset(int level) {
+  return kBlinkAutoTuneSensitivityOffsets[blinkAutoTuneSensitivityLevel(level)];
+}
+
+bool blinkAutoTuneProfileMayAutoApply(int level) {
+  level = blinkAutoTuneSensitivityLevel(level);
+  return 1 <= level && level <= 3;
+}
+
+QString blinkAutoTuneSensitivityName(int level) {
+  switch (blinkAutoTuneSensitivityLevel(level)) {
+    case 0: return QObject::tr("Very sensitive");
+    case 1: return QObject::tr("Sensitive");
+    case 3: return QObject::tr("Dull");
+    case 4: return QObject::tr("Very dull");
+    default: return QObject::tr("Normal");
+  }
 }
 
 struct BlinkAutoTuneState {
@@ -191,8 +217,8 @@ public:
 class StagedButtonControl : public MultiButtonControl {
 public:
   StagedButtonControl(const QString &title, const QString &description,
-                      const std::vector<QString> &button_texts, int value)
-      : MultiButtonControl(title, description, "", button_texts, 330) {
+                      const std::vector<QString> &button_texts, int value, int button_width = 330)
+      : MultiButtonControl(title, description, "", button_texts, button_width) {
     setValue(value);
   }
 
@@ -489,10 +515,18 @@ public:
       params.getBool("DmBlinkAutoTuneEnabled"), auto_tune_layout->parentWidget());
     auto_tune_layout->addWidget(auto_tune_enabled);
 
+    auto_tune_sensitivity = new StagedButtonControl(
+      tr("Eye-closure sensitivity"),
+      tr("Shift the learned Close/Open recommendation without changing Minimum blink, valid-data, Maximum blink, or Sleep Candidate. "
+         "This controls eye-closure detection only, not overall warning frequency."),
+      {tr("VERY SENSITIVE"), tr("SENSITIVE"), tr("NORMAL"), tr("DULL"), tr("VERY DULL")},
+      getIntParam(params, "DmBlinkAutoTuneSensitivityLevel", kBlinkAutoTuneSensitivityDefault), 230);
+    auto_tune_layout->addWidget(auto_tune_sensitivity);
+
     auto_apply_next_drive = new StagedToggleControl(
       tr("Auto apply on next drive"),
       tr("Apply a bounded recommendation only at the next DM start when recent cluster data is stable and confidence is at least 80%. "
-         "Maximum blink and Sleep Candidate remain manual."),
+         "Very sensitive and Very dull require manual review. Maximum blink and Sleep Candidate remain manual."),
       params.getBool("DmBlinkAutoTuneAutoApply"), auto_tune_layout->parentWidget());
     auto_tune_layout->addWidget(auto_apply_next_drive);
 
@@ -547,6 +581,7 @@ public:
       if (!enabled) auto_apply_next_drive->setValue(false);
       refreshAutoTuneUi();
     });
+    QObject::connect(auto_tune_sensitivity, &MultiButtonControl::buttonClicked, [this](int) { refreshAutoTuneUi(); });
     QObject::connect(auto_apply_next_drive, &ToggleControl::toggleFlipped, [this](bool) { refreshAutoTuneUi(); });
     QObject::connect(apply_all_auto_button, &QPushButton::clicked, [this]() { useAllAutoRecommendations(); });
     QObject::connect(reset_auto_data_button, &QPushButton::clicked, [this]() {
@@ -591,9 +626,15 @@ private:
 
   void refreshAutoTuneUi() {
     const bool ready = auto_tune_state.ready;
+    const int sensitivity_level = blinkAutoTuneSensitivityLevel(auto_tune_sensitivity->value());
+    const int sensitivity_offset = blinkAutoTuneSensitivityOffset(sensitivity_level);
+    const int profile_close_threshold = std::clamp(auto_tune_state.close_threshold_pct + sensitivity_offset, 50, 95);
+    const int profile_open_threshold = std::clamp(auto_tune_state.open_threshold_pct + sensitivity_offset,
+                                                  kBlinkThresholdMin,
+                                                  maximumOpenThreshold(profile_close_threshold));
     auto_apply_next_drive->setEnabled(auto_tune_enabled->value());
-    close_threshold->setAutoValue(auto_tune_state.close_threshold_pct, ready, auto_tune_state.confidence_pct);
-    open_threshold->setAutoValue(auto_tune_state.open_threshold_pct, ready, auto_tune_state.confidence_pct);
+    close_threshold->setAutoValue(profile_close_threshold, ready, auto_tune_state.confidence_pct);
+    open_threshold->setAutoValue(profile_open_threshold, ready, auto_tune_state.confidence_pct);
     min_duration->setAutoValue(auto_tune_state.min_duration_ms, ready, auto_tune_state.confidence_pct);
     max_blink_duration->setAutoValue(auto_tune_state.max_blink_duration_ms, ready, auto_tune_state.confidence_pct);
     sleep_candidate_duration->setAutoValue(auto_tune_state.sleep_candidate_duration_ms, ready,
@@ -615,6 +656,8 @@ private:
       auto_apply_status = tr("NEXT-DRIVE AUTO APPLY OFF");
     } else if (!ready) {
       auto_apply_status = tr("NEXT-DRIVE AUTO APPLY WAITING - Requires 10 valid minutes and 10 eye closures.");
+    } else if (!blinkAutoTuneProfileMayAutoApply(sensitivity_level)) {
+      auto_apply_status = tr("NEXT-DRIVE AUTO APPLY WAITING - Extreme sensitivity profiles require manual review.");
     } else if (auto_tune_state.recommendation_mode == "percentiles") {
       auto_apply_status = tr("NEXT-DRIVE AUTO APPLY WAITING - Percentile fallback requires manual review.");
     } else if (!auto_tune_state.stable) {
@@ -646,10 +689,17 @@ private:
     } else if (auto_tune_state.recommendation_mode == "percentiles") {
       mode = tr("Percentile fallback");
     }
+    const QString profile = tr("%1 | Base C%2/%3 -> Profile C%4/%5")
+                              .arg(blinkAutoTuneSensitivityName(sensitivity_level))
+                              .arg(auto_tune_state.close_threshold_pct)
+                              .arg(auto_tune_state.open_threshold_pct)
+                              .arg(profile_close_threshold)
+                              .arg(profile_open_threshold);
     auto_tune_status->setText(
-      tr("%1\n%2\nRecent valid: %3 min | Valid data: %4% | Closures: %5 | Coverage: %6% | Stable confidence: %7%\nRecent periods: %8/%9 | Mode: %10\nLast update: %11 | Last auto apply: %12")
+      tr("%1\n%2\nProfile: %3\nRecent valid: %4 min | Valid data: %5% | Closures: %6 | Coverage: %7% | Stable confidence: %8%\nRecent periods: %9/%10 | Mode: %11\nLast update: %12 | Last auto apply: %13")
         .arg(status)
         .arg(auto_apply_status)
+        .arg(profile)
         .arg(auto_tune_state.valid_minutes, 0, 'f', 1)
         .arg(auto_tune_state.valid_percent)
         .arg(auto_tune_state.closure_count)
@@ -676,6 +726,7 @@ private:
     dismiss_on_driver_input->setValue(true);
     auto_tune_enabled->setValue(false);
     auto_apply_next_drive->setValue(false);
+    auto_tune_sensitivity->setValue(kBlinkAutoTuneSensitivityDefault);
     close_threshold->setValue(kBlinkCloseDefault);
     open_threshold->setValue(kBlinkOpenDefault);
     min_duration->setValue(kBlinkMinDurationDefault);
@@ -704,6 +755,7 @@ private:
     params.putBool("DmBlinkDismissOnDriverInput", dismiss_on_driver_input->value());
     params.putBool("DmBlinkAutoTuneEnabled", auto_tune_enabled->value());
     params.putBool("DmBlinkAutoTuneAutoApply", auto_tune_enabled->value() && auto_apply_next_drive->value());
+    params.put("DmBlinkAutoTuneSensitivityLevel", std::to_string(blinkAutoTuneSensitivityLevel(auto_tune_sensitivity->value())));
     params.put("DmBlinkCloseThresholdPct", std::to_string(close_threshold->value()));
     params.put("DmBlinkOpenThresholdPct", std::to_string(open_threshold->value()));
     params.put("DmBlinkMinDurationMs", std::to_string(min_duration->value()));
@@ -719,6 +771,7 @@ private:
   StagedButtonControl *alert_mode;
   StagedToggleControl *dismiss_on_driver_input;
   StagedToggleControl *auto_tune_enabled;
+  StagedButtonControl *auto_tune_sensitivity;
   StagedToggleControl *auto_apply_next_drive;
   QLabel *auto_tune_status;
   QPushButton *apply_all_auto_button;
@@ -861,17 +914,20 @@ void TogglesPanel::updateBlinkDebugDescription() {
   const bool dismiss_on_driver_input = params.getBool("DmBlinkDismissOnDriverInput");
   const bool auto_tune_enabled = params.getBool("DmBlinkAutoTuneEnabled");
   const bool auto_apply_enabled = params.getBool("DmBlinkAutoTuneAutoApply");
+  const int sensitivity_level = blinkAutoTuneSensitivityLevel(
+    getIntParam(params, "DmBlinkAutoTuneSensitivityLevel", kBlinkAutoTuneSensitivityDefault));
   const int close_pct = getIntParam(params, "DmBlinkCloseThresholdPct", kBlinkCloseDefault);
   const int min_duration_ms = getIntParam(params, "DmBlinkMinDurationMs", kBlinkMinDurationDefault);
   const int max_blink_duration_ms = getIntParam(params, "DmBlinkMaxDurationMs", kBlinkMaxDurationDefault);
   const int sleep_candidate_duration_ms = getIntParam(params, "DmSleepCandidateDurationMs", kSleepCandidateDurationDefault);
   blink_debug_settings_btn->setDescription(
-    tr("Diagnostic overlay: %1 | Candidate link: %2 | Driver input dismiss: %3 | Auto Tune: %4 | Next-drive apply: %5 | Close %6% | Blink %7-%8 ms | Sleep Candidate %9 s. "
+    tr("Diagnostic overlay: %1 | Candidate link: %2 | Driver input dismiss: %3 | Auto Tune: %4 (%5) | Next-drive apply: %6 | Close %7% | Blink %8-%9 ms | Sleep Candidate %10 s. "
        "The overlay only controls show/hide. Link OFF disables candidate-generated warnings; existing DM warnings remain active.")
       .arg(enabled ? tr("ON") : tr("OFF"))
       .arg(alert_enabled ? tr("ON (WARNING)") : tr("OFF (DEBUG)"))
       .arg(dismiss_on_driver_input ? tr("ON") : tr("OFF"))
       .arg(auto_tune_enabled ? tr("ON") : tr("OFF"))
+      .arg(blinkAutoTuneSensitivityName(sensitivity_level))
       .arg(auto_apply_enabled ? tr("ON") : tr("OFF"))
       .arg(close_pct)
       .arg(min_duration_ms)

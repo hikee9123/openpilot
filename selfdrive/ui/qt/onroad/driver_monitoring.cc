@@ -145,12 +145,16 @@ void DriverMonitorRenderer::draw(QPainter &painter, const QRect &surface_rect) {
                                         current_closure_ms > DROWSY_BACKGROUND_MIN_CLOSURE_MS;
     const bool candidate_policy_active = no_blink_candidate || long_closure_candidate;
     const bool warning_active = alert_level > 0;
-    const bool show_drowsy_background = no_blink_alert_enabled ? warning_active : candidate_policy_active;
+    const bool candidate_debug_active = candidate_policy_active && !warning_active;
+    const QString panel_state = warning_active ? QString("WARNING L%1").arg(alert_level) :
+                                candidate_debug_active ? QString("CAND DEBUG") :
+                                no_blink_alert_enabled ? QString("ARMED") : QString("DEBUG");
 
-    painter.setPen(QPen(QColor(160, 170, 180, 150), 2));
-    const QColor warning_background = no_blink_alert_enabled && alert_level >= 3 ?
+    painter.setPen(QPen(candidate_debug_active ? QColor(255, 170, 55, 230) : QColor(160, 170, 180, 150),
+                        candidate_debug_active ? 5 : 2));
+    const QColor warning_background = alert_level >= 3 ?
                                         QColor(155, 35, 35, 230) : QColor(205, 100, 0, 230);
-    painter.setBrush(show_drowsy_background ? warning_background : QColor(0, 0, 0, 205));
+    painter.setBrush(warning_active ? warning_background : QColor(0, 0, 0, 205));
     painter.drawRoundedRect(panel_rect, 18, 18);
 
     const int text_x = panel_x + 22;
@@ -169,7 +173,8 @@ void DriverMonitorRenderer::draw(QPainter &painter, const QRect &surface_rect) {
     const QColor good_color(82, 235, 104, 245);
     const QColor warn_color(255, 190, 70, 245);
     const QColor bad_color(255, 95, 95, 245);
-    draw_debug_line(QString("DM BLINK DEBUG   %1 %2%")
+    draw_debug_line(QString("DM %1   %2 %3%")
+                      .arg(panel_state)
                       .arg(blink_debug_valid ? "VALID" : "INVALID")
                       .arg(valid_percent_10s),
                     blink_debug_valid ? good_color : warn_color, true);

@@ -452,6 +452,27 @@ class TestBlinkAlertLink:
     assert dm.blink_tracker.no_blink_candidate
     assert dm.alert_level == log.DriverMonitoringState.AlertLevel.one
 
+  def test_all_candidates_reset_offroad_even_when_warning_link_is_off(self):
+    blink_settings = BlinkDebugSettings(enabled=True, alert_enabled=False, close_threshold=0.70,
+                                        open_threshold=0.50, sleep_candidate_duration=2.0)
+    dm = DriverMonitoring(blink_debug_settings=blink_settings)
+    self.update_for(dm, 10.05, 0.75)
+
+    assert dm.blink_tracker.sleep_candidate
+    assert dm.blink_tracker.no_blink_candidate
+    assert dm.blink_tracker.eye_closed
+
+    self.update_for(dm, DT_DMON, 0.75, op_engaged=False)
+
+    assert not dm.blink_tracker.sleep_candidate
+    assert not dm.blink_tracker.sleep_warning_candidate
+    assert not dm.blink_tracker.no_blink_candidate
+    assert not dm.blink_tracker.eye_closed
+    assert dm.blink_tracker.closed_duration == 0.0
+    assert dm.blink_tracker.no_blink_duration == 0.0
+    assert not dm.blink_tracker.samples
+    assert not dm.blink_tracker.closure_events
+
   def test_driver_interaction_immediately_clears_no_blink_warning(self):
     dm = DriverMonitoring(blink_debug_settings=BlinkDebugSettings(alert_enabled=True, dismiss_on_driver_input=True))
     self.update_for(dm, 10.0, 0.10, update_events=True)

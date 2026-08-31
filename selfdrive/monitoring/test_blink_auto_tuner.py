@@ -1,6 +1,6 @@
 from openpilot.selfdrive.monitoring.blink_auto_tuner import (
   AUTO_APPLY_MIN_CONFIDENCE_PCT, STATE_VERSION, BlinkAutoTuner, apply_auto_tune_on_start,
-  eligible_auto_apply_recommendations,
+  auto_tune_profile_recommendations, eligible_auto_apply_recommendations,
 )
 
 
@@ -139,6 +139,7 @@ class ParamsStub:
       "DmBlinkAutoTuneStartChecked": False,
       "DmBlinkAutoTunePendingApply": None,
       "DmBlinkAutoTuneState": state,
+      "DmBlinkAutoTuneSensitivityLevel": 2,
       "DmBlinkCloseThresholdPct": 87,
       "DmBlinkOpenThresholdPct": 50,
       "DmBlinkMinDurationMs": 100,
@@ -191,6 +192,40 @@ def test_auto_apply_requires_high_confidence():
   assert apply_auto_tune_on_start(ParamsStub(state), now=456) is None
 
 
+def test_five_sensitivity_profiles_adjust_only_eye_probability_thresholds():
+  base = {
+    "closeThresholdPct": 70,
+    "openThresholdPct": 40,
+    "minDurationMs": 250,
+    "minValidPct": 60,
+  }
+  for level, expected in enumerate(((60, 30), (65, 35), (70, 40), (75, 45), (80, 50))):
+    profiled = auto_tune_profile_recommendations(base, level)
+    assert (profiled["closeThresholdPct"], profiled["openThresholdPct"]) == expected
+    assert profiled["minDurationMs"] == base["minDurationMs"]
+    assert profiled["minValidPct"] == base["minValidPct"]
+
+
+def test_sensitivity_profiles_preserve_threshold_bounds_and_hysteresis():
+  low = auto_tune_profile_recommendations({"closeThresholdPct": 50, "openThresholdPct": 5}, 0)
+  high = auto_tune_profile_recommendations({"closeThresholdPct": 95, "openThresholdPct": 90}, 4)
+
+  assert low == {"closeThresholdPct": 50, "openThresholdPct": 5}
+  assert high == {"closeThresholdPct": 95, "openThresholdPct": 90}
+
+
+def test_extreme_sensitivity_profiles_require_manual_review():
+  state = auto_apply_state()
+  for level in (0, 4):
+    assert eligible_auto_apply_recommendations(state, level) is None
+    params = ParamsStub(state)
+    params.values["DmBlinkAutoTuneSensitivityLevel"] = level
+    assert apply_auto_tune_on_start(params, now=456) is None
+
+  for level in (1, 2, 3):
+    assert eligible_auto_apply_recommendations(state, level) is not None
+
+
 def test_auto_apply_is_bounded_and_preserves_sleep_settings():
   params = ParamsStub(auto_apply_state())
   record = apply_auto_tune_on_start(params, now=456)
@@ -205,6 +240,13 @@ def test_auto_apply_is_bounded_and_preserves_sleep_settings():
   assert params.values["DmBlinkMaxDurationMs"] == 1500
   assert params.values["DmSleepCandidateDurationMs"] == 10000
   assert record["appliedAt"] == 456
+  assert record["sensitivityLevel"] == 2
+  assert record["baseTarget"] == {
+    "closeThresholdPct": 70,
+    "openThresholdPct": 40,
+    "minDurationMs": 250,
+    "minValidPct": 60,
+  }
 
 
 def test_auto_apply_runs_only_once_per_recommendation():

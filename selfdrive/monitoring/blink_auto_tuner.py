@@ -10,6 +10,9 @@ TARGET_CONFIDENCE_CLOSURES = 50
 STATE_VERSION = 2
 AUTO_APPLY_MIN_CONFIDENCE_PCT = 80
 AUTO_APPLY_MIN_NEW_VALID_SAMPLES = 5 * 60 * SAMPLE_RATE_HZ
+AUTO_TUNE_SENSITIVITY_OFFSETS = (-10, -5, 0, 5, 10)
+AUTO_TUNE_SENSITIVITY_NORMAL = 2
+AUTO_TUNE_AUTO_APPLY_LEVELS = (1, 2, 3)
 
 LEARNING_BUCKET_VALID_MINUTES = 5
 LEARNING_BUCKET_VALID_SAMPLES = LEARNING_BUCKET_VALID_MINUTES * 60 * SAMPLE_RATE_HZ
@@ -50,7 +53,20 @@ def _valid_apply_values(values):
   )
 
 
-def eligible_auto_apply_recommendations(state):
+def auto_tune_profile_recommendations(values, sensitivity_level=AUTO_TUNE_SENSITIVITY_NORMAL):
+  try:
+    level = _clamp(int(sensitivity_level), 0, len(AUTO_TUNE_SENSITIVITY_OFFSETS) - 1)
+    profiled = dict(values)
+    offset = AUTO_TUNE_SENSITIVITY_OFFSETS[level]
+    profiled["closeThresholdPct"] = _clamp(int(values["closeThresholdPct"]) + offset, 50, 95)
+    profiled["openThresholdPct"] = _clamp(int(values["openThresholdPct"]) + offset, 5,
+                                           profiled["closeThresholdPct"] - 5)
+    return profiled
+  except (KeyError, TypeError, ValueError, OverflowError):
+    return None
+
+
+def eligible_auto_apply_recommendations(state, sensitivity_level=AUTO_TUNE_SENSITIVITY_NORMAL):
   if not isinstance(state, dict) or state.get("version") != STATE_VERSION or not state.get("ready"):
     return None
 
@@ -68,7 +84,15 @@ def eligible_auto_apply_recommendations(state):
       not _valid_apply_values(values) or
       not (50 <= values["closeThresholdPct"] and values["minDurationMs"] <= 300 and values["minValidPct"] <= 95)):
     return None
-  return values
+  try:
+    level = int(sensitivity_level)
+  except (TypeError, ValueError, OverflowError):
+    return None
+  # The two extreme profiles remain manual-review only until sufficient field data is collected.
+  if level not in AUTO_TUNE_AUTO_APPLY_LEVELS:
+    return None
+  profiled = auto_tune_profile_recommendations(values, level)
+  return profiled if profiled is not None and _valid_apply_values(profiled) else None
 
 
 def _complete_pending_auto_apply(params, now=None):
@@ -111,7 +135,11 @@ def apply_auto_tune_on_start(params, now=None):
     return None
 
   state = params.get("DmBlinkAutoTuneState") or {}
-  targets = eligible_auto_apply_recommendations(state)
+  try:
+    sensitivity_level = int(params.get("DmBlinkAutoTuneSensitivityLevel", return_default=True))
+  except (TypeError, ValueError, OverflowError):
+    sensitivity_level = AUTO_TUNE_SENSITIVITY_NORMAL
+  targets = eligible_auto_apply_recommendations(state, sensitivity_level)
   if targets is None:
     return None
 
@@ -156,6 +184,8 @@ def apply_auto_tune_on_start(params, now=None):
     "sourceDataEpoch": source_data_epoch,
     "appliedAt": int(time.time() if now is None else now),
     "confidencePct": int(state["confidencePct"]),
+    "sensitivityLevel": sensitivity_level,
+    "baseTarget": {key: int(state["recommendations"][key]) for key in AUTO_APPLY_PARAM_KEYS},
     "previous": previous,
     "target": targets,
     "applied": applied,

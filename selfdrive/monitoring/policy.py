@@ -170,6 +170,16 @@ class BlinkEventTracker:
     self.no_blink_candidate_started = False
     self.blink_events.clear()
 
+  def reset_candidate_observation(self):
+    self.reset_no_blink_observation()
+    self.samples.clear()
+    self.closure_events.clear()
+    self.eye_closed = False
+    self.closed_duration = 0.
+    self.sleep_candidate = False
+    self.sleep_warning_candidate = False
+    self.sleep_warning_candidate_started = False
+
   @property
   def blink_count(self):
     return len(self.blink_events)
@@ -448,8 +458,8 @@ class DriverMonitoring:
     if not all(len(x) > 0 for x in (driver_data.faceOrientation, driver_data.facePosition,
                                     driver_data.faceOrientationStd, driver_data.facePositionStd)):
       self.blink_tracker.update(False, 0., raw_left_blink, raw_right_blink, sleep_prob)
-      if self.blink_tracker.settings.alert_enabled and (not (op_engaged or self.always_on) or lowspeed):
-        self.blink_tracker.reset_no_blink_observation()
+      if not (op_engaged or self.always_on) or lowspeed:
+        self.blink_tracker.reset_candidate_observation()
       return
 
     self.face_detected = driver_data.faceProb > self.settings._FACE_THRESHOLD
@@ -472,8 +482,8 @@ class DriverMonitoring:
                   driver_data.sunglassesProb < self.settings._SG_THRESHOLD
     effective_blink = (self.blink.left + self.blink.right) * 0.5
     self.blink_tracker.update(blink_valid, effective_blink, raw_left_blink, raw_right_blink, sleep_prob)
-    if self.blink_tracker.settings.alert_enabled and (not (op_engaged or self.always_on) or lowspeed):
-      self.blink_tracker.reset_no_blink_observation()
+    if not (op_engaged or self.always_on) or lowspeed:
+      self.blink_tracker.reset_candidate_observation()
     self.phone_prob = driver_data.phoneProb
 
     self._get_distracted_types()
