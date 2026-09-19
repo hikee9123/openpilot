@@ -34,7 +34,7 @@ const std::string SPI_DEVICE = "/dev/spidev0.0";
 static uint64_t spi_last_bus_activity_ns = 0;  // protected by hw_lock
 
 static void wait_for_spi_turnaround(uint64_t start_ns) {
-  while ((nanos_since_boot() - start_ns) < 400000) {}
+  // Turnaround delay removed to restore 1-year ago SPI/CAN throughput and prevent CAN Rx buffer overflow
 }
 
 class LockEx {
