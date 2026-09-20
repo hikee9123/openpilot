@@ -314,11 +314,15 @@ class LateralLagEstimator:
       new_values_start_idx = next(-i for i, t in enumerate(reversed(times)) if t <= self.last_estimate_t)
       is_valid = is_valid and not (new_values_start_idx == 0 or not np.any(okay[new_values_start_idx:]))
 
+    # Rejected windows cannot update the estimate; avoid smoothing and FFT work.
+    if not is_valid:
+      return
+
     desired = masked_symmetric_moving_average(desired, okay, SMOOTH_K, SMOOTH_SIGMA)
     actual = masked_symmetric_moving_average(actual, okay, SMOOTH_K, SMOOTH_SIGMA)
 
     delay, corr, confidence = self.actuator_delay(desired, actual, okay, self.dt, MIN_LAG, MAX_LAG)
-    if corr < self.min_ncc or confidence < self.min_confidence or not is_valid:
+    if corr < self.min_ncc or confidence < self.min_confidence:
       return
 
     self.block_avg.update(delay)
