@@ -8,7 +8,7 @@ from cereal import log, car
 from cereal.messaging import SubMaster
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
-from openpilot.selfdrive.selfdrived.events import Alert, EVENTS, ET, too_distracted_alert
+from openpilot.selfdrive.selfdrived.events import Alert, EVENTS, ET, Priority, too_distracted_alert
 from openpilot.selfdrive.selfdrived.alertmanager import set_offroad_alert
 from openpilot.selfdrive.test.process_replay.process_replay import CONFIGS
 
@@ -110,15 +110,17 @@ class TestAlerts:
     dm_state.lockoutMinutesRemaining = 5
     alert = too_distracted_alert(self.CP, self.CS, {'driverMonitoringState': dm_state}, False, 100,
                                  log.LongitudinalPersonality.standard)
-    assert alert.alert_text_1 == "Re-engage Unavailable"
-    assert alert.alert_text_2 == "Level 3 warning limit reached - 5 minutes remaining"
+    assert alert.alert_text_1 == "5 minutes Left"
+    assert alert.alert_text_2 == "Too Distracted"
+    assert alert.priority == Priority.HIGH
 
-  def test_too_distracted_alert_explains_cancel_reset(self):
+  def test_too_distracted_alert_requires_attention(self):
     dm_state = log.DriverMonitoringState.new_message()
     alert = too_distracted_alert(self.CP, self.CS, {'driverMonitoringState': dm_state}, False, 100,
                                  log.LongitudinalPersonality.standard)
-    assert alert.alert_text_1 == "Re-engage Unavailable"
-    assert alert.alert_text_2 == "Driver attention required - press CANCEL to reset"
+    assert alert.alert_text_1 == "openpilot Unavailable"
+    assert alert.alert_text_2 == "Pay Attention to Engage"
+    assert alert.priority == Priority.HIGH
 
   def test_offroad_alerts(self):
     params = Params()

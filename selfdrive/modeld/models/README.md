@@ -34,6 +34,10 @@ Refer to **slice_outputs** and **parse_vision_outputs/parse_policy_outputs** in 
 
 ## Driver Monitoring Model
 * .onnx model can be run with onnx runtimes
+* Source: commaai/openpilot master at `1b1b60ba93bf70d3a37bc306a02048fc71dd0b2c` (2026-09-19).
+* Super Leicht checkpoint: `a9462a65-1886-462a-8847-ad4624d9abfc/200`.
+* ONNX SHA-256: `dee5a294e8afaacc9295ac5d100e00733ecac278e79264b96331e40a3ede1b04`.
+* Uses this branch's existing OpenCL/tinygrad runner and metadata extraction; rebuild the DM metadata and compiled model after updating.
 
 ### input format
 * single image W = 1440 H = 960 luminance channel (Y) from the planar YUV420 format:

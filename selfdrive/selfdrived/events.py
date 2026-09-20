@@ -149,9 +149,10 @@ EmptyAlert = Alert("" , "", AlertStatus.normal, AlertSize.none, Priority.LOWEST,
 class NoEntryAlert(Alert):
   def __init__(self, alert_text_2: str,
                alert_text_1: str = "openpilot Unavailable",
-               visual_alert: car.CarControl.HUDControl.VisualAlert=VisualAlert.none):
+               visual_alert: car.CarControl.HUDControl.VisualAlert=VisualAlert.none,
+               priority: Priority = Priority.LOW):
     super().__init__(alert_text_1, alert_text_2, AlertStatus.normal,
-                     AlertSize.mid, Priority.LOW, visual_alert,
+                     AlertSize.mid, priority, visual_alert,
                      AudibleAlert.refuse, 3.)
 
 
@@ -382,14 +383,10 @@ def invalid_lkas_setting_alert(CP: car.CarParams, CS: car.CarState, sm: messagin
 
 
 def too_distracted_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
-  dm_state = sm['driverMonitoringState']
-  if dm_state.lockout:
-    minutes = max(int(dm_state.lockoutMinutesRemaining), 1)
-    unit = "minute" if minutes == 1 else "minutes"
-    return NoEntryAlert(f"Level 3 warning limit reached - {minutes} {unit} remaining",
-                        alert_text_1="Re-engage Unavailable")
-  return NoEntryAlert("Driver attention required - press CANCEL to reset",
-                      alert_text_1="Re-engage Unavailable")
+  if sm['driverMonitoringState'].lockout:
+    mins_left = sm['driverMonitoringState'].lockoutMinutesRemaining
+    return NoEntryAlert("Too Distracted", f"{mins_left} minute{'s' if mins_left != 1 else ''} Left", priority=Priority.HIGH)
+  return NoEntryAlert("Pay Attention to Engage", priority=Priority.HIGH)
 
 
 EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {

@@ -17,7 +17,7 @@ from openpilot.selfdrive.modeld.get_model_metadata import (
 from openpilot.selfdrive.modeld.parse_model_outputs import sigmoid
 
 
-OFFICIAL_MODEL_CHECKPOINT = "586aece6-afd8-4d8b-b7da-5634d6eae5e6"
+OFFICIAL_MODEL_CHECKPOINT = "a9462a65-1886-462a-8847-ad4624d9abfc/200"
 
 
 def parse_compat_output(output: np.ndarray):

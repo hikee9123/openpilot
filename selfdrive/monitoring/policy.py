@@ -1,5 +1,4 @@
-from collections import defaultdict, deque
-from dataclasses import dataclass
+from collections import defaultdict
 from math import atan2, radians
 import numpy as np
 
@@ -13,199 +12,9 @@ from openpilot.common.transformations.camera import DEVICE_CAMERAS
 
 AlertLevel = log.DriverMonitoringState.AlertLevel
 MonitoringPolicy = log.DriverMonitoringState.MonitoringPolicy
-ButtonType = car.CarState.ButtonEvent.Type
-BLINK_DURATION_EPSILON = 1e-6
-SLEEP_WARNING_MIN_CLOSURE = 2.0
 
 def to_percent(v):
   return int(min(max(v * 100., 0.), 100.))
-
-
-def _read_int_param(params, key, default, minimum, maximum):
-  try:
-    value = int(params.get(key) or default)
-  except (TypeError, ValueError):
-    value = default
-  return min(max(value, minimum), maximum)
-
-
-def _maximum_open_threshold_pct(close_threshold_pct):
-  return max(5, close_threshold_pct - 5)
-
-
-def _minimum_max_blink_duration_ms(min_duration_ms):
-  return max(500, (min_duration_ms // 100 + 1) * 100)
-
-
-def _minimum_sleep_candidate_duration_ms(max_blink_duration_ms):
-  return max(2000, (max_blink_duration_ms // 1000 + 1) * 1000)
-
-
-@dataclass(frozen=True)
-class BlinkDebugSettings:
-  enabled: bool = False
-  alert_enabled: bool = False  # links no-blink and long-closure candidates to the existing eye warning
-  dismiss_on_driver_input: bool = True
-  close_threshold: float = 0.87
-  open_threshold: float = 0.50
-  min_duration: float = 0.10
-  max_blink_duration: float = 1.50
-  sleep_candidate_duration: float = 10.0
-  min_valid_ratio: float = 0.80
-  window_seconds: float = 10.0
-
-  @classmethod
-  def from_params(cls, params):
-    close_pct = _read_int_param(params, "DmBlinkCloseThresholdPct", 87, 5, 95)
-    open_pct = _read_int_param(params, "DmBlinkOpenThresholdPct", 50, 5, 90)
-    open_pct = min(open_pct, _maximum_open_threshold_pct(close_pct))
-    min_duration_ms = _read_int_param(params, "DmBlinkMinDurationMs", 100, 50, 500)
-    max_blink_duration_ms = _read_int_param(params, "DmBlinkMaxDurationMs", 1500, 500, 3000)
-    max_blink_duration_ms = max(max_blink_duration_ms, _minimum_max_blink_duration_ms(min_duration_ms))
-    sleep_candidate_duration_ms = _read_int_param(params, "DmSleepCandidateDurationMs", 10000, 2000, 30000)
-    sleep_candidate_duration_ms = max(sleep_candidate_duration_ms,
-                                      _minimum_sleep_candidate_duration_ms(max_blink_duration_ms))
-    min_valid_pct = _read_int_param(params, "DmBlinkMinValidPct", 80, 50, 100)
-    return cls(
-      enabled=params.get_bool("DmBlinkDebugOverlayEnabled"),
-      alert_enabled=params.get_bool("DmBlinkAlertEnabled"),
-      dismiss_on_driver_input=params.get_bool("DmBlinkDismissOnDriverInput"),
-      close_threshold=close_pct / 100.,
-      open_threshold=open_pct / 100.,
-      min_duration=min_duration_ms / 1000.,
-      max_blink_duration=max_blink_duration_ms / 1000.,
-      sleep_candidate_duration=sleep_candidate_duration_ms / 1000.,
-      min_valid_ratio=min_valid_pct / 100.,
-    )
-
-
-class BlinkEventTracker:
-  def __init__(self, settings=None):
-    self.settings = settings if settings is not None else BlinkDebugSettings()
-    self.samples = deque()
-    self.blink_events = deque()
-    self.closure_events = deque()
-    self.elapsed = 0.
-    self.eye_closed = False
-    self.closed_duration = 0.
-    self.valid = False
-    self.sleep_candidate = False
-    self.sleep_warning_candidate = False
-    self.sleep_warning_candidate_started = False
-    self.no_blink_candidate = False
-    self.no_blink_candidate_started = False
-    self.last_blink_elapsed = 0.
-    self.raw_left = 0.
-    self.raw_right = 0.
-    self.effective = 0.
-    self.sleep_prob = 0.
-
-  def _prune(self):
-    cutoff = self.elapsed - self.settings.window_seconds
-    while self.samples and self.samples[0][0] <= cutoff:
-      self.samples.popleft()
-    while self.blink_events and self.blink_events[0] <= cutoff:
-      self.blink_events.popleft()
-    while self.closure_events and self.closure_events[0][0] <= cutoff:
-      self.closure_events.popleft()
-
-  def update(self, valid, effective, raw_left=0., raw_right=0., sleep_prob=0.):
-    previous_sleep_warning_candidate = self.sleep_warning_candidate
-    previous_no_blink_candidate = self.no_blink_candidate
-    valid_blink_completed = False
-    self.elapsed += DT_DMON
-    self.valid = bool(valid)
-    self.raw_left = min(max(raw_left, 0.), 1.)
-    self.raw_right = min(max(raw_right, 0.), 1.)
-    self.effective = min(max(effective, 0.), 1.)
-    self.sleep_prob = min(max(sleep_prob, 0.), 1.)
-
-    sample_closed = False
-    if self.valid:
-      if self.eye_closed:
-        if self.effective <= self.settings.open_threshold:
-          duration = self.closed_duration
-          self.closure_events.append((self.elapsed, duration))
-          if self.settings.min_duration <= duration <= self.settings.max_blink_duration + BLINK_DURATION_EPSILON:
-            self.blink_events.append(self.elapsed)
-            self.last_blink_elapsed = self.elapsed
-            valid_blink_completed = True
-          self.eye_closed = False
-          self.closed_duration = 0.
-        else:
-          self.closed_duration += DT_DMON
-      elif self.effective >= self.settings.close_threshold:
-        self.eye_closed = True
-        self.closed_duration = DT_DMON
-      sample_closed = self.eye_closed
-
-    self.samples.append((self.elapsed, self.valid, sample_closed))
-    self._prune()
-    sleep_candidate_detected = self.valid and self.eye_closed and \
-                               self.closed_duration + BLINK_DURATION_EPSILON >= self.settings.sleep_candidate_duration and \
-                               self.valid_ratio >= self.settings.min_valid_ratio
-    if sleep_candidate_detected:
-      self.sleep_candidate = True
-    elif self.valid and not self.eye_closed:
-      self.sleep_candidate = False
-    self.sleep_warning_candidate = self.sleep_candidate and \
-                                   self.closed_duration > SLEEP_WARNING_MIN_CLOSURE + BLINK_DURATION_EPSILON
-    self.sleep_warning_candidate_started = self.sleep_warning_candidate and not previous_sleep_warning_candidate
-    blink_in_progress = self.eye_closed and \
-                        self.closed_duration <= self.settings.max_blink_duration + BLINK_DURATION_EPSILON
-    no_blink_candidate_detected = self.valid and not blink_in_progress and \
-                                  self.no_blink_window_ready and self.blink_count == 0
-    if valid_blink_completed:
-      self.no_blink_candidate = False
-    elif no_blink_candidate_detected:
-      self.no_blink_candidate = True
-    self.no_blink_candidate_started = self.no_blink_candidate and not previous_no_blink_candidate
-
-  def acknowledge_driver_interaction(self):
-    self.reset_no_blink_observation()
-
-  def reset_no_blink_observation(self):
-    self.last_blink_elapsed = self.elapsed
-    self.no_blink_candidate = False
-    self.no_blink_candidate_started = False
-    self.blink_events.clear()
-
-  def reset_candidate_observation(self):
-    self.reset_no_blink_observation()
-    self.samples.clear()
-    self.closure_events.clear()
-    self.eye_closed = False
-    self.closed_duration = 0.
-    self.sleep_candidate = False
-    self.sleep_warning_candidate = False
-    self.sleep_warning_candidate_started = False
-
-  @property
-  def blink_count(self):
-    return len(self.blink_events)
-
-  @property
-  def no_blink_duration(self):
-    return max(self.elapsed - self.last_blink_elapsed, 0.)
-
-  @property
-  def no_blink_window_ready(self):
-    return self.no_blink_duration >= self.settings.window_seconds and \
-           self.valid_ratio >= self.settings.min_valid_ratio
-
-  @property
-  def valid_ratio(self):
-    return sum(valid for _, valid, _ in self.samples) / len(self.samples) if self.samples else 0.
-
-  @property
-  def closed_ratio(self):
-    valid_samples = sum(valid for _, valid, _ in self.samples)
-    return sum(closed for _, valid, closed in self.samples if valid) / valid_samples if valid_samples else 0.
-
-  @property
-  def max_closure(self):
-    completed_max = max((duration for _, duration in self.closure_events), default=0.)
-    return max(completed_max, self.closed_duration)
 
 # ******************************************************************************************
 #  NOTE: To fork maintainers.
@@ -241,6 +50,7 @@ class DRIVER_MONITOR_SETTINGS:
     self._SG_THRESHOLD = 0.9
     self._BLINK_THRESHOLD = 0.865
     self._PHONE_THRESH = 0.5
+    self._SLEEP_THRESH = 0.75
     self._POSE_PITCH_THRESHOLD = 0.3133
     self._POSE_PITCH_THRESHOLD_SLACK = 0.3237
     self._POSE_PITCH_THRESHOLD_STRICT = self._POSE_PITCH_THRESHOLD
@@ -318,7 +128,7 @@ def face_orientation_from_model(orient_model, pos_model, rpy_calib):
 
 
 class DriverMonitoring:
-  def __init__(self, rhd_saved=False, settings=None, always_on=False, blink_debug_settings=None):
+  def __init__(self, rhd_saved=False, settings=None, always_on=False):
     # init policy settings
     self.settings = settings if settings is not None else DRIVER_MONITOR_SETTINGS()
 
@@ -327,8 +137,8 @@ class DriverMonitoring:
     self.wheelpos_offsetter = RunningStatFilter(raw_priors=wheelpos_filter_raw_priors, max_trackable=self.settings._WHEELPOS_MAX_COUNT)
     self.pose = DriverPose(settings=self.settings)
     self.blink = DriverBlink()
-    self.blink_tracker = BlinkEventTracker(blink_debug_settings)
     self.phone_prob = 0.
+    self.sleep_prob = 0.
 
     self.alert_level = AlertLevel.none
     self.always_on = always_on
@@ -429,11 +239,9 @@ class DriverMonitoring:
     yaw_threshold = self.settings._POSE_YAW_THRESHOLD * self.pose.cfactor_yaw
 
     self.distracted_types['pose'] = bool((pitch_error > pitch_threshold) or (yaw_error > yaw_threshold))
-    blink_distracted = (self.blink.left + self.blink.right) * 0.5 > self.settings._BLINK_THRESHOLD
-    linked_eye_candidate = self.blink_tracker.settings.alert_enabled and \
-                           (self.blink_tracker.no_blink_candidate or self.blink_tracker.sleep_warning_candidate)
-    self.distracted_types['eye'] = bool(blink_distracted or linked_eye_candidate)
+    self.distracted_types['eye'] = bool((self.blink.left + self.blink.right)*0.5 > self.settings._BLINK_THRESHOLD)
     self.distracted_types['phone'] = bool(self.phone_prob > self.settings._PHONE_THRESH)
+    self.distracted_types['sleep'] = bool(self.sleep_prob > self.settings._SLEEP_THRESH)
 
   def _update_states(self, driver_state, cal_rpy, car_speed, op_engaged, lowspeed, demo_mode=False, steering_angle_deg=0.):
     rhd_pred = driver_state.wheelOnRightProb
@@ -452,14 +260,8 @@ class DriverMonitoring:
     if op_engaged and self.wheel_on_right_last is not None and self.wheel_on_right_last != self.wheel_on_right and not demo_mode:
       self.wheel_on_right = self.wheel_on_right_last
     driver_data = driver_state.rightDriverData if self.wheel_on_right else driver_state.leftDriverData
-    raw_left_blink = driver_data.leftBlinkProb
-    raw_right_blink = driver_data.rightBlinkProb
-    sleep_prob = driver_data.sleepProb
     if not all(len(x) > 0 for x in (driver_data.faceOrientation, driver_data.facePosition,
                                     driver_data.faceOrientationStd, driver_data.facePositionStd)):
-      self.blink_tracker.update(False, 0., raw_left_blink, raw_right_blink, sleep_prob)
-      if not (op_engaged or self.always_on) or lowspeed:
-        self.blink_tracker.reset_candidate_observation()
       return
 
     self.face_detected = driver_data.faceProb > self.settings._FACE_THRESHOLD
@@ -476,15 +278,8 @@ class DriverMonitoring:
                       * (driver_data.sunglassesProb < self.settings._SG_THRESHOLD)
     self.blink.right = driver_data.rightBlinkProb * (driver_data.rightEyeProb > self.settings._EYE_THRESHOLD) \
                       * (driver_data.sunglassesProb < self.settings._SG_THRESHOLD)
-    blink_valid = self.face_detected and self.pose.low_std and \
-                  driver_data.leftEyeProb > self.settings._EYE_THRESHOLD and \
-                  driver_data.rightEyeProb > self.settings._EYE_THRESHOLD and \
-                  driver_data.sunglassesProb < self.settings._SG_THRESHOLD
-    effective_blink = (self.blink.left + self.blink.right) * 0.5
-    self.blink_tracker.update(blink_valid, effective_blink, raw_left_blink, raw_right_blink, sleep_prob)
-    if not (op_engaged or self.always_on) or lowspeed:
-      self.blink_tracker.reset_candidate_observation()
     self.phone_prob = driver_data.phoneProb
+    self.sleep_prob = driver_data.sleepProb
 
     self._get_distracted_types()
     self.driver_distracted = any(self.distracted_types.values()) and driver_data.faceProb > self.settings._FACE_THRESHOLD and self.pose.low_std
@@ -515,40 +310,9 @@ class DriverMonitoring:
     elif self.face_detected and self.pose.low_std:
       self.hi_stds = 0
 
-  def _update_events(self, driver_engaged, op_engaged, lowspeed, wrong_gear, cancel_pressed=False):
-    interaction_started = driver_engaged and not self.driver_interacting
+  def _update_events(self, driver_engaged, op_engaged, lowspeed, wrong_gear):
     self.alert_level = AlertLevel.none
     self.driver_interacting = driver_engaged
-
-    candidate_warning_enabled = self.blink_tracker.settings.alert_enabled
-    if cancel_pressed:
-      # CANCEL is an explicit disengagement request, so it acknowledges every DM alert level.
-      # Keep alert/no-response counters intact so the existing lockout policy still applies.
-      self.blink_tracker.acknowledge_driver_interaction()
-      self._get_distracted_types()
-      self.driver_distracted = any(self.distracted_types.values()) and self.face_detected and self.pose.low_std
-      self.driver_distraction_filter.x = 0.
-      self._reset_awareness()
-      return
-
-    eye_candidate_only = (self.blink_tracker.no_blink_candidate or self.blink_tracker.sleep_warning_candidate) and \
-                         not (self.distracted_types['pose'] or self.distracted_types['phone'])
-    if candidate_warning_enabled and self.blink_tracker.settings.dismiss_on_driver_input and interaction_started:
-      self.blink_tracker.acknowledge_driver_interaction()
-      self._get_distracted_types()
-      self.driver_distracted = any(self.distracted_types.values()) and self.face_detected and self.pose.low_std
-      if eye_candidate_only and self.awareness > 0.:
-        self.driver_distraction_filter.x = 0.
-        self._reset_awareness()
-        return
-
-    # A linked no-blink or long-closure candidate is the first warning stage.
-    # Start the existing escalation sequence immediately instead of waiting another five seconds.
-    eye_candidate_started = self.blink_tracker.no_blink_candidate_started or \
-                            self.blink_tracker.sleep_warning_candidate_started
-    if candidate_warning_enabled and eye_candidate_started and self.awareness > 0.:
-      self.awareness = min(self.awareness, self.threshold_alert_1)
-      self.driver_distraction_filter.x = max(self.driver_distraction_filter.x, 0.64)
 
     if self.alert_3_cnt >= self.settings._MAX_ALERT_3 or self.no_response_cnt >= self.settings._MAX_NO_RESPONSE:
       if not self.lockout_active:
@@ -645,6 +409,7 @@ class DriverMonitoring:
     dm.visionPolicyState.distractedTypes.pose = self.distracted_types['pose']
     dm.visionPolicyState.distractedTypes.eye = self.distracted_types['eye']
     dm.visionPolicyState.distractedTypes.phone = self.distracted_types['phone']
+    dm.visionPolicyState.distractedTypes.sleep = self.distracted_types['sleep']
     dm.visionPolicyState.faceDetected = self.face_detected
     dm.visionPolicyState.pose.pitch = self.pose.pitch
     dm.visionPolicyState.pose.yaw = self.pose.yaw
@@ -656,31 +421,6 @@ class DriverMonitoring:
     dm.visionPolicyState.pose.uncertainty = self.model_std_max
     dm.visionPolicyState.wheeltouchFallbackPercent = to_percent(self.hi_stds / self.settings._HI_STD_FALLBACK_TIME)
     dm.visionPolicyState.uncertainOffroadAlertPercent = to_percent(self.dcam_uncertain_cnt / self.settings._DCAM_UNCERTAIN_ALERT_COUNT)
-    blink_debug = dm.visionPolicyState.blinkDebugState
-    blink_debug.enabled = self.blink_tracker.settings.enabled
-    blink_debug.valid = self.blink_tracker.valid
-    blink_debug.eyeClosed = self.blink_tracker.eye_closed
-    blink_debug.sleepCandidate = self.blink_tracker.sleep_candidate
-    blink_debug.noBlinkCandidate = self.blink_tracker.no_blink_candidate
-    blink_debug.noBlinkMillis = min(round(self.blink_tracker.no_blink_duration * 1000.), 65535)
-    blink_debug.noBlinkWindowReady = self.blink_tracker.no_blink_window_ready
-    blink_debug.noBlinkAlertEnabled = self.blink_tracker.settings.alert_enabled
-    blink_debug.blinkCount10s = self.blink_tracker.blink_count
-    blink_debug.currentClosureMillis = min(round(self.blink_tracker.closed_duration * 1000.), 65535)
-    blink_debug.maxClosureMillis10s = min(round(self.blink_tracker.max_closure * 1000.), 65535)
-    blink_debug.closedPercent10s = to_percent(self.blink_tracker.closed_ratio)
-    blink_debug.validPercent10s = to_percent(self.blink_tracker.valid_ratio)
-    blink_debug.rawLeftBlinkProb = self.blink_tracker.raw_left
-    blink_debug.rawRightBlinkProb = self.blink_tracker.raw_right
-    blink_debug.effectiveBlinkProb = self.blink_tracker.effective
-    blink_debug.sleepProb = self.blink_tracker.sleep_prob
-    blink_debug.closeThresholdPercent = to_percent(self.blink_tracker.settings.close_threshold)
-    blink_debug.openThresholdPercent = to_percent(self.blink_tracker.settings.open_threshold)
-    blink_debug.minDurationMillis = round(self.blink_tracker.settings.min_duration * 1000.)
-    # Keep the legacy field populated for older debug UIs; new consumers use the explicit fields below.
-    blink_debug.longClosureMillis = round(self.blink_tracker.settings.sleep_candidate_duration * 1000.)
-    blink_debug.maxBlinkDurationMillis = round(self.blink_tracker.settings.max_blink_duration * 1000.)
-    blink_debug.sleepCandidateDurationMillis = round(self.blink_tracker.settings.sleep_candidate_duration * 1000.)
 
     dm.wheeltouchPolicyState.awarenessPercent = to_percent(self.last_wheeltouch_awareness if self.active_policy == MonitoringPolicy.vision else self.awareness)
     dm.wheeltouchPolicyState.awarenessStep = 0. if self.active_policy == MonitoringPolicy.vision else self.step_change
@@ -694,7 +434,6 @@ class DriverMonitoring:
       wrong_gear = False
       lowspeed = False
       driver_engaged = False
-      cancel_pressed = False
       brake_disengage_prob = 1.0
       steering_angle_deg = 0.0
       rpyCalib = [0., 0., 0.]
@@ -703,8 +442,7 @@ class DriverMonitoring:
       enabled = sm['selfdriveState'].enabled
       wrong_gear = sm['carState'].gearShifter not in (car.CarState.GearShifter.drive, car.CarState.GearShifter.low)
       lowspeed = car_speed < self.settings._ALERT_MIN_SPEED
-      driver_engaged = sm['carState'].steeringPressed or sm['carState'].gasPressed or sm['carState'].brakePressed
-      cancel_pressed = any(event.pressed and event.type == ButtonType.cancel for event in sm['carState'].buttonEvents)
+      driver_engaged = sm['carState'].steeringPressed or sm['carState'].gasPressed
       brake_disengage_prob = sm['modelV2'].meta.disengagePredictions.brakeDisengageProbs[0] # brake disengage prob in next 2s
       steering_angle_deg = sm['carState'].steeringAngleDeg
       rpyCalib = sm['liveCalibration'].rpyCalib
@@ -731,5 +469,4 @@ class DriverMonitoring:
       op_engaged=enabled,
       lowspeed=lowspeed,
       wrong_gear=wrong_gear,
-      cancel_pressed=cancel_pressed,
     )
