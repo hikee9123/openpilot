@@ -27,7 +27,8 @@ DriverMonitorRenderer::DriverMonitorRenderer() : face_kpts_draw(std::size(DEFAUL
 void DriverMonitorRenderer::updateState(const UIState &s) {
   auto &sm = *(s.sm);
   is_visible = sm["selfdriveState"].getSelfdriveState().getAlertSize() == cereal::SelfdriveState::AlertSize::NONE &&
-               sm.rcv_frame("driverStateV2") > s.scene.started_frame;
+               sm.rcv_frame("driverStateV2") > s.scene.started_frame &&
+               sm.alive("driverStateV2") && sm.valid("driverStateV2");
   if (!is_visible) return;
 
   auto dm_state = sm["driverMonitoringState"].getDriverMonitoringState();
@@ -37,6 +38,11 @@ void DriverMonitorRenderer::updateState(const UIState &s) {
 
   const auto &driverstate = sm["driverStateV2"].getDriverStateV2();
   const auto driver_orient = is_rhd ? driverstate.getRightDriverData().getFaceOrientation() : driverstate.getLeftDriverData().getFaceOrientation();
+  if (driver_orient.size() < 3 || !std::isfinite(driver_orient[0]) ||
+      !std::isfinite(driver_orient[1]) || !std::isfinite(driver_orient[2])) {
+    is_visible = false;
+    return;
+  }
 
   for (int i = 0; i < 3; ++i) {
     float v_this = (i == 0 ? (driver_orient[i] < 0 ? 0.7 : 0.9) : 0.4) * driver_orient[i];

@@ -35,6 +35,7 @@ sound_list: dict[int, tuple[str, int | None, float]] = {
   AudibleAlert.prompt: ("prompt.wav", 1, MAX_VOLUME),
   AudibleAlert.promptRepeat: ("prompt.wav", None, MAX_VOLUME),
   AudibleAlert.promptDistracted: ("prompt_distracted.wav", None, MAX_VOLUME),
+  AudibleAlert.preAlert: ("pre_alert.wav", 1, MAX_VOLUME),
 
   AudibleAlert.warningSoft: ("warning_soft.wav", None, MAX_VOLUME),
   AudibleAlert.warningImmediate: ("warning_immediate.wav", None, MAX_VOLUME),
@@ -86,10 +87,10 @@ class Soundd:
       sound_data = self.loaded_sounds[self.current_alert]
       written_frames = 0
 
-      current_sound_frame = self.current_sound_frame % len(sound_data)
-      loops = self.current_sound_frame // len(sound_data)
-
-      while written_frames < frames and (num_loops is None or loops < num_loops):
+      while written_frames < frames:
+        loops, current_sound_frame = divmod(self.current_sound_frame, len(sound_data))
+        if num_loops is not None and loops >= num_loops:
+          break
         available_frames = sound_data.shape[0] - current_sound_frame
         frames_to_write = min(available_frames, frames - written_frames)
         ret[written_frames:written_frames+frames_to_write] = sound_data[current_sound_frame:current_sound_frame+frames_to_write]
@@ -104,7 +105,7 @@ class Soundd:
     data_out[:frames, 0] = self.get_sound_data(frames)
 
   def update_alert(self, new_alert):
-    current_alert_played_once = self.current_alert == AudibleAlert.none or self.current_sound_frame > len(self.loaded_sounds[self.current_alert])
+    current_alert_played_once = self.current_alert == AudibleAlert.none or self.current_sound_frame >= len(self.loaded_sounds[self.current_alert])
     if self.current_alert != new_alert and (new_alert != AudibleAlert.none or current_alert_played_once):
       self.current_alert = new_alert
       self.current_sound_frame = 0

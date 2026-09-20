@@ -135,6 +135,20 @@ class TestAlerts:
       set_offroad_alert(a, False)
       assert params.get(a) is None
 
+  def test_dm_uncertain_alert_can_be_set_and_cleared(self):
+    params = Params()
+    key = "Offroad_DriverMonitoringUncertain"
+    try:
+      set_offroad_alert(key, True)
+      alert = params.get(key)
+      assert alert['severity'] == 0
+      assert "clear view of the driver" in alert['text']
+      assert alert['extra'] == ''
+      set_offroad_alert(key, False)
+      assert params.get(key) is None
+    finally:
+      params.remove(key)
+
   def test_offroad_alerts_extra_text(self):
     params = Params()
     for i in range(50):

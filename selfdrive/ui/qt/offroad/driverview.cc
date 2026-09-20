@@ -1,6 +1,7 @@
 #include "selfdrive/ui/qt/offroad/driverview.h"
 
 #include <algorithm>
+#include <cmath>
 #include <QPainter>
 
 #include "selfdrive/ui/qt/util.h"
@@ -45,10 +46,13 @@ void DriverViewWindow::paintGL() {
   bool is_rhd = driver_state.getWheelOnRightProb() > 0.5;
   auto driver_data = is_rhd ? driver_state.getRightDriverData() : driver_state.getLeftDriverData();
 
-  bool face_detected = driver_data.getFaceProb() > 0.7;
+  const auto fxy_list = driver_data.getFacePosition();
+  const auto std_list = driver_data.getFaceOrientationStd();
+  bool face_detected = sm.alive("driverStateV2") && sm.valid("driverStateV2") &&
+                       driver_data.getFaceProb() > 0.7 && fxy_list.size() >= 2 && std_list.size() >= 2 &&
+                       std::isfinite(fxy_list[0]) && std::isfinite(fxy_list[1]) &&
+                       std::isfinite(std_list[0]) && std::isfinite(std_list[1]);
   if (face_detected) {
-    auto fxy_list = driver_data.getFacePosition();
-    auto std_list = driver_data.getFaceOrientationStd();
     float face_x = fxy_list[0];
     float face_y = fxy_list[1];
     float face_std = std::max(std_list[0], std_list[1]);
