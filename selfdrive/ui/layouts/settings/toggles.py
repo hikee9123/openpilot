@@ -18,6 +18,10 @@ DESCRIPTIONS = {
     "Your attention is required at all times to use this feature."
   ),
   "DisengageOnAccelerator": tr_noop("When enabled, pressing the accelerator pedal will disengage openpilot."),
+  "AutoEngageOnAccelerator": tr_noop(
+    "When enabled, a new accelerator press engages openpilot on Hyundai Community stock-cruise cars when ACC Main is on. " +
+    "This does not apply to openpilot longitudinal control."
+  ),
   "LongitudinalPersonality": tr_noop(
     "Standard is recommended. In aggressive mode, openpilot will follow lead cars closer and be more aggressive with the gas and brake. " +
     "In relaxed mode openpilot will stay further away from lead cars. On supported cars, you can cycle through these personalities with " +
@@ -57,6 +61,12 @@ class TogglesLayout(Widget):
       "DisengageOnAccelerator": (
         lambda: tr("Disengage on Accelerator Pedal"),
         DESCRIPTIONS["DisengageOnAccelerator"],
+        "disengage_on_accelerator.png",
+        False,
+      ),
+      "AutoEngageOnAccelerator": (
+        lambda: tr("Engage on Accelerator Pedal"),
+        DESCRIPTIONS["AutoEngageOnAccelerator"],
         "disengage_on_accelerator.png",
         False,
       ),

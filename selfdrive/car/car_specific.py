@@ -5,6 +5,7 @@ from opendbc.car.interfaces import MAX_CTRL_SPEED
 from opendbc.car.toyota.values import ToyotaFlags
 
 from openpilot.selfdrive.selfdrived.events import Events
+from openpilot.selfdrive.selfdrived.gas_pedal_engage import stock_cruise_disable_requested
 
 ButtonType = structs.CarState.ButtonEvent.Type
 GearShifter = structs.CarState.GearShifter
@@ -20,6 +21,7 @@ class CarSpecificEvents:
     self.low_speed_alert = False
     self.no_steer_warning = False
     self.silent_steer_warning = True
+    self.gas_pedal_engage_active = False
 
   def update(self, CS: car.CarState, CS_prev: car.CarState, CC: car.CarControl):
     if self.CP.brand in ('body', 'mock'):
@@ -181,7 +183,7 @@ class CarSpecificEvents:
     if pcm_enable:
       if CS.cruiseState.enabled and not CS_prev.cruiseState.enabled and not CS.blockPcmEnable:
         events.add(EventName.pcmEnable)
-      elif not CS.cruiseState.enabled:
+      elif stock_cruise_disable_requested(CS.cruiseState.enabled, self.gas_pedal_engage_active):
         events.add(EventName.pcmDisable)
 
     return events

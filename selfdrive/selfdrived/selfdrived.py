@@ -15,6 +15,7 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.common.gps import get_gps_location_service
 
 from openpilot.selfdrive.car.car_specific import CarSpecificEvents
+from openpilot.selfdrive.selfdrived.gas_pedal_engage import gas_pedal_engage_requested, update_gas_pedal_press_frames
 from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
 from openpilot.selfdrive.selfdrived.events import Events, ET
 from openpilot.selfdrive.selfdrived.helpers import ExcessiveActuationCheck
@@ -95,6 +96,7 @@ class SelfdriveD:
     self.is_metric = self.params.get_bool("IsMetric")
     self.is_ldw_enabled = self.params.get_bool("IsLdwEnabled")
     self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
+    self.auto_engage_on_accelerator = self.params.get_bool("AutoEngageOnAccelerator")
 
     car_recognized = self.CP.brand != 'mock'
 
@@ -105,6 +107,8 @@ class SelfdriveD:
       self.params.remove("ExperimentalMode")
 
     self.CS_prev = car.CarState.new_message()
+    self.gas_pedal_engage_frames = 0
+    self.gas_pedal_engage_active = False
     self.AM = AlertManager()
     self.events = Events()
 
@@ -210,6 +214,10 @@ class SelfdriveD:
 
     # Add car events, ignore if CAN isn't valid
     if CS.canValid:
+      if not self.enabled or CS.cruiseState.enabled:
+        self.gas_pedal_engage_active = False
+      self.car_events.gas_pedal_engage_active = self.gas_pedal_engage_active
+
       car_events = self.car_events.update(CS, self.CS_prev, self.sm['carControl']).to_msg()
       self.events.add_from_msg(car_events)
 
@@ -225,6 +233,16 @@ class SelfdriveD:
           (CS.brakePressed and (not self.CS_prev.brakePressed or not CS.standstill)) or \
           (CS.regenBraking and (not self.CS_prev.regenBraking or not CS.standstill)):
           self.events.add(EventName.pedalPressed)
+
+      self.gas_pedal_engage_frames = update_gas_pedal_press_frames(self.gas_pedal_engage_frames, CS, self.CS_prev)
+
+      if gas_pedal_engage_requested(self.CP, CS, self.CS_prev, self.gas_pedal_engage_frames,
+                                    self.auto_engage_on_accelerator, self.disengage_on_accelerator,
+                                    self.enabled):
+        self.events.add(EventName.buttonEnable)
+        self.gas_pedal_engage_active = True
+    else:
+      self.gas_pedal_engage_frames = 0
 
     # Create events for temperature, disk space, and memory
     if self.sm['deviceState'].thermalStatus >= ThermalStatus.overheated:
@@ -535,6 +553,7 @@ class SelfdriveD:
       self.is_metric = self.params.get_bool("IsMetric")
       self.is_ldw_enabled = self.params.get_bool("IsLdwEnabled")
       self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
+      self.auto_engage_on_accelerator = self.params.get_bool("AutoEngageOnAccelerator")
       self.experimental_mode = self.params.get_bool("ExperimentalMode") and self.CP.openpilotLongitudinalControl
       self.personality = self.params.get("LongitudinalPersonality", return_default=True)
       time.sleep(0.1)
