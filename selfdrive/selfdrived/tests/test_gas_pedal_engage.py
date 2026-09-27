@@ -39,25 +39,31 @@ class TestGasPedalEngage(unittest.TestCase):
 
     self.assertTrue(self.requested(params, state, previous_state, 15, True, False, False))
 
-  def test_gas_pedal_engage_requires_opt_in_and_safe_stock_acc_state(self):
+  def test_gas_pedal_engage_requires_opt_in_and_safe_vehicle_state(self):
     params = make_params()
     previous_state = make_state()
 
     self.assertFalse(self.requested(params, make_state(gas_pressed=True), previous_state, 15, False, False, False))
     unsafe_states = (
       make_state(gas_pressed=True, main_on=False),
-      make_state(gas_pressed=True, cruise_enabled=True),
       make_state(gas_pressed=True, can_valid=False),
       make_state(gas_pressed=True, brake_pressed=True),
       make_state(gas_pressed=True, door_open=True),
       make_state(gas_pressed=True, seatbelt_unlatched=True),
       make_state(gas_pressed=True, parking_brake=True),
       make_state(gas_pressed=True, acc_faulted=True),
-      make_state(gas_pressed=True, block_pcm_enable=True),
     )
     for state in unsafe_states:
       with self.subTest(state=state):
         self.assertFalse(self.requested(params, state, previous_state, 15, True, False, False))
+
+  def test_gas_pedal_reengages_when_stock_acc_is_already_active(self):
+    state = make_state(gas_pressed=True, cruise_enabled=True)
+    self.assertTrue(self.requested(make_params(), state, make_state(), 15, True, False, False))
+
+  def test_gas_pedal_press_is_allowed_without_recent_cruise_button(self):
+    state = make_state(gas_pressed=True, block_pcm_enable=True)
+    self.assertTrue(self.requested(make_params(), state, make_state(), 15, True, False, False))
 
   def test_gas_pedal_engage_requires_valid_previous_sample_and_debounce_window(self):
     params = make_params()

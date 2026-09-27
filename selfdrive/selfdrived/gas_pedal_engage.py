@@ -15,6 +15,7 @@ def stock_cruise_disable_requested(cruise_enabled: bool, gas_pedal_engage_active
 
 def gas_pedal_engage_requested(CP, CS, CS_prev, gas_press_frames: int, feature_enabled: bool,
                                disengage_on_accelerator: bool, openpilot_enabled: bool) -> bool:
+  # A pedal press is an explicit enable request, even when PCM auto-enable is blocked or stock ACC is active.
   return (
     feature_enabled and
     CP.brand == 'hyundai' and
@@ -24,8 +25,6 @@ def gas_pedal_engage_requested(CP, CS, CS_prev, gas_press_frames: int, feature_e
     CS.canValid and
     CS_prev.canValid and
     CS.cruiseState.available and
-    not CS.cruiseState.enabled and
-    not CS.blockPcmEnable and
     gas_press_frames == GAS_PEDAL_ENGAGE_DEBOUNCE_FRAMES and
     not CS.brakePressed and
     not CS.doorOpen and
