@@ -236,9 +236,13 @@ class SelfdriveD:
 
       self.gas_pedal_engage_frames = update_gas_pedal_press_frames(self.gas_pedal_engage_frames, CS, self.CS_prev)
 
+      active_pandas = [ps for ps in self.sm['pandaStates'] if ps.safetyModel not in IGNORED_SAFETY_MODES]
+      panda_controls_allowed = bool(active_pandas) and all(ps.controlsAllowed for ps in active_pandas)
+      panda_rx_checks_valid = not any(ps.safetyRxChecksInvalid for ps in active_pandas)
+
       if gas_pedal_engage_requested(self.CP, CS, self.CS_prev, self.gas_pedal_engage_frames,
                                     self.auto_engage_on_accelerator, self.disengage_on_accelerator,
-                                    self.enabled):
+                                    self.enabled, panda_controls_allowed, panda_rx_checks_valid):
         self.events.add(EventName.buttonEnable)
         self.gas_pedal_engage_active = True
     else:

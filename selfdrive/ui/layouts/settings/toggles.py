@@ -68,7 +68,7 @@ class TogglesLayout(Widget):
         lambda: tr("Engage on Accelerator Pedal"),
         DESCRIPTIONS["AutoEngageOnAccelerator"],
         "disengage_on_accelerator.png",
-        False,
+        True,
       ),
       "IsLdwEnabled": (
         lambda: tr("Enable Lane Departure Warnings"),
