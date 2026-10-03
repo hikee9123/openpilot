@@ -6,7 +6,6 @@ from cereal import car, log
 import cereal.messaging as messaging
 from openpilot.common.realtime import DT_DMON
 from openpilot.common.filter_simple import FirstOrderFilter
-from openpilot.common.params import Params
 from openpilot.common.stat_live import RunningStatFilter
 from openpilot.common.transformations.camera import DEVICE_CAMERAS
 
@@ -36,8 +35,9 @@ class DRIVER_MONITOR_SETTINGS:
     self._TIMEOUT_RECOVERY_FACTOR_MAX = 5.
     self._TIMEOUT_RECOVERY_FACTOR_MIN = 1.25
 
-    self._MAX_TERMINAL_ALERTS = 3  # not allowed to engage after 3 terminal alerts
-    self._MAX_TERMINAL_DURATION = int(30 / DT_DMON)  # not allowed to engage after 30s of terminal alerts
+    # Legacy packet fields report terminal history within the current engagement.
+    self._MAX_TERMINAL_ALERTS = 3
+    self._MAX_TERMINAL_DURATION = int(30 / DT_DMON)
 
     self._FACE_THRESHOLD = 0.7
     self._EYE_THRESHOLD = 0.5
@@ -140,6 +140,7 @@ class DriverMonitoring:
     self.step_change = 0.
     self.active_policy = MonitoringPolicy.vision
     self.driver_interacting = False
+    self.op_engaged_prev = False
     self.is_model_uncertain = False
     self.hi_stds = 0
     self.model_std_max = 0.
@@ -147,7 +148,6 @@ class DriverMonitoring:
     self.threshold_alert_2 = 0.
     self.dcam_uncertain_cnt = 0
     self.dcam_reset_cnt = 0
-    self.too_distracted = Params().get_bool("DriverTooDistracted")
 
     self._reset_awareness()
     self._set_policy(MonitoringPolicy.vision)
@@ -290,9 +290,15 @@ class DriverMonitoring:
     self.alert_level = AlertLevel.none
     self.driver_interacting = driver_engaged
 
-    if self.terminal_alert_cnt >= self.settings._MAX_TERMINAL_ALERTS or \
-       self.terminal_time >= self.settings._MAX_TERMINAL_DURATION:
-      self.too_distracted = True
+    if op_engaged != self.op_engaged_prev:
+      # Reset for the next engagement, never while continuously engaged.
+      self._reset_awareness()
+      self.terminal_alert_cnt = 0
+      self.terminal_time = 0
+      self._set_policy(self.active_policy)
+      self.op_engaged_prev = op_engaged
+      if not op_engaged:
+        return
 
     always_on_valid = self.always_on and not wrong_gear
     if (self.driver_interacting and self.awareness > 0 and self.active_policy == MonitoringPolicy.wheeltouch) or \
@@ -347,11 +353,12 @@ class DriverMonitoring:
     dat = messaging.new_message('driverMonitoringState', valid=valid)
     dm = dat.driverMonitoringState
 
-    dm.lockout = self.too_distracted
+    # Keep the packet schema compatible, but reset rather than block re-engagement.
+    dm.lockout = False
     dm.alertCountLockoutPercent = to_percent(self.terminal_alert_cnt / self.settings._MAX_TERMINAL_ALERTS)
     dm.alertTimeLockoutPercent = to_percent(self.terminal_time / self.settings._MAX_TERMINAL_DURATION)
     dm.alwaysOn = self.always_on
-    dm.alwaysOnLockout = self.always_on and self.awareness <= self.threshold_alert_2
+    dm.alwaysOnLockout = False
     dm.alertLevel = self.alert_level
     dm.activePolicy = self.active_policy
     dm.isRHD = self.wheel_on_right

@@ -101,6 +101,7 @@ class SelfdriveD:
     car_recognized = self.CP.brand != 'mock'
 
     # cleanup old params
+    self.params.remove("DriverTooDistracted")
     if not self.CP.alphaLongitudinalAvailable:
       self.params.remove("AlphaLongitudinalEnabled")
     if not self.CP.openpilotLongitudinalControl:
@@ -126,7 +127,6 @@ class SelfdriveD:
     self.experimental_mode = False
     self.personality = self.params.get("LongitudinalPersonality", return_default=True)
     self.recalibrating_seen = False
-    self.dm_lockout_set = False
     self.dm_uncertain_alerted = False
     self.state_machine = StateMachine()
     self.rk = Ratekeeper(100, print_delay_threshold=None)
@@ -192,14 +192,7 @@ class SelfdriveD:
 
     # Handle DM
     if not self.CP.notCar:
-      # Block engaging until ignition cycle after max number or time of distractions
-      if self.sm['driverMonitoringState'].lockout and not self.dm_lockout_set:
-        self.params.put_bool_nonblocking("DriverTooDistracted", True)
-        self.dm_lockout_set = True
-      # No entry conditions
-      if self.sm['driverMonitoringState'].lockout or self.sm['driverMonitoringState'].alwaysOnLockout:
-        self.events.add(EventName.tooDistracted)
-      # Alerts
+      # Engagement transitions reset DM history; retain all distraction alerts.
       vision_dm = self.sm['driverMonitoringState'].activePolicy == MonitoringPolicy.vision
       if self.sm['driverMonitoringState'].alertLevel == AlertLevel.one:
         self.events.add(EventName.driverDistracted1 if vision_dm else EventName.driverUnresponsive1)

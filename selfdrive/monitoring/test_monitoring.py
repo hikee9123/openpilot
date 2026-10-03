@@ -210,3 +210,100 @@ class TestMonitoring:
     assert alert_lvls[int((INVISIBLE_SECONDS_TO_ORANGE-1+DT_DMON*s._HI_STD_FALLBACK_TIME-0.1)/DT_DMON)] == 1
     assert alert_lvls[int((INVISIBLE_SECONDS_TO_ORANGE-1+DT_DMON*s._HI_STD_FALLBACK_TIME+0.1)/DT_DMON)] == 2
     assert alert_lvls[int((INVISIBLE_SECONDS_TO_RED-1+DT_DMON*s._HI_STD_FALLBACK_TIME+0.1)/DT_DMON)] == 3
+
+
+class TestMonitoringReengageReset:
+  @staticmethod
+  def _terminal_dm(always_on=False):
+    dm = DriverMonitoring(always_on=always_on)
+    dm.op_engaged_prev = True
+    dm.awareness = -0.1
+    dm.last_vision_awareness = -0.1
+    dm.last_wheeltouch_awareness = -0.1
+    dm.terminal_alert_cnt = 3
+    dm.terminal_time = int(30 / DT_DMON)
+    return dm
+
+  def test_disengage_resets_terminal_history(self):
+    for always_on in (False, True):
+      dm = self._terminal_dm(always_on)
+      dm._update_events(False, False, False, False)
+      assert dm.awareness == 1.
+      assert dm.last_vision_awareness == 1.
+      assert dm.last_wheeltouch_awareness == 1.
+      assert dm.terminal_alert_cnt == 0
+      assert dm.terminal_time == 0
+      assert dm.alert_level == log.DriverMonitoringState.AlertLevel.none
+      assert not dm.get_state_packet().driverMonitoringState.lockout
+
+  def test_reengage_resets_always_on_orange(self):
+    dm = DriverMonitoring(always_on=True)
+    dm.awareness = dm.threshold_alert_2
+    dm.last_vision_awareness = dm.threshold_alert_2
+    dm.last_wheeltouch_awareness = dm.threshold_alert_2
+    dm.terminal_alert_cnt = 2
+    dm.terminal_time = 100
+    dm._update_events(False, True, False, False)
+    state = dm.get_state_packet().driverMonitoringState
+    assert state.alertLevel == log.DriverMonitoringState.AlertLevel.none
+    assert state.visionPolicyState.awarenessPercent == 99
+    assert dm.terminal_alert_cnt == 0
+    assert dm.terminal_time == 0
+    assert not state.lockout
+    assert not state.alwaysOnLockout
+
+  def test_continuous_engagement_keeps_terminal_warning(self):
+    dm = self._terminal_dm()
+    for _ in range(100):
+      dm._update_events(True, True, False, False)
+      state = dm.get_state_packet().driverMonitoringState
+      assert state.alertLevel == log.DriverMonitoringState.AlertLevel.three
+      assert not state.lockout
+    assert dm.awareness <= 0.
+    assert dm.terminal_time == int(30 / DT_DMON) + 100
+
+  def test_always_on_warns_without_preventing_engagement(self):
+    dm = DriverMonitoring(always_on=True)
+    dm.awareness = dm.threshold_alert_2
+    dm._update_events(False, False, False, False)
+    state = dm.get_state_packet().driverMonitoringState
+    assert state.alertLevel == log.DriverMonitoringState.AlertLevel.two
+    assert not state.lockout
+    assert not state.alwaysOnLockout
+
+  def test_disengage_then_reengage_restarts_warning_timers(self):
+    dm = self._terminal_dm()
+    dm._update_events(False, False, False, False)
+    dm.face_detected = True
+    dm.driver_distracted = True
+    dm.driver_distraction_filter.x = 1.
+    levels = []
+    for frame in range(1, 1222):
+      dm._update_events(False, True, False, False)
+      if frame in (20, 80, 120, 1220):
+        levels.append(dm.alert_level)
+    assert levels == [log.DriverMonitoringState.AlertLevel.none,
+                      log.DriverMonitoringState.AlertLevel.one,
+                      log.DriverMonitoringState.AlertLevel.two,
+                      log.DriverMonitoringState.AlertLevel.three]
+
+  def test_reengage_restores_timer_after_fallback_freeze(self):
+    dm = self._terminal_dm()
+    dm.step_change = 0.
+    dm._update_events(False, False, False, False)
+    dm._update_events(False, True, False, False)
+    assert 0. < dm.awareness < 1.
+    assert dm.step_change > 0.
+
+  def test_repeated_reengagement_does_not_accumulate_lockout(self):
+    dm = self._terminal_dm(always_on=True)
+    for _ in range(5):
+      dm._update_events(False, False, False, False)
+      dm._update_events(False, True, False, False)
+      assert dm.alert_level == log.DriverMonitoringState.AlertLevel.none
+      assert dm.terminal_alert_cnt == 0
+      assert dm.terminal_time == 0
+      dm.awareness = -0.1
+      dm._update_events(False, True, False, False)
+      assert dm.alert_level == log.DriverMonitoringState.AlertLevel.three
+      assert not dm.get_state_packet().driverMonitoringState.lockout
