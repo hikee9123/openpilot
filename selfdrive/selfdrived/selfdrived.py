@@ -214,9 +214,7 @@ class SelfdriveD:
 
     # Add car events, ignore if CAN isn't valid
     if CS.canValid:
-      if not self.enabled or CS.cruiseState.enabled:
-        self.gas_pedal_engage_active = False
-      self.car_events.gas_pedal_engage_active = self.gas_pedal_engage_active
+      self.car_events.auto_engage_on_accelerator = self.auto_engage_on_accelerator and not self.disengage_on_accelerator
 
       car_events = self.car_events.update(CS, self.CS_prev, self.sm['carControl']).to_msg()
       self.events.add_from_msg(car_events)
@@ -234,7 +232,9 @@ class SelfdriveD:
           (CS.regenBraking and (not self.CS_prev.regenBraking or not CS.standstill)):
           self.events.add(EventName.pedalPressed)
 
-      self.gas_pedal_engage_frames = update_gas_pedal_press_frames(self.gas_pedal_engage_frames, CS, self.CS_prev)
+      gas_engage_gear_allowed = CS.gearShifter == car.CarState.GearShifter.drive
+      self.gas_pedal_engage_frames = update_gas_pedal_press_frames(self.gas_pedal_engage_frames, CS, self.CS_prev,
+                                                                 gear_allowed=gas_engage_gear_allowed)
 
       active_pandas = [ps for ps in self.sm['pandaStates'] if ps.safetyModel not in IGNORED_SAFETY_MODES]
       panda_controls_allowed = bool(active_pandas) and all(ps.controlsAllowed for ps in active_pandas)
@@ -242,9 +242,11 @@ class SelfdriveD:
 
       if gas_pedal_engage_requested(self.CP, CS, self.CS_prev, self.gas_pedal_engage_frames,
                                     self.auto_engage_on_accelerator, self.disengage_on_accelerator,
-                                    self.enabled, panda_controls_allowed, panda_rx_checks_valid):
+                                    self.enabled, panda_controls_allowed, panda_rx_checks_valid,
+                                    gear_allowed=gas_engage_gear_allowed):
         self.events.add(EventName.buttonEnable)
         self.gas_pedal_engage_active = True
+        self.gas_pedal_engage_frames = 0
     else:
       self.gas_pedal_engage_frames = 0
 
@@ -546,6 +548,8 @@ class SelfdriveD:
     self.update_events(CS)
     if not self.CP.passive and self.initialized:
       self.enabled, self.active = self.state_machine.update(self.events)
+    # The pedal request is consumed by this transition; it never remains as a disable bypass.
+    self.gas_pedal_engage_active = False
     self.update_alerts(CS)
 
     self.publish_selfdriveState(CS)

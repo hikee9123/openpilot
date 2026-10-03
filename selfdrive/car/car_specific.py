@@ -21,7 +21,7 @@ class CarSpecificEvents:
     self.low_speed_alert = False
     self.no_steer_warning = False
     self.silent_steer_warning = True
-    self.gas_pedal_engage_active = False
+    self.auto_engage_on_accelerator = False
 
   def update(self, CS: car.CarState, CS_prev: car.CarState, CC: car.CarControl):
     if self.CP.brand in ('body', 'mock'):
@@ -103,12 +103,15 @@ class CarSpecificEvents:
     # TODO: on some hyundai cars, the cancel button is also the pause/resume button,
     # so only use it for cancel when running openpilot longitudinal
     allow_button_cancel = self.CP.brand != 'hyundai'
+    pedal_engage_enabled = (self.auto_engage_on_accelerator and self.CP.brand == 'hyundai' and
+                            not self.CP.openpilotLongitudinalControl)
+    gear_allowed = CS.gearShifter == GearShifter.drive or CS.gearShifter in CI.DRIVABLE_GEARS
 
     if CS.doorOpen:
       events.add(EventName.doorOpen)
     if CS.seatbeltUnlatched:
       events.add(EventName.seatbeltNotLatched)
-    if CS.gearShifter != GearShifter.drive and CS.gearShifter not in CI.DRIVABLE_GEARS:
+    if not gear_allowed:
       events.add(EventName.wrongGear)
     if CS.gearShifter == GearShifter.reverse:
       events.add(EventName.reverseGear)
@@ -181,9 +184,10 @@ class CarSpecificEvents:
     # we engage when pcm is active (rising edge)
     # enabling can optionally be blocked by the car interface
     if pcm_enable:
-      if CS.cruiseState.enabled and not CS_prev.cruiseState.enabled and not CS.blockPcmEnable:
-        events.add(EventName.pcmEnable)
-      elif stock_cruise_disable_requested(CS.cruiseState.enabled, self.gas_pedal_engage_active):
+      if stock_cruise_disable_requested(CS.cruiseState.enabled, CS_prev.cruiseState.enabled,
+                                        pedal_engage_enabled, gear_allowed):
         events.add(EventName.pcmDisable)
+      elif CS.cruiseState.enabled and not CS_prev.cruiseState.enabled and not CS.blockPcmEnable:
+        events.add(EventName.pcmEnable)
 
     return events

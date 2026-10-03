@@ -101,10 +101,25 @@ class TestGasPedalEngage(unittest.TestCase):
                                                       make_state(gas_pressed=True)))
     self.assertEqual(0, update_gas_pedal_press_frames(14, make_state(), previous_state))
 
-  def test_stock_acc_inactive_does_not_disengage_after_gas_triggered_engage(self):
-    self.assertFalse(stock_cruise_disable_requested(cruise_enabled=False, gas_pedal_engage_active=True))
-    self.assertTrue(stock_cruise_disable_requested(cruise_enabled=False, gas_pedal_engage_active=False))
-    self.assertFalse(stock_cruise_disable_requested(cruise_enabled=True, gas_pedal_engage_active=False))
+  def test_pedal_engagement_does_not_need_a_persistent_flag_to_remain_enabled(self):
+    self.assertFalse(stock_cruise_disable_requested(False, False, pedal_engage_enabled=True, gear_allowed=True))
+    self.assertTrue(stock_cruise_disable_requested(False, True, pedal_engage_enabled=True, gear_allowed=True))
+
+  def test_invalid_gear_disengages_pedal_mode_even_if_stock_cruise_is_enabled(self):
+    for cruise_enabled in (False, True):
+      self.assertTrue(stock_cruise_disable_requested(cruise_enabled, cruise_enabled,
+                                                     pedal_engage_enabled=True, gear_allowed=False))
+
+  def test_feature_disabled_retains_stock_cruise_level_disable(self):
+    self.assertTrue(stock_cruise_disable_requested(False, False, pedal_engage_enabled=False, gear_allowed=True))
+    self.assertFalse(stock_cruise_disable_requested(True, True, pedal_engage_enabled=False, gear_allowed=True))
+
+  def test_pedal_request_is_reset_and_blocked_outside_drive(self):
+    pressed = make_state(gas_pressed=True)
+    self.assertEqual(0, update_gas_pedal_press_frames(16, pressed, pressed, gear_allowed=False))
+    self.assertFalse(self.requested(make_params(), pressed, pressed, 16, True, False, False,
+                                    panda_controls_allowed=True, panda_rx_checks_valid=True, gear_allowed=False))
+    self.assertEqual(0, update_gas_pedal_press_frames(0, pressed, pressed))
 
   def test_gas_pedal_engage_does_not_conflict_with_longitudinal_or_disengage_setting(self):
     previous_state = make_state()
